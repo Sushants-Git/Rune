@@ -673,6 +673,30 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 }
 
+/// ⌥1–⌥9, jumping straight to a tab in the current workspace.
+///
+/// This can't be an NSMenuItem key equivalent, and it can't live in
+/// `performKeyEquivalent` either: AppKit only runs key-equivalent processing
+/// for Command-modified events, so an Option chord goes straight down the
+/// responder chain to the terminal and libghostty types `¡` instead. A local
+/// event monitor sees it first. Matching is by key code, which is positional
+/// and so means the same thing on every keyboard layout.
+enum DigitShortcut {
+    static func index(for event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Int? {
+        guard event.type == .keyDown,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask) == modifiers
+        else { return nil }
+        return digitKeyCodes[event.keyCode]
+    }
+
+    /// `kVK_ANSI_1` … `kVK_ANSI_9`. 5/6 and 7/8/9 aren't in numeric order —
+    /// that's the hardware layout, not a typo.
+    private static let digitKeyCodes: [UInt16: Int] = [
+        0x12: 0, 0x13: 1, 0x14: 2, 0x15: 3, 0x17: 4,
+        0x16: 5, 0x1A: 6, 0x1C: 7, 0x19: 8,
+    ]
+}
+
 /// NSWindow subclass that gives the controller first crack at key equivalents
 /// the menu doesn't claim, and that can become key without a title bar.
 final class TerminalWindow: NSWindow {

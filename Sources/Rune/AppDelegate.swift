@@ -5,6 +5,7 @@ import GhosttyKit
 final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     private var ghostty: GhosttyApp?
     private var controllers: [TerminalController] = []
+    private var tabKeyMonitor: Any?
 
     private var keyController: TerminalController? {
         if let window = NSApp.keyWindow as? TerminalWindow, let c = window.controller { return c }
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         }
 
         buildMenu()
+        installTabShortcuts()
         let controller = newWindow()
         NSApp.activate(ignoringOtherApps: true)
 
@@ -48,7 +50,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let tabKeyMonitor {
+            NSEvent.removeMonitor(tabKeyMonitor)
+            self.tabKeyMonitor = nil
+        }
         ghostty?.shutdown()
+    }
+
+    /// ⌥1–⌥9 have to be caught before the event reaches the terminal, which
+    /// would otherwise forward them to libghostty as ordinary input. See
+    /// `DigitShortcut` for why neither the menu nor `performKeyEquivalent` can
+    /// do this.
+    private func installTabShortcuts() {
+        tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
+            [weak self] event in
+            guard let self,
+                  let index = DigitShortcut.index(for: event, modifiers: [.option]),
+                  NSApp.keyWindow is TerminalWindow,
+                  let controller = self.keyController
+            else { return event }
+
+            controller.selectTab(at: index)
+            return nil
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -224,6 +248,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         keyController?.selectWorkspace(at: sender.tag)
     }
 
+    @objc private func selectTabByIndex(_ sender: NSMenuItem) {
+        keyController?.selectTab(at: sender.tag)
+    }
+
     private func buildMenu() {
         let mainMenu = NSMenu()
 
@@ -319,12 +347,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let prev = add(to: tabsMenu, "Previous Tab", #selector(prevTabAction(_:)), "[")
         prev.keyEquivalentModifierMask = [.command, .shift]
         tabsMenu.addItem(.separator())
-        // ⌘1–⌘9 address the ⌘K list. Tabs get cycling instead: there are only
-        // ever a handful in a workspace, and reserving nine more global chords
-        // for them isn't worth what it takes from the terminal.
+        // ⌘1–⌘9 address the ⌘K list…
         for i in 1...9 {
             let item = add(
                 to: tabsMenu, "Workspace \(i)", #selector(selectWorkspaceByIndex(_:)), "\(i)")
+            item.tag = i - 1
+        }
+        tabsMenu.addItem(.separator())
+        // …and ⌥1–⌥9 the tabs in the one you're in. The key equivalent here is
+        // for *display* only; `installTabShortcuts` does the matching.
+        for i in 1...9 {
+            let item = add(to: tabsMenu, "Tab \(i)", #selector(selectTabByIndex(_:)), "\(i)")
+            item.keyEquivalentModifierMask = [.option]
             item.tag = i - 1
         }
         tabsItem.submenu = tabsMenu

@@ -78,8 +78,8 @@ reads as one surface rather than a terminal wearing a grey hat.
 | `⌘W` | Close the focused terminal |
 | `⌘⇧W` | Close the window |
 | `⌘⇧]` / `⌘⇧[` | Next / previous tab |
-| `⌘1`–`⌘9` | Jump to a tab by position |
-| `⌥⇧1`–`⌥⇧9` | Jump to a workspace by position in `⌘K` |
+| `⌘1`–`⌘9` | Jump to a workspace by position in `⌘K` |
+| `⌥1`–`⌥9` | Jump to a tab by position |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
 
