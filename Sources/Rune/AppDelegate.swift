@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     private var keyController: TerminalController? {
         if let window = NSApp.keyWindow as? TerminalWindow, let c = window.controller { return c }
+        if let window = NSApp.mainWindow as? TerminalWindow, let c = window.controller { return c }
         return controllers.last
     }
 
@@ -25,20 +26,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let controller = newWindow()
         NSApp.activate(ignoringOtherApps: true)
 
-        // Development aid: KTERM_DEMO=<n> opens n extra tabs and drops straight
-        // into the switcher, so the tab UI can be exercised without driving the
-        // app through synthetic keystrokes.
-        if let demo = ProcessInfo.processInfo.environment["KTERM_DEMO"],
-           let extra = Int(demo), extra > 0, let controller {
-            // Alternate kinds so the strip and the ⌘K-only terminals are both
-            // represented.
-            for (i, dir) in ["/tmp", "/usr/local", "/etc", "/var/log"].prefix(extra).enumerated() {
-                controller.newTab(kind: i.isMultiple(of: 2) ? .tab : .background,
-                                  workingDirectory: dir)
-            }
-            controller.showTabPalette()
-            // Float the window so it stays capturable while being inspected.
+        // Development aid: RUNE_DEMO=<n> floats the window so it stays
+        // capturable while being inspected, and opens n extra workspaces (some
+        // with a second tab) before dropping into the switcher — so the UI can
+        // be exercised without driving the app through synthetic keystrokes.
+        // RUNE_DEMO=0 just floats a plain window.
+        if let demo = ProcessInfo.processInfo.environment["RUNE_DEMO"],
+           let extra = Int(demo), let controller {
             controller.window?.level = .floating
+            guard extra > 0 else { return }
+            for (i, dir) in ["/tmp", "/usr/local", "/etc", "/var/log"].prefix(extra).enumerated() {
+                controller.newWorkspace(workingDirectory: dir)
+                // Give some of them a second tab so both the strip and the
+                // single-tab title are represented.
+                if i.isMultiple(of: 2) { controller.newTab(workingDirectory: "/usr") }
+            }
+            controller.showSwitcher()
         }
     }
 
@@ -60,7 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         guard ghostty?.needsConfirmQuit == true else { return .terminateNow }
 
         let alert = NSAlert()
-        alert.messageText = "Quit kterm?"
+        alert.messageText = "Quit Rune?"
         alert.informativeText = "A process is still running in one of your terminals."
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
@@ -70,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     private func presentFatal(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "kterm couldn't start"
+        alert.messageText = "Rune couldn't start"
         alert.informativeText = String(describing: error)
         alert.alertStyle = .critical
         alert.runModal()
@@ -82,11 +85,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @discardableResult
     func newWindow(workingDirectory: String? = nil) -> TerminalController? {
         guard let ghostty else { return nil }
+        // The window you're leaving shouldn't be left with ⌘K still up behind
+        // the new one.
+        keyController?.hideSwitcher()
         let controller = TerminalController(ghostty: ghostty)
         controllers.append(controller)
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
-        controller.newTab(workingDirectory: workingDirectory)
+        controller.newWorkspace(workingDirectory: workingDirectory)
         return controller
     }
 
@@ -96,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     private func controller(owning surface: ghostty_surface_t?) -> TerminalController? {
         guard let view = ghostty?.view(for: surface) else { return keyController }
-        return controllers.first { $0.tabs.contains(where: { $0 === view }) } ?? keyController
+        return controllers.first { $0.owns(view) } ?? keyController
     }
 
     // MARK: - GhosttyAppDelegate
@@ -105,15 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         controller(owning: surface)?.newTab()
     }
 
+    /// libghostty's `new_window` binding means ⌘N here, which in Rune makes a
+    /// workspace rather than a macOS window. ⌘⇧K is the one that makes a window.
     func ghosttyNewWindow(from surface: ghostty_surface_t?) {
-        newWindow(workingDirectory: ghostty?.view(for: surface)?.pwd)
+        controller(owning: surface)?.newWorkspace()
     }
 
     func ghosttyCloseSurface(_ view: GhosttySurfaceView, processAlive: Bool) {
-        guard let controller = controllers.first(where: { c in
-            c.tabs.contains(where: { $0 === view })
-        }) else { return }
-        controller.closeTab(view)
+        controllers.first { $0.owns(view) }?.closeSurface(view)
     }
 
     func ghosttyQuit() {
@@ -134,24 +139,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     }
 
     func ghosttyToggleCommandPalette(from surface: ghostty_surface_t?) {
-        controller(owning: surface)?.toggleTabPalette()
+        controller(owning: surface)?.toggleSwitcher()
+    }
+
+    /// The order `focusSplitAction`'s menu tags are in.
+    fileprivate static let splitDirections: [SplitDirection] = [.left, .right, .up, .down]
+
+    func ghosttyNewSplit(
+        _ direction: ghostty_action_split_direction_e,
+        from surface: ghostty_surface_t?
+    ) {
+        let split: SplitDirection = switch direction {
+        case GHOSTTY_SPLIT_DIRECTION_DOWN: .down
+        case GHOSTTY_SPLIT_DIRECTION_LEFT: .left
+        case GHOSTTY_SPLIT_DIRECTION_UP: .up
+        default: .right
+        }
+        controller(owning: surface)?.splitActiveSurface(split)
+    }
+
+    func ghosttyGotoSplit(
+        _ target: ghostty_action_goto_split_e,
+        from surface: ghostty_surface_t?
+    ) {
+        guard let controller = controller(owning: surface) else { return }
+        switch target {
+        case GHOSTTY_GOTO_SPLIT_PREVIOUS: controller.focusRelativeSplit(offset: -1)
+        case GHOSTTY_GOTO_SPLIT_NEXT: controller.focusRelativeSplit(offset: 1)
+        case GHOSTTY_GOTO_SPLIT_LEFT: controller.focusSplit(.left)
+        case GHOSTTY_GOTO_SPLIT_RIGHT: controller.focusSplit(.right)
+        case GHOSTTY_GOTO_SPLIT_UP: controller.focusSplit(.up)
+        case GHOSTTY_GOTO_SPLIT_DOWN: controller.focusSplit(.down)
+        default: break
+        }
+    }
+
+    func ghosttyResizeSplit(
+        _ direction: ghostty_action_resize_split_direction_e,
+        amount: UInt16,
+        from surface: ghostty_surface_t?
+    ) {
+        let split: SplitDirection = switch direction {
+        case GHOSTTY_RESIZE_SPLIT_UP: .up
+        case GHOSTTY_RESIZE_SPLIT_DOWN: .down
+        case GHOSTTY_RESIZE_SPLIT_LEFT: .left
+        default: .right
+        }
+        controller(owning: surface)?.resizeSplit(split, amount: CGFloat(amount))
+    }
+
+    func ghosttyEqualizeSplits(from surface: ghostty_surface_t?) {
+        controller(owning: surface)?.equalizeSplits()
     }
 
     // MARK: - Menu actions
 
-    @objc private func newWindowAction(_ sender: Any?) { newWindow() }
-    @objc private func newTabAction(_ sender: Any?) { keyController?.newTab(kind: .tab) }
-    @objc private func newHiddenAction(_ sender: Any?) { keyController?.newTab(kind: .background) }
-    @objc private func closeTabAction(_ sender: Any?) { keyController?.closeActiveTab() }
-    @objc private func switchTabAction(_ sender: Any?) { keyController?.toggleTabPalette() }
+    /// A new window inherits the cwd of the terminal you were in, same as a new
+    /// tab or workspace does.
+    @objc private func newWindowAction(_ sender: Any?) {
+        newWindow(workingDirectory: keyController?.activeSurface?.pwd)
+    }
+
+    @objc private func newTabAction(_ sender: Any?) { keyController?.newTab() }
+    @objc private func newWorkspaceAction(_ sender: Any?) { keyController?.newWorkspace() }
+    @objc private func closeTabAction(_ sender: Any?) { keyController?.closeActiveSurface() }
+    @objc private func splitRightAction(_ sender: Any?) { keyController?.splitActiveSurface(.right) }
+    @objc private func splitDownAction(_ sender: Any?) { keyController?.splitActiveSurface(.down) }
+    @objc private func equalizeSplitsAction(_ sender: Any?) { keyController?.equalizeSplits() }
+
+    @objc private func focusSplitAction(_ sender: NSMenuItem) {
+        guard let direction = Self.splitDirections[safe: sender.tag] else { return }
+        keyController?.focusSplit(direction)
+    }
+    @objc private func closeWindowAction(_ sender: Any?) { keyController?.closeWindow() }
+    @objc private func switchWorkspaceAction(_ sender: Any?) { keyController?.toggleSwitcher() }
+    @objc private func renameWorkspaceAction(_ sender: Any?) { keyController?.renameWorkspace() }
     @objc private func nextTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: 1) }
     @objc private func prevTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: -1) }
     @objc private func increaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("increase_font_size:1") }
     @objc private func decreaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("decrease_font_size:1") }
     @objc private func resetFontAction(_ sender: Any?) { keyController?.performSurfaceAction("reset_font_size") }
 
-    @objc private func selectTabByIndex(_ sender: NSMenuItem) {
-        keyController?.selectTab(at: sender.tag)
+    @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
+        keyController?.selectWorkspace(at: sender.tag)
     }
 
     private func buildMenu() {
@@ -160,28 +230,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // Application menu
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About kterm", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(withTitle: "About Rune", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide kterm", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Hide Rune", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit kterm", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Rune", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
-        // Shell menu — tab lifecycle lives here.
+        // Shell menu — the two axes Rune navigates: tabs within a workspace,
+        // and workspaces within a window.
         let shellItem = NSMenuItem()
         let shellMenu = NSMenu(title: "Shell")
         add(to: shellMenu, "New Tab", #selector(newTabAction(_:)), "t")
-        // ⌘N opens a terminal that stays out of the tab strip and is reached
-        // through ⌘K, so the strip only ever holds what you want one click away.
-        add(to: shellMenu, "New Terminal in ⌘K", #selector(newHiddenAction(_:)), "n")
+        add(to: shellMenu, "New Workspace", #selector(newWorkspaceAction(_:)), "n")
         shellMenu.addItem(.separator())
+        // Everything stays in one window until you explicitly ask for another.
         add(to: shellMenu, "New Window", #selector(newWindowAction(_:)), "N")
             .keyEquivalentModifierMask = [.command, .shift]
-        add(to: shellMenu, "Close Tab", #selector(closeTabAction(_:)), "w")
+        shellMenu.addItem(.separator())
+        add(to: shellMenu, "Close Terminal", #selector(closeTabAction(_:)), "w")
+        add(to: shellMenu, "Close Window", #selector(closeWindowAction(_:)), "W")
+            .keyEquivalentModifierMask = [.command, .shift]
         shellItem.submenu = shellMenu
         mainMenu.addItem(shellItem)
 
@@ -209,18 +282,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
-        // Tabs menu — this is the heart of kterm's navigation.
+        // Splits menu — dividing a tab, and moving between the pieces.
+        let splitItem = NSMenuItem()
+        let splitMenu = NSMenu(title: "Splits")
+        add(to: splitMenu, "Split Right", #selector(splitRightAction(_:)), "d")
+        add(to: splitMenu, "Split Down", #selector(splitDownAction(_:)), "D")
+            .keyEquivalentModifierMask = [.command, .shift]
+        splitMenu.addItem(.separator())
+        // ⌘⌥arrow rather than ⌘arrow: the terminal needs the plain arrows, and
+        // ⌘arrow is line-start/end in a shell's editing mode.
+        for (i, spec) in [
+            ("Focus Split Left", "\u{2190}"),
+            ("Focus Split Right", "\u{2192}"),
+            ("Focus Split Up", "\u{2191}"),
+            ("Focus Split Down", "\u{2193}"),
+        ].enumerated() {
+            let item = add(to: splitMenu, spec.0, #selector(focusSplitAction(_:)), spec.1)
+            item.keyEquivalentModifierMask = [.command, .option]
+            item.tag = i
+        }
+        splitMenu.addItem(.separator())
+        add(to: splitMenu, "Equalize Splits", #selector(equalizeSplitsAction(_:)), "=")
+            .keyEquivalentModifierMask = [.command, .option]
+        splitItem.submenu = splitMenu
+        mainMenu.addItem(splitItem)
+
+        // Workspaces menu — ⌘K moves between workspaces; the strip in the title
+        // bar moves between the tabs of the one you're in.
         let tabsItem = NSMenuItem()
-        let tabsMenu = NSMenu(title: "Tabs")
-        add(to: tabsMenu, "Switch to Tab…", #selector(switchTabAction(_:)), "k")
+        let tabsMenu = NSMenu(title: "Workspaces")
+        add(to: tabsMenu, "Switch to Workspace…", #selector(switchWorkspaceAction(_:)), "k")
+        add(to: tabsMenu, "Rename Workspace…", #selector(renameWorkspaceAction(_:)), "r")
         tabsMenu.addItem(.separator())
         let next = add(to: tabsMenu, "Next Tab", #selector(nextTabAction(_:)), "]")
         next.keyEquivalentModifierMask = [.command, .shift]
         let prev = add(to: tabsMenu, "Previous Tab", #selector(prevTabAction(_:)), "[")
         prev.keyEquivalentModifierMask = [.command, .shift]
         tabsMenu.addItem(.separator())
+        // ⌘1–⌘9 address the ⌘K list. Tabs get cycling instead: there are only
+        // ever a handful in a workspace, and reserving nine more global chords
+        // for them isn't worth what it takes from the terminal.
         for i in 1...9 {
-            let item = add(to: tabsMenu, "Tab \(i)", #selector(selectTabByIndex(_:)), "\(i)")
+            let item = add(
+                to: tabsMenu, "Workspace \(i)", #selector(selectWorkspaceByIndex(_:)), "\(i)")
             item.tag = i - 1
         }
         tabsItem.submenu = tabsMenu

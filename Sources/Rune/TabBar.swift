@@ -1,0 +1,293 @@
+import Cocoa
+
+/// A compact tab strip that lives *inside* the title bar, to the right of the
+/// window controls.
+///
+/// It deliberately costs no vertical space beyond the title bar Rune already
+/// reserves, which is the whole point: the strip is for the handful of tabs you
+/// want one click away, and everything else lives in the ⌘K switcher.
+///
+/// With a single tab there is nothing to switch between, so the strip gets out
+/// of the way entirely and the title bar just names what's running, centred.
+@MainActor
+final class TabBar: NSView {
+    /// Height of the strip. Matches the title bar inset so the terminal below
+    /// is unaffected by the bar existing.
+    static let height: CGFloat = 28
+
+    /// Space reserved for the traffic lights.
+    private static let leadingInset: CGFloat = 78
+    private static let maxChipWidth: CGFloat = 160
+
+    /// Painted to match the terminal below, so the title bar reads as part of
+    /// the same surface rather than as a separate strip of chrome.
+    var backgroundColor: NSColor = .clear {
+        didSet {
+            layer?.backgroundColor = backgroundColor.cgColor
+            // Chips are tinted from label colors, which flip with the
+            // appearance the controller derives from this color.
+            update(tabs: tabs, active: active, workspaceName: workspaceName)
+        }
+    }
+
+    var onSelect: ((Tab) -> Void)?
+    var onClose: ((Tab) -> Void)?
+    var onNewTab: (() -> Void)?
+
+    private let stack = NSStackView()
+    private let newButton = NSButton()
+    /// What the title bar shows instead of a strip when there's one tab.
+    private let titleLabel = NSTextField(labelWithString: "")
+
+    private var tabs: [Tab] = []
+    private weak var active: Tab?
+    private var workspaceName: String?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        build()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    private func build() {
+        wantsLayer = true
+
+        // Tabs are flush rectangles filling the strip's height, editor-style:
+        // the active one is the same colour as the terminal below it, so it
+        // reads as attached to what it's showing rather than floating above it.
+        stack.orientation = .horizontal
+        stack.spacing = 0
+        stack.alignment = .centerY
+        stack.distribution = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+
+        newButton.title = ""
+        newButton.image = NSImage(
+            systemSymbolName: "plus", accessibilityDescription: "New Tab")
+        newButton.imagePosition = .imageOnly
+        newButton.isBordered = false
+        newButton.bezelStyle = .inline
+        newButton.contentTintColor = .tertiaryLabelColor
+        newButton.target = self
+        newButton.action = #selector(newTabClicked)
+        newButton.toolTip = "New Tab (⌘T)"
+        newButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(newButton)
+
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.alignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(titleLabel)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: Self.leadingInset),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            newButton.leadingAnchor.constraint(
+                equalTo: stack.trailingAnchor, constant: 6),
+            newButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            newButton.widthAnchor.constraint(equalToConstant: 20),
+            newButton.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -12),
+
+            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Clear of the traffic lights on both sides, so a long title
+            // truncates rather than sliding under them.
+            titleLabel.leadingAnchor.constraint(
+                greaterThanOrEqualTo: leadingAnchor, constant: Self.leadingInset),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
+        ])
+    }
+
+    /// Rebuild the strip from the active workspace's tabs. `workspaceName` is
+    /// the ⌘R name, if one is set — it wins over the terminal's own title,
+    /// since naming a workspace and then not seeing the name would be odd.
+    func update(tabs: [Tab], active: Tab?, workspaceName: String? = nil) {
+        self.tabs = tabs
+        self.active = active
+        self.workspaceName = workspaceName
+
+        // One tab is nothing to choose between: name it and show no chrome.
+        let single = tabs.count <= 1
+        stack.isHidden = single
+        newButton.isHidden = single
+        titleLabel.isHidden = !single
+        if single {
+            titleLabel.stringValue = workspaceName ?? active?.title ?? ""
+        }
+
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+
+        for tab in tabs {
+            let chip = TabChip(
+                title: tab.title,
+                isActive: tab === active,
+                maxWidth: Self.maxChipWidth,
+                background: backgroundColor)
+            chip.onSelect = { [weak self, weak tab] in
+                guard let tab else { return }
+                self?.onSelect?(tab)
+            }
+            chip.onClose = { [weak self, weak tab] in
+                guard let tab else { return }
+                self?.onClose?(tab)
+            }
+            stack.addArrangedSubview(chip)
+        }
+    }
+
+    @objc private func newTabClicked() {
+        onNewTab?()
+    }
+
+    // The strip overlaps the draggable title bar, so let clicks that miss a
+    // chip fall through to the window for dragging.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
+}
+
+/// One tab in the strip: a flush rectangle the full height of the bar, with an
+/// accent edge along the top of the active one.
+@MainActor
+private final class TabChip: NSView {
+    var onSelect: (() -> Void)?
+    var onClose: (() -> Void)?
+
+    private let label = NSTextField(labelWithString: "")
+    private let closeButton = NSButton()
+    private let accent = NSView()
+    private let separator = NSView()
+    private let isActive: Bool
+    private let background: NSColor
+    private var hovering = false
+
+    init(title: String, isActive: Bool, maxWidth: CGFloat, background: NSColor) {
+        self.isActive = isActive
+        self.background = background
+        super.init(frame: .zero)
+
+        wantsLayer = true
+
+        // A 2pt bar along the top edge marks the active tab. It sits on the
+        // boundary rather than around the tab, so nothing boxes in the title.
+        accent.wantsLayer = true
+        accent.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        accent.isHidden = !isActive
+        accent.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(accent)
+
+        // A hairline between neighbours, since there is no gap to separate them.
+        separator.wantsLayer = true
+        separator.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(separator)
+
+        label.stringValue = title
+        label.font = .systemFont(ofSize: 11, weight: isActive ? .medium : .regular)
+        label.textColor = isActive ? .labelColor : .secondaryLabelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        closeButton.image = NSImage(
+            systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
+        closeButton.imagePosition = .imageOnly
+        closeButton.isBordered = false
+        closeButton.bezelStyle = .inline
+        closeButton.symbolConfiguration = .init(pointSize: 8, weight: .semibold)
+        closeButton.contentTintColor = .secondaryLabelColor
+        closeButton.target = self
+        closeButton.action = #selector(closeClicked)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        // Revealed on hover so idle tabs stay quiet.
+        closeButton.isHidden = !isActive
+        addSubview(closeButton)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 84),
+            widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
+
+            accent.topAnchor.constraint(equalTo: topAnchor),
+            accent.leadingAnchor.constraint(equalTo: leadingAnchor),
+            accent.trailingAnchor.constraint(equalTo: trailingAnchor),
+            accent.heightAnchor.constraint(equalToConstant: 2),
+
+            separator.trailingAnchor.constraint(equalTo: trailingAnchor),
+            separator.topAnchor.constraint(equalTo: topAnchor),
+            separator.bottomAnchor.constraint(equalTo: bottomAnchor),
+            separator.widthAnchor.constraint(equalToConstant: 1),
+
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            closeButton.leadingAnchor.constraint(
+                greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
+            closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            closeButton.widthAnchor.constraint(equalToConstant: 11),
+        ])
+
+        updateBackground()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .inVisibleRect, .activeInActiveApp],
+            owner: self,
+            userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        closeButton.isHidden = false
+        updateBackground()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        closeButton.isHidden = !isActive
+        updateBackground()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onSelect?()
+    }
+
+    @objc private func closeClicked() {
+        onClose?()
+    }
+
+    /// The active tab is the terminal's own colour, so it reads as continuous
+    /// with the content below it; the rest are sunk behind it. Blending toward
+    /// black rather than overlaying a translucent black keeps the strip opaque,
+    /// which matters because the title bar is transparent.
+    private func updateBackground() {
+        let sink: CGFloat = isActive ? 0 : (hovering ? 0.10 : 0.20)
+        let color = background.blended(withFraction: sink, of: .black) ?? background
+        layer?.backgroundColor = color.cgColor
+    }
+}

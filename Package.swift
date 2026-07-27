@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "kterm",
+    name: "Rune",
     platforms: [.macOS(.v13)],
     targets: [
         .binaryTarget(
@@ -10,9 +10,9 @@ let package = Package(
             path: "vendor/ghostty/macos/GhosttyKit.xcframework"
         ),
         .executableTarget(
-            name: "kterm",
+            name: "Rune",
             dependencies: ["GhosttyKit"],
-            path: "Sources/kterm",
+            path: "Sources/Rune",
             linkerSettings: [
                 // libghostty statically bundles C++ dependencies (glslang,
                 // oniguruma, harfbuzz and friends) and expects the host to

@@ -2,7 +2,7 @@ import Cocoa
 import GhosttyKit
 import OSLog
 
-let log = Logger(subsystem: "com.kterm", category: "kterm")
+let log = Logger(subsystem: "com.rune", category: "Rune")
 
 /// Errors surfaced while bringing libghostty up.
 enum GhosttyError: Error, CustomStringConvertible {
@@ -21,7 +21,7 @@ enum GhosttyError: Error, CustomStringConvertible {
     }
 }
 
-/// Things libghostty asks the host application to do that kterm itself must
+/// Things libghostty asks the host application to do that Rune itself must
 /// decide on (window/tab management, quitting, and so on).
 @MainActor
 protocol GhosttyAppDelegate: AnyObject {
@@ -31,6 +31,15 @@ protocol GhosttyAppDelegate: AnyObject {
     func ghosttyQuit()
     func ghosttyGotoTab(_ target: ghostty_action_goto_tab_e, from surface: ghostty_surface_t?)
     func ghosttyToggleCommandPalette(from surface: ghostty_surface_t?)
+    func ghosttyNewSplit(
+        _ direction: ghostty_action_split_direction_e, from surface: ghostty_surface_t?)
+    func ghosttyGotoSplit(
+        _ target: ghostty_action_goto_split_e, from surface: ghostty_surface_t?)
+    func ghosttyResizeSplit(
+        _ direction: ghostty_action_resize_split_direction_e,
+        amount: UInt16,
+        from surface: ghostty_surface_t?)
+    func ghosttyEqualizeSplits(from surface: ghostty_surface_t?)
 }
 
 /// Owns the single global `ghostty_app_t` and the libghostty runtime callbacks.
@@ -65,12 +74,12 @@ final class GhosttyApp {
             // literals: a closure written here would inherit this class's
             // @MainActor isolation, and libghostty calls several of them from
             // its own threads.
-            wakeup_cb: ktermWakeup,
-            action_cb: ktermAction,
-            read_clipboard_cb: ktermReadClipboard,
-            confirm_read_clipboard_cb: ktermConfirmReadClipboard,
-            write_clipboard_cb: ktermWriteClipboard,
-            close_surface_cb: ktermCloseSurface
+            wakeup_cb: runeWakeup,
+            action_cb: runeAction,
+            read_clipboard_cb: runeReadClipboard,
+            confirm_read_clipboard_cb: runeConfirmReadClipboard,
+            write_clipboard_cb: runeWriteClipboard,
+            close_surface_cb: runeCloseSurface
         )
 
         guard let app = ghostty_app_new(&runtime, cfg) else { throw GhosttyError.appFailed }
@@ -119,12 +128,22 @@ final class GhosttyApp {
         ghostty_app_set_focus(app, focused)
     }
 
+    /// The configured terminal background. Rune paints its own chrome with
+    /// this so the title bar doesn't sit as a grey band above the terminal.
+    var backgroundColor: NSColor {
+        guard let config else { return .black }
+        var color = ghostty_config_color_s()
+        let key = "background"
+        guard ghostty_config_get(config, &color, key, UInt(key.utf8.count)) else { return .black }
+        return NSColor(ghostty: color)
+    }
+
     var needsConfirmQuit: Bool {
         guard let app else { return false }
         return ghostty_app_needs_confirm_quit(app)
     }
 
-    /// True when libghostty's config binds this key event to an action. kterm
+    /// True when libghostty's config binds this key event to an action. Rune
     /// checks its own bindings first, then defers to this.
     func isBinding(_ event: NSEvent) -> Bool {
         guard let config else { return false }
@@ -167,6 +186,18 @@ final class GhosttyApp {
             view(for: surface)?.setPwd(String(cString: cPwd))
             return true
 
+        case GHOSTTY_ACTION_COLOR_CHANGE:
+            // A program (or a theme) can change the background at runtime, and
+            // the title bar is painted to match, so follow it.
+            let change = action.action.color_change
+            guard change.kind == GHOSTTY_ACTION_COLOR_KIND_BACKGROUND else { return true }
+            view(for: surface)?.setBackgroundColor(
+                NSColor(srgbRed: Double(change.r) / 255,
+                        green: Double(change.g) / 255,
+                        blue: Double(change.b) / 255,
+                        alpha: 1))
+            return true
+
         case GHOSTTY_ACTION_CELL_SIZE:
             let size = action.action.cell_size
             view(for: surface)?.cellSize = CGSize(
@@ -196,6 +227,24 @@ final class GhosttyApp {
 
         case GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE:
             delegate?.ghosttyToggleCommandPalette(from: surface)
+            return true
+
+        case GHOSTTY_ACTION_NEW_SPLIT:
+            delegate?.ghosttyNewSplit(action.action.new_split, from: surface)
+            return true
+
+        case GHOSTTY_ACTION_GOTO_SPLIT:
+            delegate?.ghosttyGotoSplit(action.action.goto_split, from: surface)
+            return true
+
+        case GHOSTTY_ACTION_RESIZE_SPLIT:
+            let resize = action.action.resize_split
+            delegate?.ghosttyResizeSplit(
+                resize.direction, amount: resize.amount, from: surface)
+            return true
+
+        case GHOSTTY_ACTION_EQUALIZE_SPLITS:
+            delegate?.ghosttyEqualizeSplits(from: surface)
             return true
 
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:
@@ -233,9 +282,30 @@ final class GhosttyApp {
             return true
 
         default:
-            // Everything else is either unsupported in kterm or a no-op.
+            // Everything else is either unsupported in Rune or a no-op.
             return false
         }
+    }
+}
+
+// MARK: - Colors
+
+extension NSColor {
+    convenience init(ghostty color: ghostty_config_color_s) {
+        self.init(
+            srgbRed: Double(color.r) / 255,
+            green: Double(color.g) / 255,
+            blue: Double(color.b) / 255,
+            alpha: 1)
+    }
+
+    /// Whether chrome drawn against this colour needs light-on-dark treatment.
+    /// Perceived luminance, not raw brightness.
+    var isDark: Bool {
+        guard let rgb = usingColorSpace(.sRGB) else { return true }
+        let luminance =
+            0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent
+        return luminance < 0.5
     }
 }
 
@@ -245,18 +315,18 @@ final class GhosttyApp {
 // where they carry no actor isolation. Anything touching app or view state
 // hops to the main actor first.
 
-private func ktermApp(_ userdata: UnsafeMutableRawPointer?) -> GhosttyApp? {
+private func runeApp(_ userdata: UnsafeMutableRawPointer?) -> GhosttyApp? {
     guard let userdata else { return nil }
     return Unmanaged<GhosttyApp>.fromOpaque(userdata).takeUnretainedValue()
 }
 
 /// libghostty needs a tick. This can arrive on any thread, so bounce to main.
-private func ktermWakeup(_ userdata: UnsafeMutableRawPointer?) {
-    guard let app = ktermApp(userdata) else { return }
+private func runeWakeup(_ userdata: UnsafeMutableRawPointer?) {
+    guard let app = runeApp(userdata) else { return }
     DispatchQueue.main.async { MainActor.assumeIsolated { app.tick() } }
 }
 
-private func ktermCloseSurface(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
+private func runeCloseSurface(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
     guard let userdata else { return }
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     DispatchQueue.main.async {
@@ -266,7 +336,7 @@ private func ktermCloseSurface(_ userdata: UnsafeMutableRawPointer?, _ processAl
     }
 }
 
-private func ktermReadClipboard(
+private func runeReadClipboard(
     _ userdata: UnsafeMutableRawPointer?,
     _ location: ghostty_clipboard_e,
     _ state: UnsafeMutableRawPointer?
@@ -286,20 +356,20 @@ private func ktermReadClipboard(
     return true
 }
 
-private func ktermConfirmReadClipboard(
+private func runeConfirmReadClipboard(
     _ userdata: UnsafeMutableRawPointer?,
     _ string: UnsafePointer<CChar>?,
     _ state: UnsafeMutableRawPointer?,
     _ request: ghostty_clipboard_request_e
 ) {
-    // kterm trusts the clipboard; a confirmation UI can come later.
+    // Rune trusts the clipboard; a confirmation UI can come later.
     guard let userdata, let string else { return }
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
     guard let surface = view.surface else { return }
     ghostty_surface_complete_clipboard_request(surface, string, state, true)
 }
 
-private func ktermWriteClipboard(
+private func runeWriteClipboard(
     _ userdata: UnsafeMutableRawPointer?,
     _ location: ghostty_clipboard_e,
     _ content: UnsafePointer<ghostty_clipboard_content_s>?,
@@ -309,7 +379,7 @@ private func ktermWriteClipboard(
     guard let content, len > 0 else { return }
     guard location == GHOSTTY_CLIPBOARD_STANDARD else { return }
 
-    // Take the first text/plain entry; that's all kterm writes today.
+    // Take the first text/plain entry; that's all Rune writes today.
     var text: String?
     for i in 0..<len {
         let item = content[i]
@@ -327,7 +397,7 @@ private func ktermWriteClipboard(
     pasteboard.setString(text, forType: .string)
 }
 
-private func ktermAction(
+private func runeAction(
     _ cApp: ghostty_app_t?,
     _ target: ghostty_target_s,
     _ action: ghostty_action_s

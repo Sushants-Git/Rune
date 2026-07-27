@@ -10,18 +10,7 @@ import GhosttyKit
 /// Input handling here is adapted from Ghostty's own macOS embedding layer
 /// (MIT, Mitchell Hashimoto and Ghostty contributors).
 final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
-    /// Whether this terminal earns a slot in the tab strip.
-    enum Kind {
-        /// Created with ⌘T. Shown in the tab bar and in ⌘K.
-        case tab
-        /// Created with ⌘N. Reachable only through ⌘K, keeping the strip short
-        /// no matter how many terminals are open.
-        case background
-    }
-
     let id = UUID()
-
-    var kind: Kind = .tab
 
     private(set) var surface: ghostty_surface_t?
     private(set) weak var ghosttyApp: GhosttyApp?
@@ -30,11 +19,18 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     private(set) var title: String = "Terminal"
     /// Working directory reported by the shell via OSC 7.
     private(set) var pwd: String?
+    /// This surface's background, from config and then from any OSC 11 change.
+    /// Rune paints the title bar with it.
+    private(set) var backgroundColor: NSColor = .black
 
     var cellSize: CGSize = .zero
 
     /// Called whenever the title or pwd changes so the switcher can refresh.
     var onMetadataChange: (() -> Void)?
+    /// Called when this surface should take focus — a click in a split, say.
+    /// Routed through the controller rather than grabbing first responder
+    /// directly, so the tab's idea of which pane is focused stays true.
+    var onFocusRequest: (() -> Void)?
 
     private var markedText = NSMutableAttributedString()
     /// Text committed by the input method during the current keyDown, if any.
@@ -49,6 +45,7 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     init(app: GhosttyApp, command: String? = nil, workingDirectory: String? = nil) throws {
         self.ghosttyApp = app
         super.init(frame: .zero)
+        self.backgroundColor = app.backgroundColor
 
         guard let cApp = app.app else { throw GhosttyError.appFailed }
 
@@ -105,6 +102,11 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     // MARK: - Geometry and focus
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// Take the click that activates the window, rather than swallowing it.
+    /// Without this the first click into a background Rune only raises the
+    /// window, so clicking straight onto a split doesn't focus that split.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     // libghostty draws its IOSurface into a layer with top-left gravity, so the
     // view has to use a top-left origin too.
@@ -188,7 +190,7 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     }
 
     func applyInitialSize(width: Int, height: Int) {
-        // kterm sizes windows itself; the initial size request only matters for
+        // Rune sizes windows itself; the initial size request only matters for
         // the very first window, which the window controller handles.
         _ = (width, height)
     }
@@ -201,6 +203,12 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         onMetadataChange?()
     }
 
+    func setBackgroundColor(_ color: NSColor) {
+        guard backgroundColor != color else { return }
+        backgroundColor = color
+        onMetadataChange?()
+    }
+
     func setPwd(_ newPwd: String) {
         // The pwd arrives as a file:// URL from OSC 7.
         let path = URL(string: newPwd)?.path ?? newPwd
@@ -209,25 +217,48 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         onMetadataChange?()
     }
 
+    /// The coding agent running in this terminal, if Rune recognises one.
+    /// Queried live rather than cached: what's in the foreground changes every
+    /// time you run something.
+    var agent: AgentIcon? {
+        guard let surface else { return nil }
+        let pid = ghostty_surface_foreground_pid(surface)
+        guard pid > 0 else { return nil }
+        return AgentIcon.detect(arguments: ProcessArguments.of(pid: pid_t(pid)))
+    }
+
     /// The full label for this surface, used by the ⌘K switcher.
     var displayTitle: String {
         title.isEmpty ? (pwd.map { ($0 as NSString).lastPathComponent } ?? "Terminal") : title
     }
 
-    /// A short label for the tab strip.
+    /// A short label — what the tab strip and ⌘K call this terminal.
     ///
-    /// Shells report a title like `user@host:/some/long/path`, which is far too
-    /// wide for a chip, so that shape collapses to just the directory name. A
-    /// title in any other shape was set by a running program and is worth
+    /// Shells report a title that is really just a path (`user@host:/some/path`
+    /// or `…/Workspace/@devfolio/devfolio-frontend`), which is far too wide for
+    /// a chip and, worse, makes every workspace look alike. So a path collapses
+    /// to its last component the way a zsh prompt does — `devfolio-frontend`.
+    /// A title in any other shape was set by a running program and is worth
     /// showing as-is.
     var shortTitle: String {
-        guard let colon = displayTitle.firstIndex(of: ":"),
-              displayTitle[..<colon].contains("@")
-        else { return displayTitle }
+        let title = displayTitle
 
-        let path = String(displayTitle[displayTitle.index(after: colon)...])
-        let last = (path as NSString).lastPathComponent
-        return last.isEmpty ? path : last
+        // `user@host:/some/path`
+        if let colon = title.firstIndex(of: ":"), title[..<colon].contains("@") {
+            return Self.lastComponent(String(title[title.index(after: colon)...]))
+        }
+        if title.contains("/") { return Self.lastComponent(title) }
+        return title
+    }
+
+    /// The folder name, with `~` kept as `~` rather than becoming your username.
+    static func lastComponent(_ path: String) -> String {
+        var trimmed = path
+        while trimmed.count > 1, trimmed.hasSuffix("/") { trimmed.removeLast() }
+        if trimmed == "~" || trimmed == NSHomeDirectory() { return "~" }
+
+        let last = (trimmed as NSString).lastPathComponent
+        return last.isEmpty ? trimmed : last
     }
 
     // MARK: - Mouse
@@ -286,8 +317,18 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     ) {
         guard let surface else { return }
         // A click anywhere in the terminal should also give it keyboard focus.
-        if state == .press, window?.firstResponder !== self {
-            window?.makeFirstResponder(self)
+        //
+        // Unconditionally, *not* gated on "am I already first responder": that
+        // check assumed AppKit's first responder and the tab's idea of the
+        // focused pane can't disagree, and they can. When they had drifted, the
+        // clicked pane was already first responder, the request never fired,
+        // and clicking a split simply did nothing.
+        if state == .press {
+            if let onFocusRequest {
+                onFocusRequest()
+            } else if window?.firstResponder !== self {
+                window?.makeFirstResponder(self)
+            }
         }
         _ = ghostty_surface_mouse_button(
             surface,

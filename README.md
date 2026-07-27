@@ -1,47 +1,85 @@
-# kterm
+# Rune
 
 A macOS terminal built on [libghostty](https://github.com/ghostty-org/ghostty).
 
 Ghostty does the hard part — VT parsing, pty, font shaping, Metal rendering.
-kterm is the app shell around it: window, tabs, and the switcher.
+Rune is the app shell around it: windows, workspaces, tabs, splits, and the
+switcher.
 
-## Two kinds of terminal
+## Three axes: splits, tabs, workspaces
 
 The usual problem with tabs is that the strip is the only way in, so every
 terminal you open has to earn a slot in it — and past about eight, the labels
 truncate to the point where you're picking by position rather than by name.
 
-kterm splits the two jobs:
+Rune gives you three places to put things, and each list holds exactly one kind
+of thing:
 
-- **`⌘T` makes a tab.** It gets a chip in the strip, one click away. The strip
-  lives *inside* the title bar, next to the window controls, so it costs no
-  vertical space at all.
-- **`⌘N` makes a terminal that isn't in the strip.** It's reachable only
-  through `⌘K`. Open as many as you like — the strip stays short.
+- **`⌘D` / `⌘⇧D` split the terminal** right or down, Ghostty-style. Panes are
+  side by side on screen, with a draggable divider between them. `⌘⌥`+arrows
+  move the keyboard between them, and the panes you *aren't* typing in recede
+  slightly. Nothing is drawn on top of the active one — no outline, no glow, no
+  shadow — because that's the pane you're reading.
+- **`⌘T` makes a tab**, in the workspace you're looking at. It gets a chip in
+  the strip, one click away. The strip lives *inside* the title bar, next to the
+  window controls, so it costs no vertical space at all. A tab is a whole split
+  layout, not a single terminal.
+- **`⌘N` makes a workspace.** Workspaces don't appear in any strip — they're
+  what `⌘K` lists. Open as many as you like; each one's strip stays short.
 
-Both kinds show up in `⌘K`, which is the switcher:
+So: the strip is the current workspace's tabs, and `⌘K` is the workspaces.
+Everything lives in the *same* macOS window — switching is instant and nothing
+moves on screen but the terminal itself. `⌘⇧N` is the escape hatch to a
+genuinely separate window when you want one on another display or Space.
 
-- Ordered most-recently-used with the **current terminal demoted to the
-  bottom**, so `⌘K ⏎` toggles between the two you're actually working in.
-- Type to filter by title or working directory (subsequence match, so `usl`
-  finds `/usr/local`).
-- `↑`/`↓` or `⌃P`/`⌃N` to move, `⏎` to switch, `⎋` to dismiss.
-- A `⌘K` badge marks the terminals that have no chip in the strip.
+**A workspace with one tab shows no strip at all** — there's nothing to choose
+between, so the title bar just names what's running, centred.
 
-When the terminal you're in is one of the `⌘N` ones, no chip is highlighted, so
-the right side of the strip shows `⌘K · <name>` to tell you where you are.
+`⌘K` is the switcher:
+
+- **Always in creation order**, and it opens on the workspace you're already in.
+  Picking one doesn't move it in the list — the order you learn is the order it
+  keeps.
+- **`↑`/`↓` preview.** Moving the selection swaps that workspace in behind the
+  overlay so you can see what you're about to pick. `⏎` keeps it; `⎋` (or a
+  click outside) puts you back where you started, having selected nothing.
+- **`⌘R` renames the highlighted row**, in place — the name turns into a text
+  field where it already sits, rather than a dialog stacked on the switcher.
+  `⏎` saves, `⎋` reverts, and an empty name hands it back to the terminal.
+  Pressing `⌘R` with the switcher closed opens it first, since that's where the
+  name lives.
+- Anything that takes over the screen — `⌘T`, `⌘N`, `⌘D`, `⌘⇧N`, clicking a tab
+  — puts the switcher away and goes there. Unlike `⎋` it doesn't rewind: you
+  asked for the new thing while looking at the previewed workspace, so that's
+  where it lands.
+- Type to filter by the name on the row, and nothing else (subsequence match,
+  so `usl` finds `usr-local`). Matching against directories or background tabs
+  made rows light up for reasons you couldn't see on screen.
+- `⌃P`/`⌃N` work too.
+- A `current` badge marks where you came from, and a count marks whichever
+  thing a workspace has more than one of — tabs, or panes when it's a single
+  split tab.
+
+The title bar is painted in the terminal's own background color, so the window
+reads as one surface rather than a terminal wearing a grey hat.
 
 ## Keybindings
 
 | Key | Action |
 | --- | --- |
-| `⌘K` | Switch to terminal… |
-| `⌘T` | New tab, with a chip in the strip |
-| `⌘N` | New terminal, reachable only from `⌘K` |
+| `⌘D` / `⌘⇧D` | Split right / down |
+| `⌘⌥←↑↓→` | Focus the pane in that direction |
+| `⌘⌥=` | Equalize the splits |
+| `⌘K` | Switch to workspace… |
+| `⌘R` | Rename the workspace, in place in `⌘K` |
+| `⌘T` | New tab in this workspace |
+| `⌘N` | New workspace |
 | `⌘⇧N` | New window |
-| `⌘W` | Close the current terminal |
-| `⌘⇧]` / `⌘⇧[` | Next / previous tab in the strip |
-| `⌘1`–`⌘9` | Jump to a tab in the strip by position |
+| `⌘W` | Close the focused terminal |
+| `⌘⇧W` | Close the window |
+| `⌘⇧]` / `⌘⇧[` | Next / previous tab |
+| `⌘1`–`⌘9` | Jump to a tab by position |
+| `⌥⇧1`–`⌥⇧9` | Jump to a workspace by position in `⌘K` |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
 
@@ -55,8 +93,8 @@ Requires macOS 13+, Zig 0.16.0 (`brew install zig`), and Xcode.
 ```sh
 ./scripts/fetch-ghostty.sh      # clone the pinned ghostty checkout
 ./scripts/build-libghostty.sh   # build GhosttyKit.xcframework (slow, once)
-./scripts/bundle.sh             # build kterm and assemble build/kterm.app
-open build/kterm.app
+./scripts/bundle.sh             # build Rune and assemble build/Rune.app
+open build/Rune.app
 ```
 
 `bundle.sh` runs the libghostty build for you if the xcframework is missing.
@@ -79,14 +117,18 @@ On some installs `xcrun metal` still can't find the toolchain after that;
 ## Layout
 
 ```
-Sources/kterm/
+Sources/Rune/
   Ghostty/
     GhosttyApp.swift          libghostty app handle + runtime callbacks
     GhosttySurfaceView.swift  NSView hosting one surface; input forwarding
     GhosttyInput.swift        AppKit <-> libghostty key/modifier translation
-  TerminalController.swift    one window, N surfaces, one visible
+  TerminalController.swift    one window: N workspaces, one tab visible
+  Split.swift                 a tab's split tree: panes, dividers, focus
   TabBar.swift                the ⌘T strip, drawn inside the title bar
-  TabPalette.swift            the ⌘K switcher
+  AgentIcon.swift             agent detection + their marks, as inline SVG
+  ProjectIcon.swift           finds the favicon / launcher icon a repo ships
+  SwitcherOverlay.swift       the ⌘K backdrop the palette floats on
+  SwitcherPalette.swift       the switcher's filter field, list, ⌘R renaming
   AppDelegate.swift           menus, windows, libghostty action handling
 ```
 
@@ -95,19 +137,30 @@ submodule, and is gitignored.
 
 ### Notes on the embedding API
 
-Two things that cost real debugging time, recorded so they don't again:
+Four things that cost real debugging time, recorded so they don't again:
 
 - `ghostty_surface_set_occlusion` takes **`visible`**, not `occluded`. Passing
   it backwards silently stops the renderer — you get a correctly sized window
   that draws nothing.
 - The surface view must be **flipped**. libghostty installs its own
   layer-hosting `CALayer` and draws its `IOSurface` with top-left gravity.
+- Because libghostty owns that layer, anything Rune wants to draw *on* a
+  terminal — the split focus outline, for one — needs a wrapper view of its
+  own. That's what `SplitPane` is for.
+- `NSImage(data:)` decodes SVG, undocumented but real (you get an
+  `_NSSVGImageRep`). That's why `AgentIcon` keeps the marks as markup instead
+  of hand-translating them into bezier paths. Its parser does **not** handle
+  packed elliptical-arc flags, though: `a.637.637 0 000 1.272` renders as a
+  mangled shape with its cut-outs filled in. Space the flags out —
+  `a.637 .637 0 0 0 0 1.272` — and it's correct. Most SVGs off the web are
+  minified into the packed form, so this bites immediately.
 
 ### Development
 
-`KTERM_DEMO=<n>` opens `n` extra terminals in known directories, alternating
-between the two kinds, and drops straight into the switcher — for exercising
-the tab UI without driving the app through synthetic keystrokes.
+`RUNE_DEMO=<n>` floats the window (so it stays capturable while you inspect
+it) and opens `n` extra workspaces in known directories, some with a second tab,
+before dropping into the switcher — for exercising the UI without driving the
+app through synthetic keystrokes. `RUNE_DEMO=0` just floats a plain window.
 
 ## Credit
 

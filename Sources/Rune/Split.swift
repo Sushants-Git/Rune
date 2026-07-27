@@ -1,0 +1,363 @@
+import Cocoa
+
+enum SplitDirection {
+    case right, down, left, up
+
+    var isVertical: Bool { self == .right || self == .left }
+    /// Whether the new pane goes after the existing one in the split view's
+    /// subview order.
+    var insertsAfter: Bool { self == .right || self == .down }
+}
+
+/// One terminal inside a tab's split layout.
+///
+/// The surface gets a wrapper rather than sitting in the split view directly:
+/// libghostty owns the surface's layer entirely, so anything Rune draws over a
+/// terminal needs a view of its own to live on.
+@MainActor
+final class SplitPane: NSView {
+    let surface: GhosttySurfaceView
+
+    /// Only meaningful when the tab actually has more than one pane — a lone
+    /// terminal doesn't need to be told anything about focus.
+    var showsFocus = false { didSet { syncDim() } }
+    var isFocused = false { didSet { syncDim() } }
+
+    /// Laid over the panes you *aren't* typing in. Nothing is ever drawn over
+    /// the live one.
+    private let wash = PassthroughView()
+
+    /// What that wash is made of. The controller keeps it in step with the
+    /// terminal's own background — see `TerminalController.syncChrome`.
+    var washColor: NSColor = .black.withAlphaComponent(0.45) { didSet { syncDim() } }
+
+    init(surface: GhosttySurfaceView) {
+        self.surface = surface
+        super.init(frame: .zero)
+
+        wantsLayer = true
+
+        surface.autoresizingMask = [.width, .height]
+        surface.frame = bounds
+        addSubview(surface)
+
+        wash.wantsLayer = true
+        wash.autoresizingMask = [.width, .height]
+        wash.frame = bounds
+        wash.isHidden = true
+        addSubview(wash, positioned: .above, relativeTo: surface)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func layout() {
+        super.layout()
+        surface.frame = bounds
+        wash.frame = bounds
+    }
+
+    private func syncDim() {
+        // The live pane shows the terminal exactly as configured — no film, no
+        // outline, no shadow. The others get a wash mixed from the terminal's
+        // own background, which fades their *text* as well as darkening them.
+        //
+        // Fading the text matters: on a near-black theme the background can't
+        // get any darker, so a plain black wash does nothing visible. And it
+        // has to be a wash rather than `alphaValue` — lowering the pane's
+        // opacity made it translucent right through the window, so whatever
+        // app was behind Rune showed through the idle splits.
+        wash.isHidden = !(showsFocus && !isFocused)
+        wash.layer?.backgroundColor = washColor.cgColor
+    }
+}
+
+/// A view that is drawn but never clicked, so the dimming over an unfocused
+/// pane doesn't eat the click that focuses it.
+private final class PassthroughView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// A split view with a hairline divider tinted to the terminal's own colours,
+/// so a split reads as a seam rather than as a slab of window chrome.
+@MainActor
+final class RuneSplitView: NSSplitView, NSSplitViewDelegate {
+    /// Set by the controller alongside the rest of the chrome.
+    var dividerTint: NSColor = .separatorColor {
+        didSet { needsDisplay = true }
+    }
+
+    init(vertical: Bool) {
+        super.init(frame: .zero)
+        isVertical = vertical
+        dividerStyle = .thin
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override var dividerThickness: CGFloat { 1 }
+    override var dividerColor: NSColor { dividerTint }
+
+    // Panes are equal citizens: nothing should be pinned or collapsed.
+    func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
+
+    func splitView(
+        _ splitView: NSSplitView,
+        shouldAdjustSizeOfSubview view: NSView
+    ) -> Bool { true }
+}
+
+/// One tab: a tree of terminals split horizontally and vertically.
+///
+/// The view hierarchy *is* the tree — a `SplitPane` is a leaf and a
+/// `RuneSplitView` is a branch — so splitting and closing are local surgery on
+/// two or three views rather than a rebuild, and the divider positions you drag
+/// survive everything else that happens in the tab.
+@MainActor
+final class Tab {
+    let id = UUID()
+
+    /// Hosts the split hierarchy. The controller shows and hides this.
+    let view = NSView()
+
+    private(set) weak var focused: GhosttySurfaceView?
+
+    init(first surface: GhosttySurfaceView) {
+        view.autoresizingMask = [.width, .height]
+
+        let pane = SplitPane(surface: surface)
+        pane.frame = view.bounds
+        pane.autoresizingMask = [.width, .height]
+        view.addSubview(pane)
+
+        focus(surface)
+    }
+
+    // MARK: - Contents
+
+    /// Every pane in the tab, in layout order (left-to-right, top-to-bottom).
+    var panes: [SplitPane] {
+        var result: [SplitPane] = []
+        func walk(_ node: NSView) {
+            if let pane = node as? SplitPane {
+                result.append(pane)
+            } else {
+                node.subviews.forEach(walk)
+            }
+        }
+        view.subviews.forEach(walk)
+        return result
+    }
+
+    var surfaces: [GhosttySurfaceView] { panes.map(\.surface) }
+
+    var isEmpty: Bool { panes.isEmpty }
+
+    func contains(_ surface: GhosttySurfaceView) -> Bool {
+        panes.contains { $0.surface === surface }
+    }
+
+    private func pane(for surface: GhosttySurfaceView) -> SplitPane? {
+        panes.first { $0.surface === surface }
+    }
+
+    /// What the strip and ⌘K call this tab.
+    var title: String { focused?.shortTitle ?? surfaces.first?.shortTitle ?? "Terminal" }
+    var directory: String? { focused?.pwd ?? surfaces.first?.pwd }
+
+    // MARK: - Focus
+
+    func focus(_ surface: GhosttySurfaceView) {
+        guard contains(surface) else { return }
+        focused = surface
+        syncFocusBorders()
+    }
+
+    /// Keep the outline on the right pane, and drop it entirely once a tab is
+    /// back down to one terminal.
+    func syncFocusBorders() {
+        let panes = self.panes
+        let showsFocus = panes.count > 1
+        for pane in panes {
+            pane.showsFocus = showsFocus
+            pane.isFocused = pane.surface === focused
+        }
+    }
+
+    /// The pane nearest `surface` in `direction`, by screen geometry — which is
+    /// what you mean when you press ⌘⌥→, regardless of how the tree is nested.
+    func neighbor(
+        of surface: GhosttySurfaceView,
+        direction: SplitDirection
+    ) -> GhosttySurfaceView? {
+        guard let from = pane(for: surface) else { return nil }
+        let origin = view.convert(from.bounds, from: from)
+
+        var best: (pane: SplitPane, distance: CGFloat)?
+        for candidate in panes where candidate !== from {
+            let frame = view.convert(candidate.bounds, from: candidate)
+
+            // Must lie in the requested direction, and overlap on the other
+            // axis, so ⌘⌥→ can't jump to something stacked above.
+            let inDirection: Bool
+            let overlaps: Bool
+            switch direction {
+            case .right:
+                inDirection = frame.minX >= origin.maxX - 1
+                overlaps = frame.maxY > origin.minY && frame.minY < origin.maxY
+            case .left:
+                inDirection = frame.maxX <= origin.minX + 1
+                overlaps = frame.maxY > origin.minY && frame.minY < origin.maxY
+            case .up:
+                // The container is not flipped, so "up" is larger Y.
+                inDirection = frame.minY >= origin.maxY - 1
+                overlaps = frame.maxX > origin.minX && frame.minX < origin.maxX
+            case .down:
+                inDirection = frame.maxY <= origin.minY + 1
+                overlaps = frame.maxX > origin.minX && frame.minX < origin.maxX
+            }
+            guard inDirection, overlaps else { continue }
+
+            let distance = hypot(frame.midX - origin.midX, frame.midY - origin.midY)
+            if best == nil || distance < best!.distance {
+                best = (candidate, distance)
+            }
+        }
+        return best?.pane.surface
+    }
+
+    /// Cycle through panes in layout order, for ⌘⌥[ / ⌘⌥].
+    func relativeSurface(from surface: GhosttySurfaceView, offset: Int) -> GhosttySurfaceView? {
+        let panes = self.panes
+        guard panes.count > 1,
+              let current = panes.firstIndex(where: { $0.surface === surface })
+        else { return nil }
+        let next = (current + offset % panes.count + panes.count) % panes.count
+        return panes[next].surface
+    }
+
+    // MARK: - Structure
+
+    /// Split the pane showing `surface`, putting `new` beside it.
+    func split(
+        _ surface: GhosttySurfaceView,
+        with new: GhosttySurfaceView,
+        direction: SplitDirection
+    ) {
+        guard let pane = pane(for: surface), let parent = pane.superview else { return }
+
+        let newPane = SplitPane(surface: new)
+        let split = RuneSplitView(vertical: direction.isVertical)
+        if let sibling = parent as? RuneSplitView { split.dividerTint = sibling.dividerTint }
+        split.frame = pane.frame
+        split.autoresizingMask = pane.autoresizingMask
+
+        // Swap the split view in where the pane was, then hang both panes off
+        // it — the rest of the tree never moves.
+        parent.replaceSubview(pane, with: split)
+        pane.autoresizingMask = [.width, .height]
+        newPane.autoresizingMask = [.width, .height]
+        if direction.insertsAfter {
+            split.addSubview(pane)
+            split.addSubview(newPane)
+        } else {
+            split.addSubview(newPane)
+            split.addSubview(pane)
+        }
+
+        split.adjustSubviews()
+        // Even halves. adjustSubviews alone leaves the second pane at zero when
+        // the split view has only just been sized.
+        let extent = direction.isVertical ? split.bounds.width : split.bounds.height
+        if extent > 0 {
+            split.setPosition((extent - split.dividerThickness) / 2, ofDividerAt: 0)
+        }
+
+        focus(new)
+    }
+
+    /// Remove `surface`'s pane, collapsing its split view into the sibling.
+    /// Returns the surface that should take focus, if the tab still has one.
+    @discardableResult
+    func remove(_ surface: GhosttySurfaceView) -> GhosttySurfaceView? {
+        guard let pane = pane(for: surface) else { return nil }
+
+        guard let split = pane.superview as? NSSplitView else {
+            // Last pane in the tab.
+            pane.removeFromSuperview()
+            focused = nil
+            return nil
+        }
+
+        let survivor = split.subviews.first { $0 !== pane }
+        pane.removeFromSuperview()
+
+        if let survivor, let grandparent = split.superview {
+            survivor.frame = split.frame
+            survivor.autoresizingMask = split.autoresizingMask
+            grandparent.replaceSubview(split, with: survivor)
+            (grandparent as? NSSplitView)?.adjustSubviews()
+        }
+
+        // Prefer whatever is now nearest where the closed pane was.
+        let next = panes.first(where: { $0.surface === focused })?.surface ?? panes.first?.surface
+        if focused === surface { focused = next }
+        syncFocusBorders()
+        return next
+    }
+
+    /// Give every pane an equal share of its parent, for ⌘⌥=.
+    func equalize() {
+        func walk(_ node: NSView) {
+            if let split = node as? NSSplitView {
+                split.adjustSubviews()
+                let extent = split.isVertical ? split.bounds.width : split.bounds.height
+                let count = CGFloat(split.subviews.count)
+                if extent > 0, count > 1 {
+                    for i in 0..<Int(count - 1) {
+                        split.setPosition(extent * CGFloat(i + 1) / count, ofDividerAt: i)
+                    }
+                }
+            }
+            node.subviews.forEach(walk)
+        }
+        view.subviews.forEach(walk)
+    }
+
+    /// Nudge the divider that `surface` sits against.
+    func resize(_ surface: GhosttySurfaceView, direction: SplitDirection, amount: CGFloat) {
+        guard let pane = pane(for: surface),
+              let split = pane.superview as? NSSplitView,
+              split.isVertical == direction.isVertical,
+              let index = split.subviews.firstIndex(of: pane)
+        else { return }
+
+        // Dragging the divider *after* this pane grows it; the one before
+        // shrinks it, so flip the sign when the pane is on the far side.
+        let divider = index == 0 ? 0 : index - 1
+        let sign: CGFloat = index == 0 ? 1 : -1
+        let grow = direction == .right || direction == .down
+        let current = split.isVertical
+            ? split.subviews[divider].frame.maxX
+            : split.subviews[divider].frame.maxY
+        split.setPosition(current + sign * amount * (grow ? 1 : -1), ofDividerAt: divider)
+    }
+
+    /// Recolour dividers when the terminal theme changes.
+    func applyDividerTint(_ color: NSColor) {
+        func walk(_ node: NSView) {
+            (node as? RuneSplitView)?.dividerTint = color
+            node.subviews.forEach(walk)
+        }
+        view.subviews.forEach(walk)
+    }
+
+    /// Re-mix the idle-pane wash when the terminal theme changes.
+    func applyInactiveWash(_ color: NSColor) {
+        for pane in panes { pane.washColor = color }
+    }
+}
