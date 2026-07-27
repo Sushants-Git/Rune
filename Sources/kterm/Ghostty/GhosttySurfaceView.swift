@@ -9,7 +9,7 @@ import GhosttyKit
 ///
 /// Input handling here is adapted from Ghostty's own macOS embedding layer
 /// (MIT, Mitchell Hashimoto and Ghostty contributors).
-final class GhosttySurfaceView: NSView, NSTextInputClient {
+final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     let id = UUID()
 
     private(set) var surface: ghostty_surface_t?
@@ -46,7 +46,7 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         config.platform = ghostty_platform_u(
             macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque()))
         config.userdata = Unmanaged.passUnretained(self).toOpaque()
-        config.scale_factor = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2)
 
         // The C config holds borrowed pointers, so keep the strings alive for
         // the duration of ghostty_surface_new.
@@ -78,13 +78,13 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         fatalError("init(coder:) is not supported")
     }
 
-    deinit {
-        if let eventMonitor { NSEvent.removeMonitor(eventMonitor) }
-    }
-
     /// Tear the surface down. Must be called before the view is released so the
     /// pty and render thread shut down deterministically.
     func close() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
         guard let surface else { return }
         self.surface = nil
         ghosttyApp?.unregister(surface)
@@ -94,6 +94,9 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
     // MARK: - Geometry and focus
 
     override var acceptsFirstResponder: Bool { true }
+
+    // libghostty draws its IOSurface into a layer with top-left gravity, so the
+    // view has to use a top-left origin too.
     override var isFlipped: Bool { true }
 
     override func becomeFirstResponder() -> Bool {
@@ -136,11 +139,10 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
 
     private func syncSize() {
         guard let surface else { return }
-        // libghostty wants pixels, not points.
-        let scale = window?.backingScaleFactor ?? 2
-        let width = UInt32(max(0, frame.size.width * scale))
-        let height = UInt32(max(0, frame.size.height * scale))
-        ghostty_surface_set_size(surface, width, height)
+        // libghostty wants the framebuffer size in pixels.
+        let backing = convertToBacking(frame.size)
+        ghostty_surface_set_size(
+            surface, UInt32(max(0, backing.width)), UInt32(max(0, backing.height)))
     }
 
     func requestRender() {
@@ -493,7 +495,7 @@ final class GhosttySurfaceView: NSView, NSTextInputClient {
         return window.convertToScreen(convert(viewRect, to: nil))
     }
 
-    func doCommand(by selector: Selector) {
+    override func doCommand(by selector: Selector) {
         // Swallow AppKit's editing commands; the terminal encodes these keys
         // itself from the key event.
     }

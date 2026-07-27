@@ -12,7 +12,24 @@ let package = Package(
         .executableTarget(
             name: "kterm",
             dependencies: ["GhosttyKit"],
-            path: "Sources/kterm"
+            path: "Sources/kterm",
+            linkerSettings: [
+                // libghostty statically bundles C++ dependencies (glslang,
+                // oniguruma, harfbuzz and friends) and expects the host to
+                // provide the platform frameworks it renders and speaks to.
+                .linkedLibrary("c++"),
+                .linkedFramework("Metal"),
+                .linkedFramework("MetalKit"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreVideo"),
+                .linkedFramework("IOSurface"),
+                .linkedFramework("Cocoa"),
+                .linkedFramework("UserNotifications"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("AudioToolbox"),
+            ]
         ),
     ]
 )

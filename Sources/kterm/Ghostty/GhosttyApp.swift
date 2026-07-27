@@ -47,11 +47,9 @@ final class GhosttyApp {
 
     init() throws {
         // libghostty wants the real argv so it can honor CLI overrides.
-        var argv = CommandLine.unsafeArgv
-        if ghostty_init(UInt(CommandLine.argc), argv) != GHOSTTY_SUCCESS {
+        if ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) != GHOSTTY_SUCCESS {
             throw GhosttyError.initFailed
         }
-        _ = argv // silence unused-mutation warning; ghostty_init takes char**
 
         guard let cfg = ghostty_config_new() else { throw GhosttyError.configFailed }
         ghostty_config_load_default_files(cfg)
@@ -63,16 +61,16 @@ final class GhosttyApp {
         var runtime = ghostty_runtime_config_s(
             userdata: Unmanaged.passUnretained(self).toOpaque(),
             supports_selection_clipboard: false,
-            wakeup_cb: { ud in GhosttyApp.wakeup(ud) },
-            action_cb: { app, target, action in GhosttyApp.action(app, target, action) },
-            read_clipboard_cb: { ud, loc, state in GhosttyApp.readClipboard(ud, loc, state) },
-            confirm_read_clipboard_cb: { ud, str, state, req in
-                GhosttyApp.confirmReadClipboard(ud, str, state, req)
-            },
-            write_clipboard_cb: { ud, loc, content, len, confirm in
-                GhosttyApp.writeClipboard(ud, loc, content, len, confirm)
-            },
-            close_surface_cb: { ud, alive in GhosttyApp.closeSurface(ud, alive) }
+            // These are passed as bare C function pointers rather than closure
+            // literals: a closure written here would inherit this class's
+            // @MainActor isolation, and libghostty calls several of them from
+            // its own threads.
+            wakeup_cb: ktermWakeup,
+            action_cb: ktermAction,
+            read_clipboard_cb: ktermReadClipboard,
+            confirm_read_clipboard_cb: ktermConfirmReadClipboard,
+            write_clipboard_cb: ktermWriteClipboard,
+            close_surface_cb: ktermCloseSurface
         )
 
         guard let app = ghostty_app_new(&runtime, cfg) else { throw GhosttyError.appFailed }
@@ -81,11 +79,17 @@ final class GhosttyApp {
         ghostty_app_set_focus(app, NSApp.isActive)
     }
 
-    deinit {
-        // ghostty_app_free must run on the main thread, and by the time this
-        // object dies the app is tearing down anyway.
-        if let app { ghostty_app_free(app) }
-        if let config { ghostty_config_free(config) }
+    /// Release libghostty. Called on app termination — these frees must happen
+    /// on the main thread, so this can't live in `deinit`.
+    func shutdown() {
+        if let app {
+            self.app = nil
+            ghostty_app_free(app)
+        }
+        if let config {
+            self.config = nil
+            ghostty_config_free(config)
+        }
     }
 
     // MARK: - Surface registry
@@ -124,7 +128,7 @@ final class GhosttyApp {
     /// checks its own bindings first, then defers to this.
     func isBinding(_ event: NSEvent) -> Bool {
         guard let config else { return false }
-        var key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
+        let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
         return ghostty_config_key_is_binding(config, key)
     }
 
@@ -138,101 +142,7 @@ final class GhosttyApp {
         }
     }
 
-    // MARK: - Runtime callbacks (called from libghostty, possibly off-main)
-
-    private static func from(_ userdata: UnsafeMutableRawPointer?) -> GhosttyApp? {
-        guard let userdata else { return nil }
-        return Unmanaged<GhosttyApp>.fromOpaque(userdata).takeUnretainedValue()
-    }
-
-    /// libghostty needs a tick. This can arrive on any thread, so bounce to main.
-    private static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
-        guard let app = from(userdata) else { return }
-        DispatchQueue.main.async { MainActor.assumeIsolated { app.tick() } }
-    }
-
-    private static func closeSurface(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
-        guard let userdata else { return }
-        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                view.ghosttyApp?.delegate?.ghosttyCloseSurface(view, processAlive: processAlive)
-            }
-        }
-    }
-
-    private static func readClipboard(
-        _ userdata: UnsafeMutableRawPointer?,
-        _ location: ghostty_clipboard_e,
-        _ state: UnsafeMutableRawPointer?
-    ) -> Bool {
-        guard let userdata else { return false }
-        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-        guard let surface = view.surface else { return false }
-
-        let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_STANDARD
-            ? .general
-            : .init(name: .find)
-        let str = pasteboard.string(forType: .string) ?? ""
-
-        str.withCString { ptr in
-            ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
-        }
-        return true
-    }
-
-    private static func confirmReadClipboard(
-        _ userdata: UnsafeMutableRawPointer?,
-        _ string: UnsafePointer<CChar>?,
-        _ state: UnsafeMutableRawPointer?,
-        _ request: ghostty_clipboard_request_e
-    ) {
-        // kterm trusts the clipboard; a confirmation UI can come later.
-        guard let userdata, let string else { return }
-        let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-        guard let surface = view.surface else { return }
-        ghostty_surface_complete_clipboard_request(surface, string, state, true)
-    }
-
-    private static func writeClipboard(
-        _ userdata: UnsafeMutableRawPointer?,
-        _ location: ghostty_clipboard_e,
-        _ content: UnsafePointer<ghostty_clipboard_content_s>?,
-        _ len: Int,
-        _ confirm: Bool
-    ) {
-        guard let content, len > 0 else { return }
-        guard location == GHOSTTY_CLIPBOARD_STANDARD else { return }
-
-        // Take the first text/plain entry; that's all kterm writes today.
-        var text: String?
-        for i in 0..<len {
-            let item = content[i]
-            guard let data = item.data else { continue }
-            let mime = item.mime.map { String(cString: $0) } ?? "text/plain"
-            if mime.hasPrefix("text/plain") {
-                text = String(cString: data)
-                break
-            }
-        }
-        guard let text else { return }
-
-        let pasteboard = NSPasteboard.general
-        pasteboard.declareTypes([.string], owner: nil)
-        pasteboard.setString(text, forType: .string)
-    }
-
-    private static func action(
-        _ cApp: ghostty_app_t?,
-        _ target: ghostty_target_s,
-        _ action: ghostty_action_s
-    ) -> Bool {
-        guard let cApp, let ud = ghostty_app_userdata(cApp) else { return false }
-        let app = Unmanaged<GhosttyApp>.fromOpaque(ud).takeUnretainedValue()
-        return MainActor.assumeIsolated { app.handle(target, action) }
-    }
-
-    private func handle(_ target: ghostty_target_s, _ action: ghostty_action_s) -> Bool {
+    fileprivate func handle(_ target: ghostty_target_s, _ action: ghostty_action_s) -> Bool {
         let surface: ghostty_surface_t? = target.tag == GHOSTTY_TARGET_SURFACE
             ? target.target.surface
             : nil
@@ -311,7 +221,7 @@ final class GhosttyApp {
             return true
 
         case GHOSTTY_ACTION_RENDERER_HEALTH:
-            if action.action.renderer_health != GHOSTTY_RENDERER_HEALTH_OK {
+            if action.action.renderer_health != GHOSTTY_RENDERER_HEALTH_HEALTHY {
                 log.error("renderer unhealthy")
             }
             return true
@@ -327,4 +237,102 @@ final class GhosttyApp {
             return false
         }
     }
+}
+
+// MARK: - Runtime callbacks
+//
+// libghostty invokes these from its own threads, so they live at file scope
+// where they carry no actor isolation. Anything touching app or view state
+// hops to the main actor first.
+
+private func ktermApp(_ userdata: UnsafeMutableRawPointer?) -> GhosttyApp? {
+    guard let userdata else { return nil }
+    return Unmanaged<GhosttyApp>.fromOpaque(userdata).takeUnretainedValue()
+}
+
+/// libghostty needs a tick. This can arrive on any thread, so bounce to main.
+private func ktermWakeup(_ userdata: UnsafeMutableRawPointer?) {
+    guard let app = ktermApp(userdata) else { return }
+    DispatchQueue.main.async { MainActor.assumeIsolated { app.tick() } }
+}
+
+private func ktermCloseSurface(_ userdata: UnsafeMutableRawPointer?, _ processAlive: Bool) {
+    guard let userdata else { return }
+    let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+            view.ghosttyApp?.delegate?.ghosttyCloseSurface(view, processAlive: processAlive)
+        }
+    }
+}
+
+private func ktermReadClipboard(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ location: ghostty_clipboard_e,
+    _ state: UnsafeMutableRawPointer?
+) -> Bool {
+    guard let userdata else { return false }
+    let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+    guard let surface = view.surface else { return false }
+
+    let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_STANDARD
+        ? .general
+        : .init(name: .find)
+    let str = pasteboard.string(forType: .string) ?? ""
+
+    str.withCString { ptr in
+        ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+    }
+    return true
+}
+
+private func ktermConfirmReadClipboard(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ string: UnsafePointer<CChar>?,
+    _ state: UnsafeMutableRawPointer?,
+    _ request: ghostty_clipboard_request_e
+) {
+    // kterm trusts the clipboard; a confirmation UI can come later.
+    guard let userdata, let string else { return }
+    let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+    guard let surface = view.surface else { return }
+    ghostty_surface_complete_clipboard_request(surface, string, state, true)
+}
+
+private func ktermWriteClipboard(
+    _ userdata: UnsafeMutableRawPointer?,
+    _ location: ghostty_clipboard_e,
+    _ content: UnsafePointer<ghostty_clipboard_content_s>?,
+    _ len: Int,
+    _ confirm: Bool
+) {
+    guard let content, len > 0 else { return }
+    guard location == GHOSTTY_CLIPBOARD_STANDARD else { return }
+
+    // Take the first text/plain entry; that's all kterm writes today.
+    var text: String?
+    for i in 0..<len {
+        let item = content[i]
+        guard let data = item.data else { continue }
+        let mime = item.mime.map { String(cString: $0) } ?? "text/plain"
+        if mime.hasPrefix("text/plain") {
+            text = String(cString: data)
+            break
+        }
+    }
+    guard let text else { return }
+
+    let pasteboard = NSPasteboard.general
+    pasteboard.declareTypes([.string], owner: nil)
+    pasteboard.setString(text, forType: .string)
+}
+
+private func ktermAction(
+    _ cApp: ghostty_app_t?,
+    _ target: ghostty_target_s,
+    _ action: ghostty_action_s
+) -> Bool {
+    guard let cApp, let ud = ghostty_app_userdata(cApp) else { return false }
+    let app = Unmanaged<GhosttyApp>.fromOpaque(ud).takeUnretainedValue()
+    return MainActor.assumeIsolated { app.handle(target, action) }
 }
