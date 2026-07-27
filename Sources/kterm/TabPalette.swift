@@ -23,9 +23,9 @@ final class TabPalette: NSView {
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
 
-    private static let rowHeight: CGFloat = 44
-    private static let panelWidth: CGFloat = 560
-    private static let maxVisibleRows = 8
+    private static let rowHeight: CGFloat = 34
+    private static let panelWidth: CGFloat = 460
+    private static let maxVisibleRows = 9
 
     init(
         tabs: @escaping () -> [GhosttySurfaceView],
@@ -61,7 +61,7 @@ final class TabPalette: NSView {
         addSubview(panel)
 
         searchField.placeholderString = "Switch to terminal…"
-        searchField.font = .systemFont(ofSize: 15)
+        searchField.font = .systemFont(ofSize: 13)
         searchField.isBordered = false
         searchField.drawsBackground = false
         searchField.focusRingType = .none
@@ -99,11 +99,11 @@ final class TabPalette: NSView {
             panel.topAnchor.constraint(equalTo: topAnchor, constant: 120),
             panel.widthAnchor.constraint(equalToConstant: Self.panelWidth),
 
-            searchField.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
-            searchField.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
-            searchField.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -16),
+            searchField.topAnchor.constraint(equalTo: panel.topAnchor, constant: 10),
+            searchField.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 14),
+            searchField.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -14),
 
-            divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            divider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 9),
             divider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
 
@@ -195,20 +195,40 @@ extension TabPalette: NSTableViewDataSource, NSTableViewDelegate {
         guard filtered.indices.contains(row) else { return nil }
         let tab = filtered[row]
 
-        let title = NSTextField(labelWithString: tab.displayTitle)
-        title.font = .systemFont(ofSize: 13, weight: .medium)
+        // One dense line per terminal: title, then the directory, then a badge
+        // for the ⌘N terminals that have no chip in the tab strip.
+        // The name, then the directory. Shell titles are `user@host:/the/path`,
+        // so showing the full title next to the path would print the same thing
+        // twice — `shortTitle` collapses that, and leaves real command titles
+        // (vim, ssh, …) intact.
+        let name = tab.shortTitle
+        let title = NSTextField(labelWithString: name)
+        title.font = .systemFont(ofSize: 12, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
-        let subtitle = NSTextField(labelWithString: tab.pwd.map(abbreviateHome) ?? "")
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.lineBreakMode = .byTruncatingHead
+        let directory = tab.pwd.map(abbreviateHome) ?? ""
+        let path = NSTextField(labelWithString: directory == name ? "" : directory)
+        path.font = .systemFont(ofSize: 11)
+        path.textColor = .tertiaryLabelColor
+        path.lineBreakMode = .byTruncatingHead
+        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let stack = NSStackView(views: [title, subtitle])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
+        let stack = NSStackView(views: [title, path])
+        stack.orientation = .horizontal
+        stack.alignment = .firstBaseline
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+
+        if tab.kind == .background {
+            let badge = NSTextField(labelWithString: "⌘K")
+            badge.font = .systemFont(ofSize: 10, weight: .medium)
+            badge.textColor = .tertiaryLabelColor
+            badge.setContentHuggingPriority(.required, for: .horizontal)
+            stack.addArrangedSubview(NSView())  // spacer
+            stack.addArrangedSubview(badge)
+        }
+
         return stack
     }
 

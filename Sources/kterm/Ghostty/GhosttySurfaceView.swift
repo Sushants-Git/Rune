@@ -10,7 +10,18 @@ import GhosttyKit
 /// Input handling here is adapted from Ghostty's own macOS embedding layer
 /// (MIT, Mitchell Hashimoto and Ghostty contributors).
 final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
+    /// Whether this terminal earns a slot in the tab strip.
+    enum Kind {
+        /// Created with ⌘T. Shown in the tab bar and in ⌘K.
+        case tab
+        /// Created with ⌘N. Reachable only through ⌘K, keeping the strip short
+        /// no matter how many terminals are open.
+        case background
+    }
+
     let id = UUID()
+
+    var kind: Kind = .tab
 
     private(set) var surface: ghostty_surface_t?
     private(set) weak var ghosttyApp: GhosttyApp?
@@ -172,9 +183,25 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         onMetadataChange?()
     }
 
-    /// A short label for this surface, for the Cmd-K switcher.
+    /// The full label for this surface, used by the ⌘K switcher.
     var displayTitle: String {
         title.isEmpty ? (pwd.map { ($0 as NSString).lastPathComponent } ?? "Terminal") : title
+    }
+
+    /// A short label for the tab strip.
+    ///
+    /// Shells report a title like `user@host:/some/long/path`, which is far too
+    /// wide for a chip, so that shape collapses to just the directory name. A
+    /// title in any other shape was set by a running program and is worth
+    /// showing as-is.
+    var shortTitle: String {
+        guard let colon = displayTitle.firstIndex(of: ":"),
+              displayTitle[..<colon].contains("@")
+        else { return displayTitle }
+
+        let path = String(displayTitle[displayTitle.index(after: colon)...])
+        let last = (path as NSString).lastPathComponent
+        return last.isEmpty ? path : last
     }
 
     // MARK: - Mouse

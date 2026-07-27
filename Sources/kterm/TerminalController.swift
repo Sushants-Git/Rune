@@ -4,22 +4,28 @@ import GhosttyKit
 /// A window holding any number of terminal surfaces, exactly one of which is
 /// visible at a time.
 ///
-/// There is deliberately no tab bar: tabs are reached through the Cmd-K
-/// switcher instead of by clicking. Everything here is built around that —
-/// tabs are ordered most-recently-used so Cmd-K, Enter toggles between the two
-/// terminals you're actually working in.
+/// Terminals come in two flavours. ⌘T ones get a chip in the tab strip, which
+/// sits inside the title bar and so costs no vertical space. ⌘N ones are
+/// reachable only through the ⌘K switcher, so you can keep a pile of terminals
+/// around without the strip growing past what's useful. Both kinds appear in
+/// ⌘K, ordered most-recently-used with the current one demoted so ⌘K-Enter
+/// toggles between the two you're actually working in.
 @MainActor
 final class TerminalController: NSWindowController, NSWindowDelegate {
     private let ghostty: GhosttyApp
 
-    /// Tabs in creation order. This is the stable order shown in the switcher.
+    /// Every terminal in this window, in creation order.
     private(set) var tabs: [GhosttySurfaceView] = []
     /// Tab IDs in most-recently-used order, newest first.
     private var mruOrder: [UUID] = []
 
     private(set) var activeTab: GhosttySurfaceView?
 
+    /// The terminals that earn a chip in the strip.
+    var barTabs: [GhosttySurfaceView] { tabs.filter { $0.kind == .tab } }
+
     private let container = NSView()
+    private let tabBar = TabBar()
     private var palette: TabPalette?
 
     init(ghostty: GhosttyApp) {
@@ -47,6 +53,15 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         window.controller = self
+
+        tabBar.frame = NSRect(
+            x: 0, y: container.bounds.height - TabBar.height,
+            width: container.bounds.width, height: TabBar.height)
+        tabBar.autoresizingMask = [.width, .minYMargin]
+        tabBar.onSelect = { [weak self] tab in self?.select(tab) }
+        tabBar.onClose = { [weak self] tab in self?.closeTab(tab) }
+        tabBar.onNewTab = { [weak self] in self?.newTab() }
+        container.addSubview(tabBar)
     }
 
     required init?(coder: NSCoder) {
@@ -68,7 +83,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     // MARK: - Tabs
 
     @discardableResult
-    func newTab(workingDirectory: String? = nil) -> GhosttySurfaceView? {
+    func newTab(
+        kind: GhosttySurfaceView.Kind = .tab,
+        workingDirectory: String? = nil
+    ) -> GhosttySurfaceView? {
         // Inherit the cwd of the tab you were in, which is what you almost
         // always want when opening a sibling terminal.
         let cwd = workingDirectory ?? activeTab?.pwd
@@ -83,10 +101,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             return nil
         }
 
+        view.kind = kind
         view.onMetadataChange = { [weak self, weak view] in
             guard let self, let view else { return }
             if view === self.activeTab { self.syncWindowTitle() }
             self.palette?.reload()
+            self.syncTabBar()
         }
 
         tabs.append(view)
@@ -100,6 +120,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tabs.remove(at: index)
         mruOrder.removeAll { $0 == view.id }
         palette?.reload()
+        syncTabBar()
         if view === activeTab {
             activeTab = nil
             view.removeFromSuperview()
@@ -147,18 +168,32 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         mruOrder.insert(view.id, at: 0)
 
         syncWindowTitle()
+        syncTabBar()
     }
 
+    /// ⌘1–⌘9 address the strip, so they index the visible chips.
     func selectTab(at index: Int) {
-        guard tabs.indices.contains(index) else { return }
-        select(tabs[index])
+        let bar = barTabs
+        guard bar.indices.contains(index) else { return }
+        select(bar[index])
     }
 
+    /// ⌘⇧[ / ⌘⇧] cycle the strip. ⌘N terminals are reached through ⌘K by
+    /// design, so they're not in this rotation; from one of them, this jumps
+    /// back to the strip.
     func selectRelativeTab(offset: Int) {
-        guard let activeTab, let current = tabs.firstIndex(where: { $0 === activeTab }),
-              !tabs.isEmpty else { return }
-        let next = (current + offset % tabs.count + tabs.count) % tabs.count
-        select(tabs[next])
+        let bar = barTabs
+        guard !bar.isEmpty else { return }
+        guard let activeTab, let current = bar.firstIndex(where: { $0 === activeTab }) else {
+            select(offset >= 0 ? bar[0] : bar[bar.count - 1])
+            return
+        }
+        let next = (current + offset % bar.count + bar.count) % bar.count
+        select(bar[next])
+    }
+
+    private func syncTabBar() {
+        tabBar.update(tabs: barTabs, active: activeTab)
     }
 
     /// Tabs ordered for the switcher: most recently used first, but with the
@@ -177,9 +212,9 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     private func syncWindowTitle() {
         guard let activeTab else { return }
-        let count = tabs.count
-        window?.title = count > 1
-            ? "\(activeTab.displayTitle) — \(count) tabs"
+        let hidden = tabs.count - barTabs.count
+        window?.title = hidden > 0
+            ? "\(activeTab.displayTitle) — \(hidden) in ⌘K"
             : activeTab.displayTitle
     }
 

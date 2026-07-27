@@ -30,8 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // app through synthetic keystrokes.
         if let demo = ProcessInfo.processInfo.environment["KTERM_DEMO"],
            let extra = Int(demo), extra > 0, let controller {
-            for dir in ["/tmp", "/usr/local", NSHomeDirectory()].prefix(extra) {
-                controller.newTab(workingDirectory: dir)
+            // Alternate kinds so the strip and the ⌘K-only terminals are both
+            // represented.
+            for (i, dir) in ["/tmp", "/usr/local", "/etc", "/var/log"].prefix(extra).enumerated() {
+                controller.newTab(kind: i.isMultiple(of: 2) ? .tab : .background,
+                                  workingDirectory: dir)
             }
             controller.showTabPalette()
             // Float the window so it stays capturable while being inspected.
@@ -137,7 +140,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     // MARK: - Menu actions
 
     @objc private func newWindowAction(_ sender: Any?) { newWindow() }
-    @objc private func newTabAction(_ sender: Any?) { keyController?.newTab() }
+    @objc private func newTabAction(_ sender: Any?) { keyController?.newTab(kind: .tab) }
+    @objc private func newHiddenAction(_ sender: Any?) { keyController?.newTab(kind: .background) }
     @objc private func closeTabAction(_ sender: Any?) { keyController?.closeActiveTab() }
     @objc private func switchTabAction(_ sender: Any?) { keyController?.toggleTabPalette() }
     @objc private func nextTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: 1) }
@@ -173,8 +177,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // Shell menu — tab lifecycle lives here.
         let shellItem = NSMenuItem()
         let shellMenu = NSMenu(title: "Shell")
-        add(to: shellMenu, "New Window", #selector(newWindowAction(_:)), "n")
         add(to: shellMenu, "New Tab", #selector(newTabAction(_:)), "t")
+        // ⌘N opens a terminal that stays out of the tab strip and is reached
+        // through ⌘K, so the strip only ever holds what you want one click away.
+        add(to: shellMenu, "New Terminal in ⌘K", #selector(newHiddenAction(_:)), "n")
+        shellMenu.addItem(.separator())
+        add(to: shellMenu, "New Window", #selector(newWindowAction(_:)), "N")
+            .keyEquivalentModifierMask = [.command, .shift]
         add(to: shellMenu, "Close Tab", #selector(closeTabAction(_:)), "w")
         shellItem.submenu = shellMenu
         mainMenu.addItem(shellItem)

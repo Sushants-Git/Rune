@@ -1,38 +1,47 @@
 # kterm
 
-A macOS terminal built on [libghostty](https://github.com/ghostty-org/ghostty),
-with **no tab bar**. You open as many terminals as you like and move between
-them with `⌘K` instead of clicking tabs.
+A macOS terminal built on [libghostty](https://github.com/ghostty-org/ghostty).
 
 Ghostty does the hard part — VT parsing, pty, font shaping, Metal rendering.
 kterm is the app shell around it: window, tabs, and the switcher.
 
-## Why no tab bar
+## Two kinds of terminal
 
-A tab bar costs vertical space permanently to solve a problem you have
-occasionally, and it stops scaling past about eight tabs — the labels truncate
-to the point where you're picking by position rather than by name.
+The usual problem with tabs is that the strip is the only way in, so every
+terminal you open has to earn a slot in it — and past about eight, the labels
+truncate to the point where you're picking by position rather than by name.
 
-So kterm drops it. Tabs still exist and still run in the background; they're
-just reached by name:
+kterm splits the two jobs:
 
-- `⌘K` opens the switcher, ordered most-recently-used with the **current tab
-  demoted to the bottom**. That makes `⌘K ⏎` a toggle between the two terminals
-  you're actually working in.
+- **`⌘T` makes a tab.** It gets a chip in the strip, one click away. The strip
+  lives *inside* the title bar, next to the window controls, so it costs no
+  vertical space at all.
+- **`⌘N` makes a terminal that isn't in the strip.** It's reachable only
+  through `⌘K`. Open as many as you like — the strip stays short.
+
+Both kinds show up in `⌘K`, which is the switcher:
+
+- Ordered most-recently-used with the **current terminal demoted to the
+  bottom**, so `⌘K ⏎` toggles between the two you're actually working in.
 - Type to filter by title or working directory (subsequence match, so `usl`
   finds `/usr/local`).
 - `↑`/`↓` or `⌃P`/`⌃N` to move, `⏎` to switch, `⎋` to dismiss.
+- A `⌘K` badge marks the terminals that have no chip in the strip.
+
+When the terminal you're in is one of the `⌘N` ones, no chip is highlighted, so
+the right side of the strip shows `⌘K · <name>` to tell you where you are.
 
 ## Keybindings
 
 | Key | Action |
 | --- | --- |
-| `⌘K` | Switch to tab… |
-| `⌘T` | New tab (inherits the current tab's working directory) |
-| `⌘N` | New window |
-| `⌘W` | Close tab |
-| `⌘⇧]` / `⌘⇧[` | Next / previous tab |
-| `⌘1`–`⌘9` | Jump to tab by index |
+| `⌘K` | Switch to terminal… |
+| `⌘T` | New tab, with a chip in the strip |
+| `⌘N` | New terminal, reachable only from `⌘K` |
+| `⌘⇧N` | New window |
+| `⌘W` | Close the current terminal |
+| `⌘⇧]` / `⌘⇧[` | Next / previous tab in the strip |
+| `⌘1`–`⌘9` | Jump to a tab in the strip by position |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
 
@@ -76,6 +85,7 @@ Sources/kterm/
     GhosttySurfaceView.swift  NSView hosting one surface; input forwarding
     GhosttyInput.swift        AppKit <-> libghostty key/modifier translation
   TerminalController.swift    one window, N surfaces, one visible
+  TabBar.swift                the ⌘T strip, drawn inside the title bar
   TabPalette.swift            the ⌘K switcher
   AppDelegate.swift           menus, windows, libghostty action handling
 ```
@@ -95,9 +105,9 @@ Two things that cost real debugging time, recorded so they don't again:
 
 ### Development
 
-`KTERM_DEMO=<n>` opens `n` extra tabs in known directories and drops straight
-into the switcher, for exercising the tab UI without driving the app through
-synthetic keystrokes.
+`KTERM_DEMO=<n>` opens `n` extra terminals in known directories, alternating
+between the two kinds, and drops straight into the switcher — for exercising
+the tab UI without driving the app through synthetic keystrokes.
 
 ## Credit
 
