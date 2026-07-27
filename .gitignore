@@ -1,0 +1,15 @@
+# Build artifacts
+.build/
+build/
+*.app
+DerivedData/
+
+# Vendored ghostty checkout (pinned via scripts/fetch-ghostty.sh)
+vendor/ghostty/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# macOS
+.DS_Store
