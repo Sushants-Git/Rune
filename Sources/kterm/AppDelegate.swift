@@ -146,9 +146,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func switchTabAction(_ sender: Any?) { keyController?.toggleTabPalette() }
     @objc private func nextTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: 1) }
     @objc private func prevTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: -1) }
-    @objc private func copyAction(_ sender: Any?) { keyController?.performSurfaceAction("copy_to_clipboard") }
-    @objc private func pasteAction(_ sender: Any?) { keyController?.performSurfaceAction("paste_from_clipboard") }
-    @objc private func selectAllAction(_ sender: Any?) { keyController?.performSurfaceAction("select_all") }
     @objc private func increaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("increase_font_size:1") }
     @objc private func decreaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("decrease_font_size:1") }
     @objc private func resetFontAction(_ sender: Any?) { keyController?.performSurfaceAction("reset_font_size") }
@@ -190,10 +187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
         // Edit menu
         let editItem = NSMenuItem()
+        // These go to the first responder, not to a fixed target: with the ⌘K
+        // switcher open its search field should get them, not the terminal
+        // behind it. GhosttySurfaceView implements the same selectors.
         let editMenu = NSMenu(title: "Edit")
-        add(to: editMenu, "Copy", #selector(copyAction(_:)), "c")
-        add(to: editMenu, "Paste", #selector(pasteAction(_:)), "v")
-        add(to: editMenu, "Select All", #selector(selectAllAction(_:)), "a")
+        addResponderItem(to: editMenu, "Copy", #selector(NSText.copy(_:)), "c")
+        addResponderItem(to: editMenu, "Paste", #selector(NSText.paste(_:)), "v")
+        addResponderItem(to: editMenu, "Select All", #selector(NSResponder.selectAll(_:)), "a")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
@@ -238,6 +238,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
+        menu.addItem(item)
+        return item
+    }
+
+    /// Add an item with no explicit target, so AppKit dispatches it down the
+    /// responder chain to whatever currently has focus.
+    @discardableResult
+    private func addResponderItem(
+        to menu: NSMenu,
+        _ title: String,
+        _ action: Selector,
+        _ key: String
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = nil
         menu.addItem(item)
         return item
     }

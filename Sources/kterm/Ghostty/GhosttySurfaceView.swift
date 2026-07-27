@@ -161,6 +161,32 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         ghostty_surface_draw(surface)
     }
 
+    /// Run a libghostty keybinding action (e.g. `copy_to_clipboard`) against
+    /// this surface. See Ghostty's docs for the action grammar.
+    @discardableResult
+    func performBindingAction(_ action: String) -> Bool {
+        guard let surface else { return false }
+        return action.withCString { ptr in
+            ghostty_surface_binding_action(surface, ptr, UInt(strlen(ptr)))
+        }
+    }
+
+    // Editing commands arrive through the responder chain rather than being
+    // aimed at the terminal directly, so that while the ⌘K switcher is open
+    // they act on its search field instead of on the terminal behind it.
+
+    @objc func copy(_ sender: Any?) {
+        performBindingAction("copy_to_clipboard")
+    }
+
+    @objc func paste(_ sender: Any?) {
+        performBindingAction("paste_from_clipboard")
+    }
+
+    override func selectAll(_ sender: Any?) {
+        performBindingAction("select_all")
+    }
+
     func applyInitialSize(width: Int, height: Int) {
         // kterm sizes windows itself; the initial size request only matters for
         // the very first window, which the window controller handles.

@@ -8,7 +8,7 @@ import Cocoa
 /// selected, so Cmd-K, Enter is a toggle.
 @MainActor
 final class TabPalette: NSView {
-    let searchField = PaletteSearchField()
+    let searchField = NSTextField()
 
     /// Pulled fresh rather than snapshotted: a background shell can exit while
     /// the switcher is open, and selecting a closed tab would resurrect a dead
@@ -67,7 +67,6 @@ final class TabPalette: NSView {
         searchField.focusRingType = .none
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.delegate = self
-        searchField.palette = self
         panel.addSubview(searchField)
 
         let divider = NSBox()
@@ -249,32 +248,38 @@ extension TabPalette: NSTextFieldDelegate {
     func controlTextDidChange(_ notification: Notification) {
         applyFilter(searchField.stringValue)
     }
-}
 
-/// Text field that routes navigation keys to the palette instead of letting
-/// AppKit's field editor consume them.
-@MainActor
-final class PaletteSearchField: NSTextField {
-    weak var palette: TabPalette?
-
-    override func keyDown(with event: NSEvent) {
-        switch event.keyCode {
-        case 126: palette?.moveSelection(by: -1)   // up
-        case 125: palette?.moveSelection(by: 1)    // down
-        case 36, 76: palette?.commit()             // return, enter
-        case 53: palette?.cancel()                 // escape
+    /// Navigation has to be intercepted here rather than in a `keyDown`
+    /// override: an editable NSTextField hands its key events to AppKit's
+    /// shared field editor, which becomes the real first responder, so the
+    /// field's own `keyDown` never runs. The field editor turns those keys into
+    /// these command selectors instead.
+    ///
+    /// Going through the selectors also gets the emacs-style bindings for free
+    /// — the field editor already maps ⌃P/⌃N to moveUp:/moveDown:.
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        switch commandSelector {
+        case #selector(NSResponder.moveUp(_:)):
+            moveSelection(by: -1)
+        case #selector(NSResponder.moveDown(_:)):
+            moveSelection(by: 1)
+        case #selector(NSResponder.insertNewline(_:)),
+             #selector(NSResponder.insertLineBreak(_:)):
+            commit()
+        case #selector(NSResponder.cancelOperation(_:)):
+            cancel()
+        case #selector(NSResponder.insertTab(_:)):
+            moveSelection(by: 1)
+        case #selector(NSResponder.insertBacktab(_:)):
+            moveSelection(by: -1)
         default:
-            // Ctrl-P / Ctrl-N for people who navigate that way.
-            if event.modifierFlags.contains(.control),
-               let chars = event.charactersIgnoringModifiers {
-                switch chars {
-                case "p": palette?.moveSelection(by: -1); return
-                case "n": palette?.moveSelection(by: 1); return
-                default: break
-                }
-            }
-            super.keyDown(with: event)
+            return false
         }
+        return true
     }
 }
 
