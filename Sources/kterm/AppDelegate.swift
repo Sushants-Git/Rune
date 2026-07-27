@@ -22,7 +22,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         }
 
         buildMenu()
-        newWindow()
+        let controller = newWindow()
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Development aid: KTERM_DEMO=<n> opens n extra tabs and drops straight
+        // into the switcher, so the tab UI can be exercised without driving the
+        // app through synthetic keystrokes.
+        if let demo = ProcessInfo.processInfo.environment["KTERM_DEMO"],
+           let extra = Int(demo), extra > 0, let controller {
+            for dir in ["/tmp", "/usr/local", NSHomeDirectory()].prefix(extra) {
+                controller.newTab(workingDirectory: dir)
+            }
+            controller.showTabPalette()
+            // Float the window so it stays capturable while being inspected.
+            controller.window?.level = .floating
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

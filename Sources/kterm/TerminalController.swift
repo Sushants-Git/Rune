@@ -33,7 +33,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         window.title = "kterm"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // Deliberately NOT movableByWindowBackground: the terminal needs click
+        // and drag for text selection.
         window.tabbingMode = .disallowed
         window.center()
 
@@ -77,6 +78,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             view = try GhosttySurfaceView(app: ghostty, workingDirectory: cwd)
         } catch {
             log.error("failed to create surface: \(String(describing: error), privacy: .public)")
+            FileHandle.standardError.write(
+                "kterm: failed to create surface for \(cwd ?? "~"): \(error)\n".data(using: .utf8)!)
             return nil
         }
 
@@ -96,6 +99,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
         tabs.remove(at: index)
         mruOrder.removeAll { $0 == view.id }
+        palette?.reload()
         if view === activeTab {
             activeTab = nil
             view.removeFromSuperview()
@@ -192,10 +196,19 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     func showTabPalette() {
         guard palette == nil, !tabs.isEmpty else { return }
 
-        let palette = TabPalette(tabs: switcherOrder) { [weak self] selected in
-            self?.dismissTabPalette()
-            if let selected { self?.select(selected) }
-        }
+        // The order is captured once, so the list doesn't reshuffle under the
+        // cursor, but membership is re-read on every filter so a tab that
+        // closes meanwhile drops out.
+        let order = switcherOrder
+        let palette = TabPalette(
+            tabs: { [weak self] in
+                guard let self else { return [] }
+                return order.filter { tab in self.tabs.contains(where: { $0 === tab }) }
+            },
+            onComplete: { [weak self] selected in
+                self?.dismissTabPalette()
+                if let selected { self?.select(selected) }
+            })
         palette.frame = container.bounds
         palette.autoresizingMask = [.width, .height]
         container.addSubview(palette, positioned: .above, relativeTo: nil)

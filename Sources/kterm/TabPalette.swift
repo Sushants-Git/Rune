@@ -10,7 +10,10 @@ import Cocoa
 final class TabPalette: NSView {
     let searchField = PaletteSearchField()
 
-    private let tabs: [GhosttySurfaceView]
+    /// Pulled fresh rather than snapshotted: a background shell can exit while
+    /// the switcher is open, and selecting a closed tab would resurrect a dead
+    /// surface.
+    private let currentTabs: () -> [GhosttySurfaceView]
     private var filtered: [GhosttySurfaceView]
     private var selection = 0
 
@@ -24,9 +27,12 @@ final class TabPalette: NSView {
     private static let panelWidth: CGFloat = 560
     private static let maxVisibleRows = 8
 
-    init(tabs: [GhosttySurfaceView], onComplete: @escaping (GhosttySurfaceView?) -> Void) {
-        self.tabs = tabs
-        self.filtered = tabs
+    init(
+        tabs: @escaping () -> [GhosttySurfaceView],
+        onComplete: @escaping (GhosttySurfaceView?) -> Void
+    ) {
+        self.currentTabs = tabs
+        self.filtered = tabs()
         self.onComplete = onComplete
         super.init(frame: .zero)
 
@@ -119,6 +125,7 @@ final class TabPalette: NSView {
     }
 
     private func applyFilter(_ query: String) {
+        let tabs = currentTabs()
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             filtered = tabs
