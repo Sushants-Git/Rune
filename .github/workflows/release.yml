@@ -20,9 +20,15 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macos-26, and the newest Xcode on it: the sources rely on the macOS 26+
+    # SDK's @MainActor annotations on AppKit protocols (NSTextInputClient et
+    # al.) — older SDKs reject those conformances outright.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
 
       - name: Cache GhosttyKit.xcframework
         id: ghostty-cache
