@@ -2,14 +2,20 @@
 # Build GhosttyKit.xcframework (the libghostty embedding API) from the
 # vendored ghostty checkout.
 #
-#   ./scripts/build-libghostty.sh            # Debug, native arch
-#   MODE=ReleaseFast ./scripts/build-libghostty.sh
+#   ./scripts/build-libghostty.sh            # ReleaseFast, native arch
+#   MODE=Debug ./scripts/build-libghostty.sh # only if you're debugging ghostty
 #   TARGET=universal ./scripts/build-libghostty.sh
+#
+# ReleaseFast by default, deliberately. libghostty is the renderer, the VT
+# parser and the font shaper: everything that runs per cell, per frame. A Zig
+# Debug build leaves every bounds and overflow check in and optimises nothing,
+# which does not read as "a debug build" when you use it. It reads as a slow
+# terminal, and it cost a long time to track down once.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
-MODE="${MODE:-Debug}"
+MODE="${MODE:-ReleaseFast}"
 TARGET="${TARGET:-native}"
 
 if [ ! -d "$GHOSTTY_DIR" ]; then

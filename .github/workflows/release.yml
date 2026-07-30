@@ -1,0 +1,60 @@
+# Cut a release: push a tag like v0.1.0 and this builds Rune.app on an
+# Apple-silicon runner, zips it, and attaches it to a GitHub Release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The expensive step is libghostty (a full Zig build of ghostty's core), so the
+# resulting xcframework is cached keyed on GHOSTTY_COMMIT — releases that don't
+# bump ghostty skip it entirely. Builds are arm64-only and ad-hoc signed, which
+# means downloaders currently have to clear Gatekeeper once
+# (right-click → Open, or `xattr -dr com.apple.quarantine Rune.app`).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache GhosttyKit.xcframework
+        id: ghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/ghostty/macos/GhosttyKit.xcframework
+          key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-${{ runner.arch }}
+
+      - name: Set up Zig
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build libghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-libghostty.sh
+
+      - name: Build and bundle Rune.app
+        run: |
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}" ./scripts/bundle.sh
+          else
+            ./scripts/bundle.sh
+          fi
+
+      - name: Zip the app
+        run: ditto -c -k --keepParent build/Rune.app "Rune-${GITHUB_REF_NAME}-macos-arm64.zip"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Rune-*-macos-arm64.zip
+          generate_release_notes: true

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Build Rune and assemble build/Rune.app.
 #
-#   ./scripts/bundle.sh              # debug
-#   CONFIG=release ./scripts/bundle.sh
+#   ./scripts/bundle.sh              # release
+#   CONFIG=debug ./scripts/bundle.sh
+#   VERSION=1.2.0 ./scripts/bundle.sh   # stamp a version (used by CI on tags)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONFIG="${CONFIG:-debug}"
+CONFIG="${CONFIG:-release}"
 APP="$REPO_ROOT/build/Rune.app"
 
 if [ ! -d "$REPO_ROOT/vendor/ghostty/macos/GhosttyKit.xcframework" ]; then
@@ -25,6 +26,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Rune"
 cp "$REPO_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+cp "$REPO_ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
+if [ -n "${VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+fi
 
 # Ad-hoc sign so macOS will let the app claim focus and open a pty.
 codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 \

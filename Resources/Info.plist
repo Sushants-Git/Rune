@@ -8,6 +8,8 @@
 	<string>Rune</string>
 	<key>CFBundleExecutable</key>
 	<string>Rune</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.rune.rune</string>
 	<key>CFBundlePackageType</key>
