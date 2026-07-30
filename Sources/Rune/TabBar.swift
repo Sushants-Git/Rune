@@ -23,10 +23,12 @@ final class TabBar: NSView {
     /// the same surface rather than as a separate strip of chrome.
     var backgroundColor: NSColor = .clear {
         didSet {
+            guard backgroundColor != oldValue else { return }
             layer?.backgroundColor = backgroundColor.cgColor
-            // Chips are tinted from label colors, which flip with the
-            // appearance the controller derives from this color.
-            update(tabs: tabs, active: active, workspaceName: workspaceName)
+            // Chips are mixed from this colour, so they have to be re-mixed —
+            // but only the colour, not the whole strip. Rebuilding here as well
+            // meant every chrome sync built the strip twice.
+            for chip in chips { chip.background = backgroundColor }
         }
     }
 
@@ -124,31 +126,46 @@ final class TabBar: NSView {
         newButton.isHidden = single
         titleLabel.isHidden = !single
         if single {
-            titleLabel.stringValue = workspaceName ?? active?.title ?? ""
+            let title = workspaceName ?? active?.title ?? ""
+            if titleLabel.stringValue != title { titleLabel.stringValue = title }
         }
 
-        stack.arrangedSubviews.forEach {
-            stack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
+        // Chips are reused rather than rebuilt. This runs on every status
+        // change and every title change, and tearing down a stack view's
+        // arranged subviews forces a full constraint solve each time — which,
+        // once a second under a busy terminal, you can feel.
+        if chips.count > tabs.count {
+            for chip in chips[tabs.count...] {
+                stack.removeArrangedSubview(chip)
+                chip.removeFromSuperview()
+            }
+            chips.removeLast(chips.count - tabs.count)
         }
-
-        for tab in tabs {
-            let chip = TabChip(
-                title: tab.title,
-                isActive: tab === active,
-                maxWidth: Self.maxChipWidth,
-                background: backgroundColor)
-            chip.onSelect = { [weak self, weak tab] in
-                guard let tab else { return }
-                self?.onSelect?(tab)
+        while chips.count < tabs.count {
+            let chip = TabChip(maxWidth: Self.maxChipWidth)
+            let position = chips.count
+            chip.onSelect = { [weak self] in
+                guard let self, let tab = self.tabs[safe: position] else { return }
+                self.onSelect?(tab)
             }
-            chip.onClose = { [weak self, weak tab] in
-                guard let tab else { return }
-                self?.onClose?(tab)
+            chip.onClose = { [weak self] in
+                guard let self, let tab = self.tabs[safe: position] else { return }
+                self.onClose?(tab)
             }
+            chips.append(chip)
             stack.addArrangedSubview(chip)
         }
+
+        for (chip, tab) in zip(chips, tabs) {
+            chip.apply(
+                title: tab.title,
+                isActive: tab === active,
+                status: tab.status,
+                background: backgroundColor)
+        }
     }
+
+    private var chips: [TabChip] = []
 
     @objc private func newTabClicked() {
         onNewTab?()
@@ -164,6 +181,11 @@ final class TabBar: NSView {
 
 /// One tab in the strip: a flush rectangle the full height of the bar, with an
 /// accent edge along the top of the active one.
+///
+/// Built once and reconfigured with `apply`. The strip is refreshed whenever
+/// anything about a tab changes, which is often, and the view hierarchy and
+/// constraints are identical every time — so they're set up here and only the
+/// values move.
 @MainActor
 private final class TabChip: NSView {
     var onSelect: (() -> Void)?
@@ -173,13 +195,25 @@ private final class TabChip: NSView {
     private let closeButton = NSButton()
     private let accent = NSView()
     private let separator = NSView()
-    private let isActive: Bool
-    private let background: NSColor
-    private var hovering = false
+    private let dot = NSView()
+    private var dotWidth: NSLayoutConstraint!
+    /// Closes up when there is no dot, so a quiet tab's title doesn't sit in a
+    /// gap where one used to be.
+    private var labelGap: NSLayoutConstraint!
 
-    init(title: String, isActive: Bool, maxWidth: CGFloat, background: NSColor) {
-        self.isActive = isActive
-        self.background = background
+    private var isActive = false
+    private var hovering = false
+    private var activity: Activity = .idle
+
+    /// Re-mixed when the terminal theme changes.
+    var background: NSColor = .clear {
+        didSet {
+            guard background != oldValue else { return }
+            updateBackground()
+        }
+    }
+
+    init(maxWidth: CGFloat) {
         super.init(frame: .zero)
 
         wantsLayer = true
@@ -188,19 +222,32 @@ private final class TabChip: NSView {
         // boundary rather than around the tab, so nothing boxes in the title.
         accent.wantsLayer = true
         accent.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        accent.isHidden = !isActive
+        accent.isHidden = true
         accent.translatesAutoresizingMaskIntoConstraints = false
         addSubview(accent)
 
         // A hairline between neighbours, since there is no gap to separate them.
+        // Its colour is mixed in `updateBackground` rather than taken from
+        // `labelColor`: a CGColor on a layer is resolved once and stays
+        // resolved, and chips are no longer rebuilt when the theme flips.
         separator.wantsLayer = true
-        separator.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
         separator.translatesAutoresizingMaskIntoConstraints = false
         addSubview(separator)
 
-        label.stringValue = title
-        label.font = .systemFont(ofSize: 11, weight: isActive ? .medium : .regular)
-        label.textColor = isActive ? .labelColor : .secondaryLabelColor
+        // The dot goes ahead of the name, where the eye lands first when
+        // scanning the strip. It's always in the hierarchy and collapses to
+        // zero width when there's nothing to say, so the layout never changes
+        // shape underneath a tab that merely went quiet.
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot)
+
+        // Matching the `isActive = false` this starts in. `apply` only touches
+        // these when active-ness *changes*, so the resting state has to be
+        // correct from the outset.
+        label.font = .systemFont(ofSize: 11, weight: .regular)
+        label.textColor = .secondaryLabelColor
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -217,8 +264,11 @@ private final class TabChip: NSView {
         closeButton.action = #selector(closeClicked)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         // Revealed on hover so idle tabs stay quiet.
-        closeButton.isHidden = !isActive
+        closeButton.isHidden = true
         addSubview(closeButton)
+
+        dotWidth = dot.widthAnchor.constraint(equalToConstant: 0)
+        labelGap = label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 0)
 
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 84),
@@ -234,7 +284,12 @@ private final class TabChip: NSView {
             separator.bottomAnchor.constraint(equalTo: bottomAnchor),
             separator.widthAnchor.constraint(equalToConstant: 1),
 
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.heightAnchor.constraint(equalToConstant: 6),
+            dotWidth,
+
+            labelGap,
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             closeButton.leadingAnchor.constraint(
@@ -243,12 +298,57 @@ private final class TabChip: NSView {
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 11),
         ])
-
-        updateBackground()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Point this chip at a tab. Every write is guarded, because most calls
+    /// change nothing and an unguarded `stringValue` or `backgroundColor` is a
+    /// redisplay whether the value moved or not.
+    func apply(title: String, isActive: Bool, status: Status, background: NSColor) {
+        if label.stringValue != title { label.stringValue = title }
+
+        let activeChanged = self.isActive != isActive
+        if activeChanged {
+            self.isActive = isActive
+            accent.isHidden = !isActive
+            label.font = .systemFont(ofSize: 11, weight: isActive ? .medium : .regular)
+            label.textColor = isActive ? .labelColor : .secondaryLabelColor
+            closeButton.isHidden = !isActive && !hovering
+        }
+
+        if activity != status.activity {
+            activity = status.activity
+            if let color = status.activity.color {
+                dot.isHidden = false
+                dot.layer?.backgroundColor = color.cgColor
+                dotWidth.constant = 6
+                labelGap.constant = 6
+                if status.activity.pulses {
+                    Pulse.apply(to: dot.layer)
+                } else {
+                    Pulse.remove(from: dot.layer)
+                }
+            } else {
+                dot.isHidden = true
+                Pulse.remove(from: dot.layer)
+                dotWidth.constant = 0
+                labelGap.constant = 0
+            }
+        }
+
+        // The tooltip is where the detail goes: there is no room for words in
+        // a chip this size, and ⌘K is the place that spells it out.
+        let tip = [status.activity.label, status.detail].compactMap { $0 }
+        toolTip = tip.isEmpty ? nil : tip.joined(separator: " — ")
+
+        let backgroundChanged = self.background != background
+        self.background = background
+        // The chip's fill depends on which tab is active as well as on the
+        // theme, and `background`'s own guard only catches the theme half.
+        if activeChanged && !backgroundChanged { updateBackground() }
     }
 
     override func updateTrackingAreas() {
@@ -289,5 +389,7 @@ private final class TabChip: NSView {
         let sink: CGFloat = isActive ? 0 : (hovering ? 0.10 : 0.20)
         let color = background.blended(withFraction: sink, of: .black) ?? background
         layer?.backgroundColor = color.cgColor
+        separator.layer?.backgroundColor = (background.isDark ? NSColor.white : .black)
+            .withAlphaComponent(0.10).cgColor
     }
 }

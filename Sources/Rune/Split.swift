@@ -29,7 +29,7 @@ final class SplitPane: NSView {
 
     /// What that wash is made of. The controller keeps it in step with the
     /// terminal's own background — see `TerminalController.syncChrome`.
-    var washColor: NSColor = .black.withAlphaComponent(0.45) { didSet { syncDim() } }
+    var washColor: NSColor = .black.withAlphaComponent(0.22) { didSet { syncDim() } }
 
     init(surface: GhosttySurfaceView) {
         self.surface = surface
@@ -68,8 +68,16 @@ final class SplitPane: NSView {
         // has to be a wash rather than `alphaValue` — lowering the pane's
         // opacity made it translucent right through the window, so whatever
         // app was behind Rune showed through the idle splits.
-        wash.isHidden = !(showsFocus && !isFocused)
-        wash.layer?.backgroundColor = washColor.cgColor
+        //
+        // It is kept deliberately light. The wash only has to answer "which one
+        // am I typing in"; anything heavier than that means you can no longer
+        // *read* the pane beside the one you're working in, which is most of
+        // why you split in the first place.
+        let hidden = !(showsFocus && !isFocused)
+        wash.isHidden = hidden
+        // Skipped while hidden: `washColor` is re-set on every chrome sync and
+        // resolving a colour to a CGColor is not free.
+        if !hidden { wash.layer?.backgroundColor = washColor.cgColor }
     }
 }
 
@@ -140,7 +148,12 @@ final class Tab {
     // MARK: - Contents
 
     /// Every pane in the tab, in layout order (left-to-right, top-to-bottom).
+    ///
+    /// Cached. The tree only changes when `split` or `remove` says so, and this
+    /// is read a dozen times per chrome sync — walking the view hierarchy that
+    /// often to answer a question whose answer hasn't changed is pure waste.
     var panes: [SplitPane] {
+        if let cachedPanes { return cachedPanes }
         var result: [SplitPane] = []
         func walk(_ node: NSView) {
             if let pane = node as? SplitPane {
@@ -150,8 +163,14 @@ final class Tab {
             }
         }
         view.subviews.forEach(walk)
+        cachedPanes = result
         return result
     }
+
+    private var cachedPanes: [SplitPane]?
+
+    /// Called by every structural change. Nothing else may mutate the tree.
+    private func invalidatePanes() { cachedPanes = nil }
 
     var surfaces: [GhosttySurfaceView] { panes.map(\.surface) }
 
@@ -165,6 +184,9 @@ final class Tab {
         panes.first { $0.surface === surface }
     }
 
+    /// The loudest thing any pane in this tab is doing.
+    var status: Status { Status.loudest(of: surfaces.map(\.status)) }
+
     /// What the strip and ⌘K call this tab.
     var title: String { focused?.shortTitle ?? surfaces.first?.shortTitle ?? "Terminal" }
     var directory: String? { focused?.pwd ?? surfaces.first?.pwd }
@@ -173,6 +195,10 @@ final class Tab {
 
     func focus(_ surface: GhosttySurfaceView) {
         guard contains(surface) else { return }
+        // Moving to another pane ends the zoom: the one you're going to is
+        // behind the zoomed one, and focusing something you can't see is worse
+        // than losing the zoom.
+        if let zoom, zoom.pane.surface !== surface { unzoom() }
         focused = surface
         syncFocusBorders()
     }
@@ -248,6 +274,9 @@ final class Tab {
         with new: GhosttySurfaceView,
         direction: SplitDirection
     ) {
+        // Dividing a zoomed pane means putting the new one somewhere you can't
+        // see, so come back to the whole layout first.
+        unzoom()
         guard let pane = pane(for: surface), let parent = pane.superview else { return }
 
         let newPane = SplitPane(surface: new)
@@ -268,6 +297,8 @@ final class Tab {
             split.addSubview(newPane)
             split.addSubview(pane)
         }
+        // Before anything reads `panes` again — `focus` below does.
+        invalidatePanes()
 
         split.adjustSubviews()
         // Even halves. adjustSubviews alone leaves the second pane at zero when
@@ -284,17 +315,22 @@ final class Tab {
     /// Returns the surface that should take focus, if the tab still has one.
     @discardableResult
     func remove(_ surface: GhosttySurfaceView) -> GhosttySurfaceView? {
+        // Put the tree back before taking anything out of it, so the removal
+        // happens against the real structure.
+        unzoom()
         guard let pane = pane(for: surface) else { return nil }
 
         guard let split = pane.superview as? NSSplitView else {
             // Last pane in the tab.
             pane.removeFromSuperview()
+            invalidatePanes()
             focused = nil
             return nil
         }
 
         let survivor = split.subviews.first { $0 !== pane }
         pane.removeFromSuperview()
+        invalidatePanes()
 
         if let survivor, let grandparent = split.superview {
             survivor.frame = split.frame
@@ -308,6 +344,93 @@ final class Tab {
         if focused === surface { focused = next }
         syncFocusBorders()
         return next
+    }
+
+    // MARK: - Zoom
+
+    /// Where a zoomed pane came from, so it can be put back exactly.
+    ///
+    /// The frames matter. Pulling a pane out of an `NSSplitView` makes the
+    /// split re-lay-out whatever is left, which silently destroys the divider
+    /// positions you dragged. Recording them here and restoring them on the way
+    /// back means zooming is genuinely a view, not an edit.
+    private struct Zoom {
+        let pane: SplitPane
+        let parent: NSSplitView
+        let index: Int
+        let siblingFrames: [CGRect]
+        let autoresizing: NSView.AutoresizingMask
+    }
+
+    private var zoom: Zoom?
+
+    /// Whether one pane is currently filling the tab.
+    var isZoomed: Bool { zoom != nil }
+
+    /// ⌘⇧↵: blow the focused pane up to fill the tab, or put it back.
+    ///
+    /// The rest of the tree stays exactly as it was, hidden behind it. Nothing
+    /// is resized, no process is told anything changed except the one pane that
+    /// actually got bigger.
+    func toggleZoom() {
+        if zoom != nil {
+            unzoom()
+        } else if let pane = panes.first(where: { $0.surface === focused }) {
+            zoomIn(pane)
+        }
+    }
+
+    private func zoomIn(_ pane: SplitPane) {
+        // A tab with one pane is already zoomed, by definition.
+        guard let parent = pane.superview as? NSSplitView,
+              let index = parent.subviews.firstIndex(of: pane),
+              let root = view.subviews.first
+        else { return }
+
+        zoom = Zoom(
+            pane: pane,
+            parent: parent,
+            index: index,
+            siblingFrames: parent.subviews.map(\.frame),
+            autoresizing: pane.autoresizingMask)
+
+        pane.removeFromSuperview()
+        root.isHidden = true
+
+        pane.autoresizingMask = [.width, .height]
+        pane.frame = view.bounds
+        view.addSubview(pane)
+
+        invalidatePanes()
+        syncFocusBorders()
+    }
+
+    private func unzoom() {
+        guard let zoom, let root = view.subviews.first(where: { $0 !== zoom.pane }) else {
+            return
+        }
+        self.zoom = nil
+
+        zoom.pane.removeFromSuperview()
+        zoom.pane.autoresizingMask = zoom.autoresizing
+        root.isHidden = false
+
+        // Back in at the same index, so left stays left.
+        if zoom.index < zoom.parent.subviews.count {
+            zoom.parent.addSubview(
+                zoom.pane, positioned: .below, relativeTo: zoom.parent.subviews[zoom.index])
+        } else {
+            zoom.parent.addSubview(zoom.pane)
+        }
+
+        // Then the frames, which is what actually restores the dividers. Set
+        // after insertion because adding a subview re-lays the split out.
+        for (view, frame) in zip(zoom.parent.subviews, zoom.siblingFrames) {
+            view.frame = frame
+        }
+
+        invalidatePanes()
+        syncFocusBorders()
     }
 
     /// Give every pane an equal share of its parent, for ⌘⌥=.

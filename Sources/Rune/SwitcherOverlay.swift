@@ -14,7 +14,10 @@ final class SwitcherOverlay: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.45).cgColor
+        // Heavier than it was. The panel is opaque black now, so the backdrop
+        // has to carry enough of the terminal away for the panel to sit in
+        // front of it rather than dissolve into it.
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
 
         palette.translatesAutoresizingMaskIntoConstraints = false
         addSubview(palette)

@@ -11,6 +11,8 @@ struct PaletteItem {
     /// The agent running there, or the project's own icon — either replaces
     /// the generic terminal glyph.
     let icon: NSImage?
+    /// What that workspace is doing, spelled out.
+    let status: Status
     /// Everything the fuzzy filter is allowed to match against.
     let searchText: String
     /// The name already set by hand, if any — what ⌘R starts editing.
@@ -18,6 +20,32 @@ struct PaletteItem {
     /// Shown greyed out while renaming, so an empty field reads as "back to
     /// whatever the terminal calls itself" rather than as blank.
     let automaticTitle: String
+}
+
+/// The switcher's own colours.
+///
+/// Fixed rather than semantic, and that is the point. Rune sets the window's
+/// appearance from the terminal's background so the traffic lights stay
+/// legible, which means `labelColor` and friends flip to *black* whenever
+/// you're running a light theme. The panel is always dark, so it has to state
+/// its own colours or it goes black-on-black the first time someone uses a
+/// light colourscheme.
+enum PaletteStyle {
+    /// Near-black rather than pure black: a true #000 panel over a #000
+    /// terminal has no edge at all, and the switcher needs to read as a thing
+    /// sitting *on* the terminal.
+    static let background = NSColor(white: 0.055, alpha: 1)
+    static let border = NSColor(white: 1, alpha: 0.10)
+    static let divider = NSColor(white: 1, alpha: 0.07)
+    static let selection = NSColor(white: 1, alpha: 0.09)
+
+    static let primaryText = NSColor(white: 0.96, alpha: 1)
+    static let secondaryText = NSColor(white: 1, alpha: 0.55)
+    static let tertiaryText = NSColor(white: 1, alpha: 0.34)
+
+    static let tile = NSColor(white: 1, alpha: 0.07)
+    static let chip = NSColor(white: 1, alpha: 0.07)
+    static let chipEmphasised = NSColor(white: 1, alpha: 0.14)
 }
 
 /// The body of the ⌘K switcher: a filter field over a list, plus a hint bar.
@@ -55,15 +83,16 @@ final class SwitcherPalette: NSView {
     private var editingIndex: Int?
     private weak var editingField: NSTextField?
 
-    private let panel = NSVisualEffectView()
+    private let panel = NSView()
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No workspaces match")
     private var scrollHeight: NSLayoutConstraint!
 
-    static let width: CGFloat = 540
-    private static let rowHeight: CGFloat = 34
-    private static let maxVisibleRows = 9
+    static let width: CGFloat = 560
+    private static let rowHeight: CGFloat = 40
+    private static let maxVisibleRows = 8
+    private static let cornerRadius: CGFloat = 12
     /// Rows are inset from the panel edge so the selection pill has somewhere
     /// to sit without touching the sides.
     fileprivate static let rowInset: CGFloat = 6
@@ -97,35 +126,42 @@ final class SwitcherPalette: NSView {
     // MARK: - Chrome
 
     private func build() {
-        panel.material = .hudWindow
-        panel.blendingMode = .withinWindow
-        panel.state = .active
+        // Solid, not vibrant. A blur samples the terminal behind it, so the
+        // panel's own darkness depended on what happened to be on screen —
+        // over a pale `ls` it went milky and the rows lost their contrast.
+        // Opaque black is the same panel every time.
         panel.wantsLayer = true
-        panel.layer?.cornerRadius = 4
+        panel.layer?.backgroundColor = PaletteStyle.background.cgColor
+        panel.layer?.cornerRadius = Self.cornerRadius
         panel.layer?.cornerCurve = .continuous
         panel.layer?.borderWidth = 1
-        panel.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
-        // NSVisualEffectView clips to a mask image rather than a corner radius,
-        // so the blur itself has to be rounded off separately.
-        panel.maskImage = Self.roundedMask(radius: 4)
+        panel.layer?.borderColor = PaletteStyle.border.cgColor
         panel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(panel)
 
         panel.shadow = NSShadow()
-        panel.layer?.shadowOpacity = 0.5
-        panel.layer?.shadowRadius = 30
-        panel.layer?.shadowOffset = CGSize(width: 0, height: -8)
+        panel.layer?.shadowOpacity = 0.55
+        panel.layer?.shadowRadius = 40
+        panel.layer?.shadowOffset = CGSize(width: 0, height: -10)
         panel.layer?.masksToBounds = false
 
         // A big, bare field. No leading icon: the panel appearing *is* the
         // affordance, and an icon only steals width from the placeholder.
-        searchField.placeholderString = "Search workspaces…"
         searchField.font = .systemFont(ofSize: 15, weight: .regular)
+        searchField.textColor = PaletteStyle.primaryText
         searchField.isBordered = false
         searchField.drawsBackground = false
         searchField.focusRingType = .none
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.delegate = self
+        // Attributed rather than a plain `placeholderString`, which AppKit
+        // renders in a semantic grey that goes near-invisible on the panel.
+        searchField.placeholderAttributedString = NSAttributedString(
+            string: "Search workspaces…",
+            attributes: [
+                .foregroundColor: PaletteStyle.tertiaryText,
+                .font: NSFont.systemFont(ofSize: 15),
+            ])
         panel.addSubview(searchField)
 
         let headerDivider = Divider()
@@ -157,7 +193,7 @@ final class SwitcherPalette: NSView {
         panel.addSubview(scrollView)
 
         emptyLabel.font = .systemFont(ofSize: 13)
-        emptyLabel.textColor = .tertiaryLabelColor
+        emptyLabel.textColor = PaletteStyle.tertiaryText
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -181,13 +217,13 @@ final class SwitcherPalette: NSView {
             panel.leadingAnchor.constraint(equalTo: leadingAnchor),
             panel.trailingAnchor.constraint(equalTo: trailingAnchor),
 
-            searchField.topAnchor.constraint(equalTo: panel.topAnchor, constant: 13),
+            searchField.topAnchor.constraint(equalTo: panel.topAnchor, constant: 16),
             searchField.leadingAnchor.constraint(
                 equalTo: panel.leadingAnchor, constant: Self.contentInset),
             searchField.trailingAnchor.constraint(
                 equalTo: panel.trailingAnchor, constant: -Self.contentInset),
 
-            headerDivider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 12),
+            headerDivider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 15),
             headerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             headerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
 
@@ -208,12 +244,12 @@ final class SwitcherPalette: NSView {
             footerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             footerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
 
-            hints.topAnchor.constraint(equalTo: footerDivider.bottomAnchor, constant: 7),
+            hints.topAnchor.constraint(equalTo: footerDivider.bottomAnchor, constant: 9),
             hints.trailingAnchor.constraint(
                 equalTo: panel.trailingAnchor, constant: -Self.contentInset),
             hints.leadingAnchor.constraint(
                 greaterThanOrEqualTo: panel.leadingAnchor, constant: Self.contentInset),
-            hints.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -7),
+            hints.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -9),
         ])
 
         reloadRows(notifySize: false)
@@ -235,36 +271,33 @@ final class SwitcherPalette: NSView {
         emptyLabel.isHidden = !filtered.isEmpty
     }
 
-    /// Keycap-style hints, the way a launcher does it: what it does, then the
-    /// key drawn as a key.
+    /// Keycap-style hints, the way a launcher does it: the key drawn as a key,
+    /// then what it does. Everything the switcher responds to is listed, since
+    /// a panel with no menu is a panel with nowhere else to learn it from.
     private static func hintBar() -> NSView {
         let stack = NSStackView()
         stack.orientation = .horizontal
-        stack.spacing = 10
-        for (keys, label) in [("⌘r", "Rename")] {
+        stack.spacing = 14
+        for (keys, label) in [
+            (["↑", "↓"], "Navigate"),
+            (["↵"], "Open"),
+            (["⌘R"], "Rename"),
+            (["esc"], "Close"),
+        ] {
             let text = NSTextField(labelWithString: label)
             text.font = .systemFont(ofSize: 10.5)
-            text.textColor = .secondaryLabelColor
+            text.textColor = PaletteStyle.tertiaryText
 
-            let pair = NSStackView(views: [text, Keycap(keys)])
+            let caps = NSStackView(views: keys.map { Keycap($0) })
+            caps.orientation = .horizontal
+            caps.spacing = 2
+
+            let pair = NSStackView(views: [caps, text])
             pair.orientation = .horizontal
             pair.spacing = 5
             stack.addArrangedSubview(pair)
         }
         return stack
-    }
-
-    private static func roundedMask(radius: CGFloat) -> NSImage {
-        let side = radius * 2 + 1
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
-        }
-        image.capInsets = NSEdgeInsets(
-            top: radius, left: radius, bottom: radius, right: radius)
-        image.resizingMode = .stretch
-        return image
     }
 
     // MARK: - Filtering
@@ -427,31 +460,36 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
             image: item.icon,
             symbol: item.badge == nil ? "terminal" : "square.stack")
 
-        let stack = NSStackView(views: [icon])
+        // The text runs the full width of the row and the status cluster floats
+        // over its trailing end. See `PaletteRow`.
+        let stack = NSStackView()
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 9
-        stack.edgeInsets = NSEdgeInsets(
-            top: 0, left: Self.contentInset - Self.rowInset,
-            bottom: 0, right: Self.contentInset - Self.rowInset)
 
         if index == editingIndex {
             let field = NSTextField(string: item.editableName)
             field.cell = PaddedFieldCell(textCell: item.editableName)
             field.stringValue = item.editableName
             field.font = .systemFont(ofSize: 13, weight: .medium)
+            field.textColor = PaletteStyle.primaryText
             field.isEditable = true
             field.isBordered = false
             field.focusRingType = .none
             field.drawsBackground = false
-            field.placeholderString = item.automaticTitle
+            field.placeholderAttributedString = NSAttributedString(
+                string: item.automaticTitle,
+                attributes: [
+                    .foregroundColor: PaletteStyle.tertiaryText,
+                    .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                ])
             field.lineBreakMode = .byTruncatingTail
             field.delegate = self
             stack.addArrangedSubview(FieldWell(field: field))
-            stack.addArrangedSubview(NSView())  // spacer
         } else {
             let name = NSTextField(labelWithString: item.title)
             name.font = .systemFont(ofSize: 13, weight: .medium)
+            name.textColor = PaletteStyle.primaryText
             name.lineBreakMode = .byTruncatingTail
             name.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             stack.addArrangedSubview(name)
@@ -461,22 +499,31 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
             if !item.subtitle.isEmpty {
                 let path = NSTextField(labelWithString: item.subtitle)
                 path.font = .systemFont(ofSize: 11)
-                path.textColor = .tertiaryLabelColor
+                path.textColor = PaletteStyle.tertiaryText
                 path.lineBreakMode = .byTruncatingHead
                 path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
                 stack.addArrangedSubview(path)
             }
-            stack.addArrangedSubview(NSView())  // spacer
         }
 
+        // The whole reason to open this list is to find the terminal that wants
+        // you, so what each one is doing is spelled out rather than coded into
+        // a coloured dot you then have to remember the key for.
+        let cluster = NSStackView()
+        cluster.orientation = .horizontal
+        cluster.alignment = .centerY
+        cluster.spacing = 6
+        if let badge = ActivityBadge(item.status) {
+            cluster.addArrangedSubview(badge)
+        }
         if let text = item.badge {
-            stack.addArrangedSubview(Chip(text: text))
+            cluster.addArrangedSubview(Chip(text: text))
         }
         if item.isCurrent {
-            stack.addArrangedSubview(Chip(text: "current", emphasised: true))
+            cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
         }
 
-        return stack
+        return PaletteRow(icon: icon, text: stack, cluster: cluster)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -485,6 +532,104 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         guard let index = filtered[safe: row], row != selection else { return }
         selection = row
         onPreview(index)
+    }
+}
+
+/// One row's contents: the icon, the name, and the status cluster.
+///
+/// The cluster **floats over** the text rather than sitting beside it. Laid out
+/// side by side, a long workspace name and a long status fight for the same
+/// width, and Auto Layout resolves it by compressing whichever has the weaker
+/// priority — which is how a status badge ends up rendered as "C…" and a tab
+/// count as an empty grey box.
+///
+/// So the text gets the entire row to run in, the cluster is drawn on top of
+/// its trailing end, and the text is masked to fade out just before it reaches
+/// the cluster. A short name is unaffected: it never reaches the fade. A long
+/// one runs as far as there is room and dissolves rather than being chopped.
+private final class PaletteRow: NSView {
+    private let text: NSView
+    private let cluster: NSView
+    private let fade = CAGradientLayer()
+
+    /// How wide the dissolve is, and how much clear space to leave between the
+    /// end of the fade and the cluster itself.
+    private static let fadeWidth: CGFloat = 34
+    private static let clusterGap: CGFloat = 8
+
+    init(icon: NSView, text: NSView, cluster: NSView) {
+        self.text = text
+        self.cluster = cluster
+        super.init(frame: .zero)
+
+        for view in [icon, text, cluster] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        // Order matters: the cluster is added last so it draws over the text.
+        addSubview(icon)
+        addSubview(text)
+        addSubview(cluster)
+
+        text.wantsLayer = true
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        fade.colors = [
+            NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor,
+        ]
+
+        let inset = SwitcherPalette.contentInset - SwitcherPalette.rowInset
+
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            text.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 9),
+            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            text.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            cluster.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            cluster.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        // Nothing in the cluster may ever be compressed; the text yields first.
+        cluster.setContentCompressionResistancePriority(.required, for: .horizontal)
+        cluster.setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func layout() {
+        super.layout()
+
+        // A row with nothing on the right needs no fade at all.
+        guard cluster.subviews.count > 0, cluster.frame.width > 0 else {
+            text.layer?.mask = nil
+            return
+        }
+
+        // Where the text should have finished, in the text view's own space.
+        let stop = cluster.frame.minX - Self.clusterGap - text.frame.minX
+        guard stop > Self.fadeWidth, stop < text.frame.width else {
+            // The cluster is wider than the row, or the text already ends well
+            // clear of it. Either way a partial mask would only cause trouble.
+            text.layer?.mask = nil
+            return
+        }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fade.frame = text.bounds
+        let width = text.frame.width
+        fade.locations = [
+            0,
+            NSNumber(value: Double((stop - Self.fadeWidth) / width)),
+            NSNumber(value: Double(stop / width)),
+        ]
+        text.layer?.mask = fade
+        CATransaction.commit()
     }
 }
 
@@ -500,8 +645,8 @@ private final class PaletteRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        NSColor.labelColor.withAlphaComponent(0.12).setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 4, yRadius: 4).fill()
+        PaletteStyle.selection.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7).fill()
     }
 }
 
@@ -514,7 +659,7 @@ private final class Divider: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.labelColor.withAlphaComponent(0.09).setFill()
+        PaletteStyle.divider.setFill()
         bounds.fill()
     }
 }
@@ -525,7 +670,7 @@ private final class IconTile: NSView {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.cornerRadius = 4
+        layer?.cornerRadius = 6
         layer?.cornerCurve = .continuous
 
         let image = NSImageView()
@@ -537,22 +682,22 @@ private final class IconTile: NSView {
             image.image = artwork
             image.imageScaling = .scaleProportionallyUpOrDown
         } else {
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+            layer?.backgroundColor = PaletteStyle.tile.cgColor
             image.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            image.symbolConfiguration = .init(pointSize: 10.5, weight: .medium)
-            image.contentTintColor = .secondaryLabelColor
+            image.symbolConfiguration = .init(pointSize: 11, weight: .medium)
+            image.contentTintColor = PaletteStyle.secondaryText
         }
         image.translatesAutoresizingMaskIntoConstraints = false
         addSubview(image)
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 21),
-            heightAnchor.constraint(equalToConstant: 21),
+            widthAnchor.constraint(equalToConstant: 24),
+            heightAnchor.constraint(equalToConstant: 24),
             image.centerXAnchor.constraint(equalTo: centerXAnchor),
             image.centerYAnchor.constraint(equalTo: centerYAnchor),
-            image.widthAnchor.constraint(equalToConstant: artwork == nil ? 21 : 16),
-            image.heightAnchor.constraint(equalToConstant: artwork == nil ? 21 : 16),
+            image.widthAnchor.constraint(equalToConstant: artwork == nil ? 24 : 17),
+            image.heightAnchor.constraint(equalToConstant: artwork == nil ? 24 : 17),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
     }
@@ -572,13 +717,16 @@ private final class Chip: NSView {
         wantsLayer = true
         layer?.cornerRadius = 4
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor.labelColor
-            .withAlphaComponent(emphasised ? 0.13 : 0.07).cgColor
+        layer?.backgroundColor = (emphasised ? PaletteStyle.chipEmphasised : PaletteStyle.chip)
+            .cgColor
 
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 10.5, weight: .medium)
-        label.textColor = emphasised ? .secondaryLabelColor : .tertiaryLabelColor
+        label.textColor = emphasised ? PaletteStyle.secondaryText : PaletteStyle.tertiaryText
         label.translatesAutoresizingMaskIntoConstraints = false
+        // On the label, not just the chip: the chip's width is driven by this,
+        // so without it a squeezed row collapses the chip into an empty box.
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(label)
 
         translatesAutoresizingMaskIntoConstraints = false
@@ -605,24 +753,24 @@ private final class Keycap: NSView {
         wantsLayer = true
         layer?.cornerRadius = 4
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
+        layer?.backgroundColor = NSColor(white: 1, alpha: 0.08).cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        layer?.borderColor = NSColor(white: 1, alpha: 0.09).cgColor
 
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 10.5, weight: .medium)
-        label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: 10, weight: .medium)
+        label.textColor = PaletteStyle.secondaryText
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            heightAnchor.constraint(equalToConstant: 17),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 20),
+            heightAnchor.constraint(equalToConstant: 16),
+            widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
     }
@@ -641,9 +789,9 @@ private final class FieldWell: NSView {
         wantsLayer = true
         layer?.cornerRadius = 7
         layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.10).cgColor
+        layer?.backgroundColor = NSColor(white: 1, alpha: 0.09).cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.75).cgColor
+        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
 
         field.translatesAutoresizingMaskIntoConstraints = false
         addSubview(field)
@@ -676,6 +824,21 @@ private final class PaddedFieldCell: NSTextFieldCell {
 // MARK: - Search field
 
 extension SwitcherPalette: NSTextFieldDelegate {
+    /// The field editor is shared with the rest of the window, and inherits the
+    /// window's appearance — which Rune derives from the *terminal's* theme. On
+    /// a light colourscheme that gives a black caret and a black selection on
+    /// the panel's black background, so both are stated outright.
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        guard let editor = (notification.object as? NSTextField)?.currentEditor()
+                as? NSTextView
+        else { return }
+        editor.insertionPointColor = PaletteStyle.primaryText
+        editor.selectedTextAttributes = [
+            .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.5),
+            .foregroundColor: PaletteStyle.primaryText,
+        ]
+    }
+
     func controlTextDidChange(_ notification: Notification) {
         // A rename in progress owns its own keystrokes; only the search field
         // filters.

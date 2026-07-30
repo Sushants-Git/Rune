@@ -40,6 +40,7 @@ protocol GhosttyAppDelegate: AnyObject {
         amount: UInt16,
         from surface: ghostty_surface_t?)
     func ghosttyEqualizeSplits(from surface: ghostty_surface_t?)
+    func ghosttyToggleSplitZoom(from surface: ghostty_surface_t?)
 }
 
 /// Owns the single global `ghostty_app_t` and the libghostty runtime callbacks.
@@ -247,6 +248,10 @@ final class GhosttyApp {
             delegate?.ghosttyEqualizeSplits(from: surface)
             return true
 
+        case GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM:
+            delegate?.ghosttyToggleSplitZoom(from: surface)
+            return true
+
         case GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_CLOSE_WINDOW:
             if let view = view(for: surface) {
                 delegate?.ghosttyCloseSurface(view, processAlive: false)
@@ -265,7 +270,21 @@ final class GhosttyApp {
             view(for: surface)?.window?.zoom(nil)
             return true
 
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            // OSC 9 / 99 / 777. This is the agent *telling* Rune it wants you,
+            // rather than Rune working it out — Claude Code emits one when it
+            // needs input, and anything with a hook system can be pointed at
+            // the same sequence. It costs nothing and it's exact, so it
+            // outranks everything Rune infers for itself.
+            let notification = action.action.desktop_notification
+            view(for: surface)?.notify(
+                title: notification.title.map { String(cString: $0) },
+                body: notification.body.map { String(cString: $0) })
+            return true
+
         case GHOSTTY_ACTION_RING_BELL:
+            // The cruder version of the same thing, for agents that only ring.
+            view(for: surface)?.ringBell()
             NSSound.beep()
             return true
 

@@ -53,6 +53,9 @@ final class Workspace {
     /// Every terminal in the workspace, across all tabs and their splits.
     var surfaces: [GhosttySurfaceView] { tabs.flatMap(\.surfaces) }
 
+    /// The loudest thing anything in this workspace is doing.
+    var status: Status { Status.loudest(of: surfaces.map(\.status)) }
+
     /// A name set with ⌘R. Nil means "whatever the terminal calls itself".
     var customName: String?
 
@@ -113,6 +116,37 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     private let tabBar = TabBar()
 
     private var overlay: SwitcherOverlay?
+    private var activityTimer: Timer?
+
+    /// Reads agent state off the main thread. See `AgentSession.swift`.
+    private let monitor = AgentMonitor()
+    /// One poll in flight at a time — the log reads are cheap but not free, and
+    /// stacking them up behind a slow disk would help nobody.
+    private var isPolling = false
+
+    /// Set when something asked for the chrome to be brought up to date, and
+    /// cleared on the next runloop pass when it actually is.
+    ///
+    /// Metadata arrives at whatever rate the program feels like writing escape
+    /// sequences — an agent that spins in the window title emits dozens of
+    /// title changes a second — and every one of them used to rebuild the tab
+    /// strip and re-derive the window appearance synchronously. Coalescing
+    /// means a burst costs one rebuild.
+    private var chromeSyncScheduled = false
+    private var pendingChrome: ChromeWork = []
+
+    private struct ChromeWork: OptionSet {
+        let rawValue: Int
+        static let title = ChromeWork(rawValue: 1 << 0)
+        static let colors = ChromeWork(rawValue: 1 << 1)
+        static let tabBar = ChromeWork(rawValue: 1 << 2)
+        static let palette = ChromeWork(rawValue: 1 << 3)
+    }
+
+    /// The last colour the chrome was painted with, so a sync that changes
+    /// nothing costs a comparison instead of a window-wide invalidation.
+    private var appliedChromeColor: NSColor?
+    private var appliedDarkAppearance: Bool?
     /// Where ⌘K was opened from. Arrow keys preview by actually swapping the
     /// workspace in, so cancelling has to put this one back.
     private weak var switcherOrigin: Workspace?
@@ -153,10 +187,100 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         container.addSubview(tabBar)
 
         syncChrome()
+        startActivityTimer()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// What a terminal is doing is partly a question about elapsed time, so
+    /// nothing pushes a change when one goes quiet — the chrome has to re-ask.
+    ///
+    /// This is the only place the expensive part happens: reading the
+    /// foreground process and the rendered screen. Everything else in Rune
+    /// reads the answer this leaves behind.
+    private func startActivityTimer() {
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshActivity() }
+        }
+        // Slack, because this is housekeeping: letting the runloop fold it in
+        // with work it was doing anyway beats waking the CPU for it. And left
+        // in the default mode on purpose, so it stays out of the way while
+        // you're dragging a divider or resizing the window.
+        timer.tolerance = 0.4
+        activityTimer = timer
+    }
+
+    /// The main thread's entire share of working out what the agents are doing:
+    /// one `tcgetpgrp` per terminal. Identifying the process, finding its
+    /// session log and reading it all happen on the monitor's own queue, so
+    /// none of it can land in the middle of a scroll.
+    private func refreshActivity() {
+        guard !isPolling else { return }
+        let surfaces = allSurfaces
+        guard !surfaces.isEmpty else { return }
+
+        let probes = surfaces.map { surface in
+            AgentProbe(
+                surface: surface.id, pid: surface.foregroundPID, directory: surface.pwd)
+        }
+
+        isPolling = true
+        monitor.probe(probes) { [weak self] verdicts in
+            guard let self else { return }
+            self.isPolling = false
+            self.apply(verdicts)
+        }
+    }
+
+    private func apply(_ verdicts: [AgentVerdict]) {
+        let byID = Dictionary(verdicts.map { ($0.surface, $0) }, uniquingKeysWith: { a, _ in a })
+
+        var changed = false
+        for surface in allSurfaces {
+            guard let verdict = byID[surface.id] else { continue }
+            // Not `||`, which would short-circuit and stop updating the rest.
+            if surface.apply(verdict) { changed = true }
+        }
+        guard changed else { return }
+
+        // Not the palette while a row is being renamed: reloading rebuilds the
+        // table and would tear the field editor out from under the cursor.
+        var work: ChromeWork = [.tabBar]
+        if overlay?.palette.isRenaming != true { work.insert(.palette) }
+        scheduleChromeSync(work)
+    }
+
+    // MARK: - Chrome scheduling
+
+    /// Ask for chrome work to happen once, on the next runloop pass.
+    private func scheduleChromeSync(_ work: ChromeWork) {
+        pendingChrome.formUnion(work)
+        guard !chromeSyncScheduled else { return }
+        chromeSyncScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.flushChromeSync() }
+    }
+
+    private func flushChromeSync() {
+        chromeSyncScheduled = false
+        let work = pendingChrome
+        pendingChrome = []
+
+        if work.contains(.title) { syncWindowTitle() }
+        if work.contains(.colors) { syncChrome() }
+        if work.contains(.tabBar) { syncTabBar() }
+        if work.contains(.palette), overlay?.palette.isRenaming != true {
+            overlay?.palette.reload()
+        }
+    }
+
+    /// Do the pending chrome work now rather than next pass. For the moments
+    /// where the next thing to happen is user-visible and must not flash — a
+    /// tab switch, a new window — and one runloop turn late would show.
+    private func syncChromeNow(_ work: ChromeWork) {
+        pendingChrome.formUnion(work)
+        flushChromeSync()
     }
 
     /// Height reserved at the top of the window. The title bar is transparent
@@ -195,12 +319,9 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         }
         view.onMetadataChange = { [weak self, weak view] in
             guard let self, let view else { return }
-            if view === self.activeSurface {
-                self.syncWindowTitle()
-                self.syncChrome()
-            }
-            self.syncTabBar()
-            self.overlay?.palette.reload()
+            var work: ChromeWork = [.tabBar, .palette]
+            if view === self.activeSurface { work.formUnion([.title, .colors]) }
+            self.scheduleChromeSync(work)
         }
         return view
     }
@@ -256,6 +377,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         let isVisible = tab === activeTab
         let successorSurface = tab.remove(view)
         view.close()
+        monitor.forget(view.id)
 
         if tab.isEmpty {
             closeTab(tab, in: workspace)
@@ -273,6 +395,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         for surface in tab.surfaces {
             tab.remove(surface)
             surface.close()
+            monitor.forget(surface.id)
         }
         closeTab(tab, in: workspace)
         syncTabBar()
@@ -334,10 +457,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
         hideSwitcher()
         tab.focus(surface)
+        surface.clearAttention()
         window?.makeFirstResponder(surface)
-        syncWindowTitle()
-        syncChrome()
-        syncTabBar()
+        // The focused pane decides the chrome colour, so the cached one is
+        // stale by definition here.
+        invalidateChromeColor()
+        syncChromeNow([.title, .colors, .tabBar])
     }
 
     /// ⌘K commits: switch to a workspace and take the keyboard with you.
@@ -399,9 +524,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         }
         tab.syncFocusBorders()
 
-        syncWindowTitle()
-        syncTabBar()
-        syncChrome()
+        // A different tab means different panes to tint and wash, even when the
+        // colour itself hasn't moved.
+        invalidateChromeColor()
+        syncChromeNow([.title, .colors, .tabBar])
     }
 
     /// ⌘1–⌘9 index the ⌘K list.
@@ -455,6 +581,16 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         activeTab?.equalize()
     }
 
+    /// ⌘⇧↵: fill the tab with the focused pane, or put the layout back.
+    func toggleSplitZoom() {
+        hideSwitcher()
+        guard let tab = activeTab, tab.surfaces.count > 1 else { return }
+        tab.toggleZoom()
+        // The zoomed pane is a new view in the hierarchy, so it has to be told
+        // it still has the keyboard.
+        if let surface = tab.focused { window?.makeFirstResponder(surface) }
+    }
+
     // MARK: - Chrome
 
     private func syncTabBar() {
@@ -466,10 +602,14 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// pushed darker and left partly transparent so the pane's text fades into
     /// it. Mixed from the background rather than being flat black so it still
     /// reads on a theme that's already near-black.
+    ///
+    /// Light on purpose. The wash answers "which pane am I typing in" and
+    /// nothing more — at the weight it used to be, the panes beside the live
+    /// one were too dim to read, which defeats having split them.
     private var inactivePaneWash: NSColor {
         let background = activeSurface?.backgroundColor ?? ghostty.backgroundColor
-        let sunk = background.blended(withFraction: 0.4, of: .black) ?? .black
-        return sunk.withAlphaComponent(0.66)
+        let sunk = background.blended(withFraction: 0.35, of: .black) ?? .black
+        return sunk.withAlphaComponent(0.3)
     }
 
     /// Split dividers are a seam in the terminal, not window chrome, so they're
@@ -483,16 +623,38 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// Paint the title bar area in the terminal's own background colour so the
     /// window reads as one surface instead of a terminal with a grey hat.
+    ///
+    /// Every branch here is guarded on the colour having actually changed,
+    /// which it almost never has. Assigning `window.appearance` in particular
+    /// invalidates the appearance of every view in the window and forces the
+    /// lot to redraw — doing that on each incoming title change is what made
+    /// a busy terminal feel like it was dragging.
     private func syncChrome() {
         let color = activeSurface?.backgroundColor ?? ghostty.backgroundColor
+        guard color != appliedChromeColor else { return }
+        appliedChromeColor = color
+
         window?.backgroundColor = color
         container.layer?.backgroundColor = color.cgColor
         tabBar.backgroundColor = color
         activeTab?.applyDividerTint(dividerColor)
         activeTab?.applyInactiveWash(inactivePaneWash)
+
         // Keep the traffic lights and the switcher's vibrancy legible against
-        // whatever the terminal theme is.
-        window?.appearance = NSAppearance(named: color.isDark ? .darkAqua : .aqua)
+        // whatever the terminal theme is. Only when the bucket flips: a new
+        // NSAppearance is a new object even for the same name, and setting one
+        // costs the whole window a redraw.
+        let dark = color.isDark
+        if dark != appliedDarkAppearance {
+            appliedDarkAppearance = dark
+            window?.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        }
+    }
+
+    /// Repaint the chrome even if the colour is unchanged — for when the thing
+    /// that changed is *which* views need painting, not what colour they are.
+    private func invalidateChromeColor() {
+        appliedChromeColor = nil
     }
 
     private func syncWindowTitle() {
@@ -528,6 +690,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                                         badge: Self.badge(for: workspace),
                         isCurrent: workspace === origin,
                         icon: Self.icon(for: workspace),
+                        status: workspace.status,
                         searchText: workspace.searchText,
                         editableName: workspace.customName ?? "",
                         automaticTitle: workspace.automaticTitle)
@@ -589,12 +752,14 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         if let surface = activeSurface { window?.makeFirstResponder(surface) }
     }
 
-    /// Count whichever thing there's more than one of — tabs if the workspace
-    /// has several, otherwise panes if the single tab is split.
+    /// How many tabs a workspace has, when it has more than one.
+    ///
+    /// Panes are deliberately not counted here. A ⌘K row answers "where do I go
+    /// next", and how a workspace happens to be divided up inside doesn't bear
+    /// on that — you'll see the layout the moment you arrive. Tabs are worth
+    /// saying because they're the thing hidden behind the one on screen.
     private static func badge(for workspace: Workspace) -> String? {
-        if workspace.tabs.count > 1 { return "\(workspace.tabs.count) tabs" }
-        let panes = workspace.surfaces.count
-        return panes > 1 ? "\(panes) panes" : nil
+        workspace.tabs.count > 1 ? "\(workspace.tabs.count) tabs" : nil
     }
 
     // MARK: - Renaming
@@ -650,7 +815,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
-        for surface in allSurfaces { surface.close() }
+        activityTimer?.invalidate()
+        activityTimer = nil
+        for surface in allSurfaces {
+            surface.close()
+            monitor.forget(surface.id)
+        }
         workspaces.removeAll()
         mruWorkspaces.removeAll()
         activeWorkspace = nil

@@ -27,10 +27,14 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
 
     /// Called whenever the title or pwd changes so the switcher can refresh.
     var onMetadataChange: (() -> Void)?
+
     /// Called when this surface should take focus — a click in a split, say.
     /// Routed through the controller rather than grabbing first responder
     /// directly, so the tab's idea of which pane is focused stays true.
     var onFocusRequest: (() -> Void)?
+
+    /// Set when the terminal asks for you, cleared when you look at it.
+    private(set) var wantsAttention = false
 
     private var markedText = NSMutableAttributedString()
     /// Text committed by the input method during the current keyDown, if any.
@@ -39,6 +43,8 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     private var cursorVisible = true
     private var mouseShape: NSCursor = .iBeam
     private var eventMonitor: Any?
+    /// Watches for the window moving between displays; see `syncDisplayID`.
+    private var screenObserver: (any NSObjectProtocol)?
 
     // MARK: - Lifecycle
 
@@ -80,6 +86,7 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         }
 
         updateTrackingAreas()
+        registerForDraggedTypes(Array(Self.dropTypes))
     }
 
     required init?(coder: NSCoder) {
@@ -92,6 +99,10 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         if let eventMonitor {
             NSEvent.removeMonitor(eventMonitor)
             self.eventMonitor = nil
+        }
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+            self.screenObserver = nil
         }
         guard let surface else { return }
         self.surface = nil
@@ -136,6 +147,7 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
+        syncDisplayID()
         guard let surface, let window else { return }
         let scale = window.backingScaleFactor
         ghostty_surface_set_content_scale(surface, scale, scale)
@@ -144,10 +156,50 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+
+        // Follow the window between displays, so the surface's display link can
+        // be re-pointed at whichever one it's actually on.
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+            self.screenObserver = nil
+        }
+        if let window {
+            screenObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.syncDisplayID()
+                    // The new display may scale differently.
+                    self.viewDidChangeBackingProperties()
+                }
+            }
+        }
+
+        syncDisplayID()
         guard let surface, let window else { return }
         let scale = window.backingScaleFactor
         ghostty_surface_set_content_scale(surface, scale, scale)
         syncSize()
+    }
+
+    /// Point this surface's CVDisplayLink at the display the window is on.
+    ///
+    /// libghostty creates the link with `CVDisplayLinkCreateWithActiveCGDisplays`,
+    /// which does *not* bind it to any particular display — the host has to say
+    /// which one. Ghostty's own app does this on every screen change, and its
+    /// comment explains why: "if vsync is enabled, this will be used with the
+    /// CVDisplayLink to ensure the proper refresh rate is going."
+    ///
+    /// Without it the link runs against whatever display it defaulted to. On a
+    /// ProMotion panel, whose refresh rate is adaptive, that means frames get
+    /// presented out of phase with the display: the terminal stays responsive,
+    /// but motion judders, and scrolling in particular feels slow.
+    private func syncDisplayID() {
+        guard let surface, let screen = window?.screen else { return }
+        ghostty_surface_set_display_id(surface, screen.displayID ?? 0)
     }
 
     private func syncSize() {
@@ -158,10 +210,32 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
             surface, UInt32(max(0, backing.width)), UInt32(max(0, backing.height)))
     }
 
+    /// Draw, now, on every frame libghostty asks for.
+    ///
+    /// Do not throttle this. It is tempting to: the draw is synchronous on the
+    /// calling thread, and a scroll gesture reports at 120Hz, so it looks like
+    /// a stream that wants rate limiting. It isn't one.
+    ///
+    /// On macOS the Metal renderer drives itself from a CVDisplayLink, and
+    /// libghostty says so outright — "if [vsync is on], the renderer or apprt is
+    /// responsible for triggering draw_now calls to the render thread. That is
+    /// the only way to trigger a drawFrame." So these requests arrive exactly
+    /// once per display refresh, phase-locked to the panel, already.
+    ///
+    /// Rate limiting them against a second, free-running clock is how you turn
+    /// a vsync-locked stream into a stuttering one: normal delivery jitter puts
+    /// a request a hair inside the window, it gets dropped and re-scheduled a
+    /// frame late, and the cadence beats against the display. That read as
+    /// "scrolling feels slow" even though the average frame rate was fine.
     func requestRender() {
         guard let surface else { return }
+        renderCount += 1
         ghostty_surface_draw(surface)
     }
+
+    /// Temporary diagnostic for ZoomScrollTest: how many draw requests
+    /// libghostty has made of this surface.
+    var renderCount = 0
 
     /// Run a libghostty keybinding action (e.g. `copy_to_clipboard`) against
     /// this surface. See Ghostty's docs for the action grammar.
@@ -217,15 +291,124 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         onMetadataChange?()
     }
 
-    /// The coding agent running in this terminal, if Rune recognises one.
-    /// Queried live rather than cached: what's in the foreground changes every
-    /// time you run something.
-    var agent: AgentIcon? {
-        guard let surface else { return nil }
-        let pid = ghostty_surface_foreground_pid(surface)
-        guard pid > 0 else { return nil }
-        return AgentIcon.detect(arguments: ProcessArguments.of(pid: pid_t(pid)))
+    /// What this terminal is doing, for the ⌘K list and the tab strip.
+    ///
+    /// Stored, not computed. Working it out means a `sysctl` for the foreground
+    /// process's arguments and a read of the rendered screen, and it used to be
+    /// recomputed on every read — of which there are a dozen per chrome sync.
+    /// The controller refreshes it on a timer instead; everything else just
+    /// reads the answer.
+    private(set) var status = Status()
+
+    /// The process in the foreground of this terminal, for the monitor to
+    /// identify off the main thread. This is a `tcgetpgrp` on the pty and takes
+    /// no libghostty lock, so it's safe to ask for on every poll.
+    var foregroundPID: pid_t {
+        guard let surface else { return 0 }
+        return pid_t(ghostty_surface_foreground_pid(surface))
     }
+
+    /// The last thing `AgentMonitor` said about this terminal. Held so a
+    /// refresh driven by anything else — the bell, focus — doesn't have to
+    /// wait for the next poll to know whether an agent is in here.
+    private var verdict: AgentVerdict?
+
+    /// Take a fresh reading from the monitor.
+    @discardableResult
+    func apply(_ verdict: AgentVerdict) -> Bool {
+        self.verdict = verdict
+        // An agent that has started a turn isn't waiting on you, so whatever
+        // rang the bell before it did is stale — very often the shell that was
+        // in this terminal before the agent was. Without this, one stray beep
+        // would outrank the agent's own account of itself indefinitely.
+        if verdict.activity == .working {
+            wantsAttention = false
+            attentionText = nil
+        }
+        return refreshStatus()
+    }
+
+    /// Recompute `status`. Returns true if it changed, so the caller can skip
+    /// redrawing chrome — which is most seconds.
+    @discardableResult
+    func refreshStatus() -> Bool {
+        let resolved = resolveStatus()
+        guard resolved.differs(from: status) else { return false }
+        // Keep the clock running across re-detections of the same state, so an
+        // agent that stays busy doesn't reset its timer every second.
+        status = Status(
+            activity: resolved.activity,
+            detail: resolved.detail,
+            since: resolved.activity == status.activity ? status.since : Date())
+        return true
+    }
+
+    /// What this terminal is doing, from what the agent in it says it's doing.
+    ///
+    /// Note what this no longer consults: the terminal, and the render clock.
+    /// Nothing is inferred here — every state is either something the agent
+    /// published or something it sent Rune directly.
+    private func resolveStatus() -> Status {
+        // No agent in here, nothing to report. This guard comes first on
+        // purpose: "your turn" is an agent's word, and a shell doesn't take
+        // turns. A shell also rings the bell constantly — zsh does it for an
+        // ambiguous tab-completion — and reading that as a request for you
+        // left every ordinary terminal claiming to be waiting on you.
+        guard let verdict, verdict.agent != nil else { return Status() }
+
+        // An agent that asked for you by name — an OSC 9 notification, or the
+        // bell — is your turn immediately, without waiting for the next poll.
+        // The message it sent becomes the detail.
+        if wantsAttention {
+            return Status(activity: .waiting, detail: attentionText)
+        }
+        return Status(activity: verdict.activity, detail: verdict.detail)
+    }
+
+    /// What the terminal said when it asked for you, if it said anything.
+    /// Claude Code's is "Claude is waiting for your input"; a hook can send
+    /// something far more useful.
+    private(set) var attentionText: String?
+
+    /// An OSC 9 / 99 / 777 desktop notification — the agent asking for you
+    /// directly. Unlike everything else here this is pushed, not inferred, so
+    /// it is both instant and free.
+    func notify(title: String?, body: String?) {
+        // The body is the message; the title is usually just the app's name.
+        let text = [body, title].compactMap { $0 }
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        attentionText = text
+        wantsAttention = true
+        refreshStatus()
+        onMetadataChange?()
+    }
+
+    /// Both of these push `status` forward themselves rather than waiting for
+    /// the controller's next poll: being asked for is the most urgent thing a
+    /// terminal can say, and clearing it happens because you just looked at the
+    /// thing — a second of stale "your turn" after you've arrived is a second
+    /// of lying.
+    func ringBell() {
+        guard !wantsAttention else { return }
+        wantsAttention = true
+        refreshStatus()
+        onMetadataChange?()
+    }
+
+    func clearAttention() {
+        guard wantsAttention else { return }
+        wantsAttention = false
+        attentionText = nil
+        refreshStatus()
+        onMetadataChange?()
+    }
+
+    /// The coding agent running in this terminal, if Rune recognises one.
+    ///
+    /// Whatever the monitor last found, rather than worked out on demand:
+    /// identifying it means a `sysctl` for the process's entire argument
+    /// vector, and the monitor already pays for that on its own queue.
+    var agent: AgentIcon? { verdict?.agent }
 
     /// The full label for this surface, used by the ⌘K switcher.
     var displayTitle: String {
@@ -352,33 +535,65 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     override func scrollWheel(with event: NSEvent) {
         guard let surface else { return }
 
+        // Deliberately identical to Ghostty's own macOS handler. Scrolling is
+        // the one path where "improving" on the reference implementation has
+        // only ever made things worse here: libghostty reads the precision bit
+        // and converts lines to rows itself, so scaling a non-precise delta on
+        // this side double-counts it.
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
-        if event.hasPreciseScrollingDeltas {
+        let precise = event.hasPreciseScrollingDeltas
+
+        if precise {
+            // A 2x multiplier, matching upstream. Subjective, and theirs.
             x *= 2
             y *= 2
         }
 
-        var mods: Int32 = 0
-        if event.hasPreciseScrollingDeltas {
-            mods = Int32(GHOSTTY_MOUSE_MOMENTUM_NONE.rawValue)
-            let momentum: ghostty_input_mouse_momentum_e = switch event.momentumPhase {
-            case .began: GHOSTTY_MOUSE_MOMENTUM_BEGAN
-            case .stationary: GHOSTTY_MOUSE_MOMENTUM_STATIONARY
-            case .changed: GHOSTTY_MOUSE_MOMENTUM_CHANGED
-            case .ended: GHOSTTY_MOUSE_MOMENTUM_ENDED
-            case .cancelled: GHOSTTY_MOUSE_MOMENTUM_CANCELLED
-            case .mayBegin: GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN
-            default: GHOSTTY_MOUSE_MOMENTUM_NONE
-            }
-
-            // Precise deltas and momentum are packed into a single int: bit 0
-            // marks "precise", the remaining bits carry the momentum phase.
-            mods = 1
-            mods |= Int32(momentum.rawValue) << 1
+        let momentum: ghostty_input_mouse_momentum_e = switch event.momentumPhase {
+        case .began: GHOSTTY_MOUSE_MOMENTUM_BEGAN
+        case .stationary: GHOSTTY_MOUSE_MOMENTUM_STATIONARY
+        case .changed: GHOSTTY_MOUSE_MOMENTUM_CHANGED
+        case .ended: GHOSTTY_MOUSE_MOMENTUM_ENDED
+        case .cancelled: GHOSTTY_MOUSE_MOMENTUM_CANCELLED
+        case .mayBegin: GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN
+        default: GHOSTTY_MOUSE_MOMENTUM_NONE
         }
 
+        // Bit 0 marks "precise"; the remaining bits carry the momentum phase.
+        var mods: Int32 = precise ? 1 : 0
+        mods |= Int32(momentum.rawValue) << 1
+
         ghostty_surface_mouse_scroll(surface, x, y, mods)
+    }
+
+    // MARK: - Dropping files
+
+    /// Dropping a file on the terminal types its path, which is how you hand a
+    /// screenshot to an agent running in it. Registered in `init`; without that
+    /// the view isn't a drag destination at all and macOS shows the "no" cursor
+    /// no matter what you drop.
+    static let dropTypes: Set<NSPasteboard.PasteboardType> = [.string, .fileURL]
+
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        guard let types = sender.draggingPasteboard.types,
+              !Set(types).isDisjoint(with: Self.dropTypes)
+        else { return [] }
+        // Copy rather than move, for the "+" cursor: nothing is being taken
+        // from wherever it was dragged out of.
+        return .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let text = sender.draggingPasteboard.droppedText, !text.isEmpty else {
+            return false
+        }
+        // Async so AppKit has finished with the drag session before the
+        // terminal starts processing what it produced.
+        DispatchQueue.main.async { [weak self] in
+            self?.insertText(text, replacementRange: NSRange(location: 0, length: 0))
+        }
+        return true
     }
 
     // MARK: - Keyboard
@@ -614,4 +829,46 @@ private func withOptionalCString<R>(
 ) -> R {
     guard let value else { return body(nil) }
     return value.withCString { body($0) }
+}
+
+extension NSScreen {
+    /// The CoreGraphics display ID for this screen, which is what libghostty's
+    /// display link wants in order to sync to the right panel.
+    var displayID: UInt32? {
+        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? UInt32
+    }
+}
+
+extension NSPasteboard {
+    /// What a drop should type into the terminal.
+    ///
+    /// A file becomes its path with shell-sensitive characters backslashed, so
+    /// `Screenshot 2026-07-29 at 3.17.28 AM.png` arrives as one argument rather
+    /// than six. Anything else is taken as plain text. Multiple items are
+    /// separated by spaces, which is what a command line wants.
+    var droppedText: String? {
+        let parts: [String] = (pasteboardItems ?? []).compactMap { item in
+            if let plist = item.propertyList(forType: .fileURL),
+               let url = NSURL(pasteboardPropertyList: plist, ofType: .fileURL) as URL?,
+               url.isFileURL {
+                return Self.shellEscape(url.path)
+            }
+            return item.string(forType: .string)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
+    /// Backslash-escape the characters a shell would otherwise act on. This is
+    /// for text being typed into a live buffer, where the user may still edit
+    /// it, so it escapes rather than wrapping the whole thing in quotes.
+    private static func shellEscape(_ path: String) -> String {
+        let unsafe = Set(#"\ ()[]{}<>"'`!#$&;|*?"# + "\t")
+        var result = ""
+        result.reserveCapacity(path.count)
+        for character in path {
+            if unsafe.contains(character) { result.append("\\") }
+            result.append(character)
+        }
+        return result
+    }
 }

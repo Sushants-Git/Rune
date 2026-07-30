@@ -28,6 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let controller = newWindow()
         NSApp.activate(ignoringOtherApps: true)
 
+        if ZoomScrollTest.enabled, let controller {
+            ZoomScrollTest.run(controller: controller)
+            return
+        }
+
         // Development aid: RUNE_DEMO=<n> floats the window so it stays
         // capturable while being inspected, and opens n extra workspaces (some
         // with a second tab) before dropping into the switcher — so the UI can
@@ -212,6 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         controller(owning: surface)?.resizeSplit(split, amount: CGFloat(amount))
     }
 
+    func ghosttyToggleSplitZoom(from surface: ghostty_surface_t?) {
+        controller(owning: surface)?.toggleSplitZoom()
+    }
+
     func ghosttyEqualizeSplits(from surface: ghostty_surface_t?) {
         controller(owning: surface)?.equalizeSplits()
     }
@@ -230,6 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func splitRightAction(_ sender: Any?) { keyController?.splitActiveSurface(.right) }
     @objc private func splitDownAction(_ sender: Any?) { keyController?.splitActiveSurface(.down) }
     @objc private func equalizeSplitsAction(_ sender: Any?) { keyController?.equalizeSplits() }
+    @objc private func toggleSplitZoomAction(_ sender: Any?) { keyController?.toggleSplitZoom() }
 
     @objc private func focusSplitAction(_ sender: NSMenuItem) {
         guard let direction = Self.splitDirections[safe: sender.tag] else { return }
@@ -330,6 +340,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
             item.tag = i
         }
         splitMenu.addItem(.separator())
+        // ⌘⇧↵, the same chord Ghostty uses for it.
+        add(to: splitMenu, "Zoom Split", #selector(toggleSplitZoomAction(_:)), "\r")
+            .keyEquivalentModifierMask = [.command, .shift]
         add(to: splitMenu, "Equalize Splits", #selector(equalizeSplitsAction(_:)), "=")
             .keyEquivalentModifierMask = [.command, .option]
         splitItem.submenu = splitMenu

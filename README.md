@@ -63,12 +63,82 @@ between, so the title bar just names what's running, centred.
 The title bar is painted in the terminal's own background color, so the window
 reads as one surface rather than a terminal wearing a grey hat.
 
+## Knowing which agent wants you
+
+Every row in `⌘K` says what that workspace is doing, in words:
+
+| | |
+| --- | --- |
+| *(nothing)* | a shell, or an agent that publishes no state |
+| `working` | the agent is mid-turn |
+| `your turn` | it has stopped, whether at its prompt or on a question it wants answered |
+
+Two states and silence, deliberately. There was a third, `needs you`, for an
+agent holding a permission prompt open or ringing the bell, and it didn't earn
+the distinction: "blocked on you" and "finished and waiting" are the same
+instruction, so a third colour to decode bought nothing. What it was stuck on
+survives as the detail beside the label.
+
+There is deliberately **no "a command is running" state**. Rune had one, inferred
+from how recently libghostty asked for a frame, and it was always wrong: the
+renderer also asks for a frame every time the cursor blinks, every 600ms,
+forever. Every focused terminal claimed to be running something for as long as
+it was open. Knowing a plain command is running needs shell integration
+(OSC 133), not a guess.
+
+An agent can also say so itself, **pushed rather than inferred**: OSC 9 and OSC 777 are the standard
+"show a desktop notification" escape sequences; libghostty decodes them and
+hands Rune the title and body, so when an agent asks for you it says so
+directly, instantly, and at no cost. The body becomes the text on the ⌘K row —
+whatever the agent chose to say, rather than a guess. Anything with a hook
+system can be pointed at the same sequence:
+
+```sh
+printf '\033]9;Build finished\007'
+```
+
+Claude Code emits OSC 9 when its notification channel is set to `iterm2` or
+`iterm2_with_bell` (`/config` → Notification channel). The `kitty` channel uses
+OSC 99, which this pinned libghostty doesn't decode; `terminal_bell` still
+works but carries no text.
+
+`working` and `your turn` come from what the agent publishes about itself:
+
+- **Claude Code** keeps `~/.claude/sessions/<pid>.json` current for every live
+  session, with a `status` of `busy`, `idle` or `waiting` and a `waitingFor`
+  reason. It's keyed by **process id**, which is exactly what a terminal knows
+  about the program running in it — so there is no matching heuristic to get
+  wrong. Rune walks up the process tree from the pty's foreground group, since
+  running something from inside an agent puts a child in the foreground.
+- **Codex** has no equivalent, so it reads `~/.codex/sessions/<date>/rollout-*.jsonl`
+  for its explicit `task_started` / `task_complete` events, matched to a
+  terminal by the `cwd` in the log header.
+- **opencode** publishes nothing readable, so its terminals get an icon and no
+  indicator.
+
+Matching on pid matters more than it sounds. Rune previously picked "the newest
+transcript in this directory", which is simply wrong once a directory has
+several sessions in it — this repo routinely has four, so panes showed each
+other's state.
+
+Rune does **not** ask libghostty for the rendered screen. `ghostty_surface_read_text`
+takes the same lock the IO thread holds while parsing output, so doing it under
+a busy agent stalled the main thread and made scrolling stutter.
+
+None of it runs on the main thread. `AgentMonitor` polls on a background queue
+(~300µs per terminal); the main thread's whole share is one `tcgetpgrp` each.
+`AgentSession.swift` is the one file to touch when an agent changes format.
+
+The tab strip carries the same state as a dot, since a chip has no room for
+words; hovering one spells it out.
+
 ## Keybindings
 
 | Key | Action |
 | --- | --- |
 | `⌘D` / `⌘⇧D` | Split right / down |
 | `⌘⌥←↑↓→` | Focus the pane in that direction |
+| `⌘⇧↵` | Zoom the focused pane to fill the tab, or put it back |
 | `⌘⌥=` | Equalize the splits |
 | `⌘K` | Switch to workspace… |
 | `⌘R` | Rename the workspace, in place in `⌘K` |
@@ -98,8 +168,12 @@ open build/Rune.app
 ```
 
 `bundle.sh` runs the libghostty build for you if the xcframework is missing.
-For a release build: `MODE=ReleaseFast ./scripts/build-libghostty.sh` and
-`CONFIG=release ./scripts/bundle.sh`.
+
+Both scripts build optimized by default, which matters more than it usually
+does: libghostty is the renderer, the VT parser and the font shaper, so a Zig
+`Debug` build of it does not feel like a debug build, it feels like a slow
+terminal. If you actually want to debug into ghostty or Rune:
+`MODE=Debug ./scripts/build-libghostty.sh` and `CONFIG=debug ./scripts/bundle.sh`.
 
 ### Metal toolchain
 
@@ -125,6 +199,8 @@ Sources/Rune/
   TerminalController.swift    one window: N workspaces, one tab visible
   Split.swift                 a tab's split tree: panes, dividers, focus
   TabBar.swift                the ⌘T strip, drawn inside the title bar
+  Activity.swift              the states a terminal can be in, and how they read
+  AgentSession.swift          reads agent state from their own session logs
   AgentIcon.swift             agent detection + their marks, as inline SVG
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
   SwitcherOverlay.swift       the ⌘K backdrop the palette floats on
