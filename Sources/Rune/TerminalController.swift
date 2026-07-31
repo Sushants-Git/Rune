@@ -418,15 +418,40 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 window?.close()
                 return
             }
-            selectWorkspace(next)
+            if isSwitcherVisible {
+                // ⌘C closed a row. Only re-point the view if the closed
+                // workspace was the one showing behind the panel — and *preview*
+                // it rather than select it, because selecting takes focus, and
+                // taking focus dismisses the switcher. Closing a row isn't
+                // choosing one.
+                if activeWorkspace == nil { previewWorkspace(next) }
+            } else {
+                selectWorkspace(next)
+            }
         } else if workspace === activeWorkspace, let successor {
-            select(successor)
+            if isSwitcherVisible {
+                workspace.activeTab = successor
+                showTab(successor)
+            } else {
+                select(successor)
+            }
         }
     }
 
     func closeActiveSurface() {
         guard let activeSurface else { return }
         closeSurface(activeSurface)
+    }
+
+    /// Close a whole workspace — every tab in it, and every split in those.
+    ///
+    /// Goes through `closeTab` per tab rather than tearing the workspace out
+    /// directly, so the bookkeeping that already exists — telling libghostty a
+    /// surface is gone, forgetting it in the activity monitor, picking the
+    /// successor workspace, closing the window when the last one goes — happens
+    /// exactly once each and in the right order.
+    func closeWorkspace(_ workspace: Workspace) {
+        for tab in workspace.tabs { closeTab(tab) }
     }
 
     /// ⌘⇧W closes the whole window; ⌘W only ever closes one terminal.
@@ -715,6 +740,16 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 if let target { self.selectWorkspace(target) }
             })
 
+        palette.onCloseItem = { [weak self] index in
+            guard let self, let workspace = self.workspaces[safe: index] else { return }
+            // Escape means "put me back where ⌘K was opened from", and that
+            // can't be a workspace this just closed.
+            if self.switcherOrigin === workspace { self.switcherOrigin = nil }
+            self.closeWorkspace(workspace)
+            // Closing the last one takes the window, and the overlay with it.
+            self.overlay?.palette.reload()
+        }
+
         palette.onRename = { [weak self] index, name in
             guard let self, let workspace = self.workspaces[safe: index] else { return }
             workspace.customName = name.isEmpty ? nil : name
@@ -733,6 +768,11 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// Close the switcher without selecting, returning to where it was opened.
     func dismissSwitcher() {
         overlay?.palette.cancel()
+    }
+
+    /// ⌘C in the switcher: close the highlighted workspace, stay open.
+    func closeSwitcherSelection() {
+        overlay?.palette.closeSelected()
     }
 
     /// Put the switcher away because something else is about to take over the

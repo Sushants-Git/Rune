@@ -72,6 +72,10 @@ final class SwitcherPalette: NSView {
     /// ⌘R: the row was renamed in place. An empty name means "go back to the
     /// automatic one".
     var onRename: ((Int, String) -> Void)?
+    /// ⌘C: close the row's workspace outright. The switcher stays open — the
+    /// point of closing from here is clearing out several at once, and a dialog
+    /// that dismissed itself after each one would make that four ⌘Ks.
+    var onCloseItem: ((Int) -> Void)?
     /// Fired when the list grows or shrinks so the host can resize.
     var onSizeChange: (() -> Void)?
 
@@ -282,7 +286,11 @@ final class SwitcherPalette: NSView {
             (["↑", "↓"], "Navigate"),
             (["↵"], "Open"),
             (["⌘R"], "Rename"),
-            (["esc"], "Close"),
+            (["⌘C"], "Close"),
+            // "Dismiss" rather than "Close", now that ⌘C closes a workspace and
+            // esc closes the panel. Two rows both labelled Close would be a
+            // riddle in the one place that exists to answer them.
+            (["esc"], "Dismiss"),
         ] {
             let text = NSTextField(labelWithString: label)
             text.font = .systemFont(ofSize: 10.5)
@@ -377,6 +385,17 @@ final class SwitcherPalette: NSView {
 
     func cancel() {
         onCancel()
+    }
+
+    /// ⌘C: close the highlighted row's workspace.
+    ///
+    /// Refused mid-rename, where ⌘C is the ordinary copy the field editor
+    /// expects and closing the row being edited would be a startling answer to
+    /// it. The host reloads the list, which is what moves the selection onto
+    /// whatever takes the closed row's place.
+    func closeSelected() {
+        guard !isRenaming, let index = selectedItemIndex else { return }
+        onCloseItem?(index)
     }
 
     @objc private func tableClicked() {

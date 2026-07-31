@@ -72,21 +72,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         ghostty?.shutdown()
     }
 
-    /// ⌥1–⌥9 have to be caught before the event reaches the terminal, which
-    /// would otherwise forward them to libghostty as ordinary input. See
-    /// `DigitShortcut` for why neither the menu nor `performKeyEquivalent` can
-    /// do this.
+    /// The two shortcuts that have to be caught before anything else sees them.
+    ///
+    /// ⌥1–⌥9 would otherwise reach the terminal and be forwarded to libghostty
+    /// as ordinary input — see `DigitShortcut` for why neither the menu nor
+    /// `performKeyEquivalent` can do this.
+    ///
+    /// ⌘C is the Edit menu's Copy, and a menu key equivalent is matched before
+    /// the responder chain ever runs, so a handler on the window or the palette
+    /// would never see it. Intercepting here is also what keeps the override
+    /// honest: it applies only while the ⌘K switcher is up and not renaming, so
+    /// copying out of a terminal — the thing a terminal must never lose — is
+    /// untouched everywhere else.
     private func installTabShortcuts() {
         tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
-            guard let self,
-                  let index = DigitShortcut.index(for: event, modifiers: [.option]),
-                  NSApp.keyWindow is TerminalWindow,
+            guard let self, NSApp.keyWindow is TerminalWindow,
                   let controller = self.keyController
             else { return event }
 
-            controller.selectTab(at: index)
-            return nil
+            if let index = DigitShortcut.index(for: event, modifiers: [.option]) {
+                controller.selectTab(at: index)
+                return nil
+            }
+
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+               event.charactersIgnoringModifiers?.lowercased() == "c",
+               controller.isSwitcherVisible, !controller.isRenaming {
+                controller.closeSwitcherSelection()
+                return nil
+            }
+
+            return event
         }
     }
 

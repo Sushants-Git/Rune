@@ -142,6 +142,7 @@ words; hovering one spells it out.
 | `⌘⌥=` | Equalize the splits |
 | `⌘K` | Switch to workspace… |
 | `⌘R` | Rename the workspace, in place in `⌘K` |
+| `⌘C` | Close the highlighted workspace, in `⌘K` (see below) |
 | `⌘T` | New tab in this workspace |
 | `⌘N` | New workspace |
 | `⌘⇧N` | New window |
@@ -152,6 +153,19 @@ words; hovering one spells it out.
 | `⌥1`–`⌥9` | Jump to a tab by position |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
+
+`⌘C` means copy everywhere except one place: with `⌘K` open it closes the
+highlighted workspace and every tab and split in it. The panel stays up, since
+the reason to close from a list is usually that there are several to clear, and
+a dialog that dismissed itself after each one would make that four `⌘K`s.
+Closing the last workspace closes the window, exactly as `⌘W` on the last
+terminal does.
+
+The override is scoped to the switcher being open and not mid-rename, so copying
+out of a terminal — which a terminal may never lose — is untouched. It has to be
+caught in a local event monitor rather than a menu item or `performKeyEquivalent`:
+a menu key equivalent is matched before the responder chain runs, so Copy would
+otherwise always win.
 
 Everything else — scrollback, selection, mouse reporting, colors — is
 libghostty, and it reads your existing `~/.config/ghostty/config`.
