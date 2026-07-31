@@ -28,8 +28,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let controller = newWindow()
         NSApp.activate(ignoringOtherApps: true)
 
+        // Deliberately after the window is up. The check is a network round
+        // trip that has nothing to do with Rune being ready to type into, and
+        // it stays quiet unless it finds something.
+        Updater.shared.checkInBackground()
+
         if ZoomScrollTest.enabled, let controller {
             ZoomScrollTest.run(controller: controller)
+            return
+        }
+
+        if UpdateTest.enabled {
+            UpdateTest.run()
             return
         }
 
@@ -254,6 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func decreaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("decrease_font_size:1") }
     @objc private func resetFontAction(_ sender: Any?) { keyController?.performSurfaceAction("reset_font_size") }
 
+    @objc private func checkForUpdatesAction(_ sender: Any?) { Updater.shared.checkNow() }
+
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
     }
@@ -269,6 +281,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Rune", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        add(to: appMenu, "Check for Updates…", #selector(checkForUpdatesAction(_:)), "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Rune", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")

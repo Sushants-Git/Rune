@@ -205,6 +205,8 @@ Sources/Rune/
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
   SwitcherOverlay.swift       the ⌘K backdrop the palette floats on
   SwitcherPalette.swift       the switcher's filter field, list, ⌘R renaming
+  Updater.swift               in-app updates, fed from the GitHub Releases API
+  UpdatePill.swift            the update's only chrome: a pill in the title bar
   AppDelegate.swift           menus, windows, libghostty action handling
 ```
 
@@ -237,6 +239,54 @@ Four things that cost real debugging time, recorded so they don't again:
 it) and opens `n` extra workspaces in known directories, some with a second tab,
 before dropping into the switcher — for exercising the UI without driving the
 app through synthetic keystrokes. `RUNE_DEMO=0` just floats a plain window.
+
+## Releasing and updating
+
+Pushing a `v*` tag builds `Rune.app` on CI and attaches an arm64 zip to a GitHub
+Release:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` caches `GhosttyKit.xcframework` against
+`GHOSTTY_COMMIT`, so only releases that move ghostty pay for the Zig build. The
+tag is what sets `CFBundleShortVersionString`; nothing in the repo records a
+version otherwise.
+
+Rune then updates itself from that same Release. It checks at most once a day,
+says nothing unless it finds something, and puts a pill at the trailing end of
+the title bar when it does — one click to download, one to restart into it.
+`Check for Updates…` in the app menu does the same thing on demand and, unlike
+the automatic check, reports finding nothing.
+
+Ghostty does this with Sparkle and a hosted appcast. Rune doesn't, because the
+GitHub Releases API already *is* the appcast, and Sparkle's real value — a signed
+appcast validated against a Developer ID — is exactly the part Rune can't use
+until it has a signing certificate. Until then the update is trusted because it
+came over HTTPS from a release only the repo's owner can write, and before
+anything is swapped in, `Updater.verify` checks the download is Rune, is the
+version the release claimed, and passes `codesign --verify`. That last check
+proves integrity, not authorship; `Updater.swift` says so where it matters, and
+that's the line to tighten when a Developer ID exists.
+
+Updates are disabled entirely when Rune isn't running from a `.app` — a
+`swift build` binary has nothing to replace.
+
+### Testing an update
+
+`RUNE_TEST_UPDATE` drives the whole thing against a local feed, which beats
+cutting a release to find out whether the swap works:
+
+```sh
+# serve a fake feed + a zip built with a higher VERSION
+VERSION=0.9.0 ./scripts/bundle.sh
+RUNE_UPDATE_FEED=http://127.0.0.1:8731/latest.json \
+  RUNE_TEST_UPDATE=1 /path/to/installed/Rune.app/Contents/MacOS/Rune
+```
+
+`=check` stops before installing, `=pill` writes each state's chrome to
+`/tmp/rune-pill-*.png` for looking at without a screen-recording entitlement.
 
 ## Credit
 

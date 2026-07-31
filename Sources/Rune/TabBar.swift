@@ -40,6 +40,11 @@ final class TabBar: NSView {
     private let newButton = NSButton()
     /// What the title bar shows instead of a strip when there's one tab.
     private let titleLabel = NSTextField(labelWithString: "")
+    /// Sits at the trailing end and is usually invisible. See `UpdatePill`.
+    private let updatePill = UpdatePill()
+    /// Collapses the pill's slot when it has nothing to show, so the title
+    /// centred beside it gets the full width of the bar back.
+    private var pillCollapsed: NSLayoutConstraint!
 
     private var tabs: [Tab] = []
     private weak var active: Tab?
@@ -88,7 +93,18 @@ final class TabBar: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(titleLabel)
 
+        addSubview(updatePill)
+        pillCollapsed = updatePill.widthAnchor.constraint(equalToConstant: 0)
+        pillCollapsed.isActive = updatePill.isHidden
+        updatePill.onVisibilityChange = { [weak self] in
+            guard let self else { return }
+            self.pillCollapsed.isActive = self.updatePill.isHidden
+        }
+
         NSLayoutConstraint.activate([
+            updatePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            updatePill.centerYAnchor.constraint(equalTo: centerYAnchor),
+
             stack.leadingAnchor.constraint(
                 equalTo: leadingAnchor, constant: Self.leadingInset),
             stack.topAnchor.constraint(equalTo: topAnchor),
@@ -99,16 +115,19 @@ final class TabBar: NSView {
             newButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             newButton.widthAnchor.constraint(equalToConstant: 20),
             newButton.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor, constant: -12),
+                lessThanOrEqualTo: updatePill.leadingAnchor, constant: -8),
 
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             // Clear of the traffic lights on both sides, so a long title
-            // truncates rather than sliding under them.
+            // truncates rather than sliding under them — and clear of the
+            // update pill on the trailing side when there is one.
             titleLabel.leadingAnchor.constraint(
                 greaterThanOrEqualTo: leadingAnchor, constant: Self.leadingInset),
             titleLabel.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: updatePill.leadingAnchor, constant: -8),
         ])
     }
 
