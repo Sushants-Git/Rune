@@ -89,7 +89,12 @@ final class UpdatePill: NSView {
         case .upToDate:
             show("You're up to date", symbol: "checkmark", tint: .secondaryLabelColor)
         case .failed(let reason):
-            show("Update failed", symbol: "exclamationmark.triangle", tint: .systemOrange)
+            // The reason itself when it fits. A pill that only ever says
+            // "Update failed" makes every outcome look identical, including the
+            // ones that aren't really failures — "No releases visible" is a
+            // fact about the repository, not a broken download.
+            show(reason.count <= 24 ? reason : "Update failed",
+                 symbol: "exclamationmark.triangle", tint: .systemOrange)
             toolTip = reason
         }
 

@@ -157,9 +157,12 @@ final class Updater {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            // 404 is what an unreleased repo returns, and it isn't a failure
-            // worth showing anyone.
-            if http.statusCode == 404 { return nil }
+            // A 404 here is not "you're current" — it's Rune being unable to
+            // see any releases, which a repo with none and a repo it can't read
+            // both produce. Saying "up to date" for it would be a lie, and was:
+            // it hid a private repository for a whole release cycle, because
+            // silence looked exactly like success.
+            if http.statusCode == 404 { throw UpdateError.noReleases }
             throw UpdateError.http(http.statusCode)
         }
 
@@ -369,6 +372,7 @@ final class Updater {
 
     enum UpdateError: LocalizedError {
         case http(Int)
+        case noReleases
         case unpackFailed
         case notRune
         case versionMismatch
@@ -377,6 +381,7 @@ final class Updater {
         var errorDescription: String? {
             switch self {
             case .http(let code): "GitHub returned \(code)"
+            case .noReleases: "No releases visible"
             case .unpackFailed: "The download couldn't be unpacked"
             case .notRune: "The download isn't Rune"
             case .versionMismatch: "The download is a different version than the release says"
