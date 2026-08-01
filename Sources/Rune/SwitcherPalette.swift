@@ -8,6 +8,8 @@ struct PaletteItem {
     let badge: String?
     /// The workspace you were in when the switcher opened.
     let isCurrent: Bool
+    /// Pinned to the top with ⌘P.
+    let isPinned: Bool
     /// The agent running there, or the project's own icon — either replaces
     /// the generic terminal glyph.
     let icon: NSImage?
@@ -76,6 +78,9 @@ final class SwitcherPalette: NSView {
     /// point of closing from here is clearing out several at once, and a dialog
     /// that dismissed itself after each one would make that four ⌘Ks.
     var onCloseItem: ((Int) -> Void)?
+    /// ⌘P: pin the row to the top, or unpin it. The host owns the pin order and
+    /// reloads the list, so the palette never reorders anything itself.
+    var onTogglePin: ((Int) -> Void)?
     /// Fired when the list grows or shrinks so the host can resize.
     var onSizeChange: (() -> Void)?
 
@@ -286,6 +291,7 @@ final class SwitcherPalette: NSView {
             (["↑", "↓"], "Navigate"),
             (["↵"], "Open"),
             (["⌘R"], "Rename"),
+            (["⌘P"], "Pin"),
             (["⌘C"], "Close"),
             // "Dismiss" rather than "Close", now that ⌘C closes a workspace and
             // esc closes the panel. Two rows both labelled Close would be a
@@ -314,6 +320,20 @@ final class SwitcherPalette: NSView {
     /// disturbing which row is selected.
     func reload() {
         applyFilter(searchField.stringValue, keepSelection: true)
+    }
+
+    /// Reload and put the highlight on a specific item, given its index into
+    /// the unfiltered list.
+    ///
+    /// Plain `reload` anchors on the selected row's *index*, which is exactly
+    /// wrong after a pin: the indices are what moved, so anchoring would leave
+    /// the highlight sitting on whichever workspace slid into the old slot.
+    func reload(selecting itemIndex: Int?) {
+        applyFilter(searchField.stringValue, keepSelection: true)
+        guard let itemIndex, let row = filtered.firstIndex(of: itemIndex) else { return }
+        selection = row
+        // Not a preview: pinning is bookkeeping, not a request to go there.
+        syncSelection(preview: false)
     }
 
     private func applyFilter(_ query: String, keepSelection: Bool) {
@@ -396,6 +416,13 @@ final class SwitcherPalette: NSView {
     func closeSelected() {
         guard !isRenaming, let index = selectedItemIndex else { return }
         onCloseItem?(index)
+    }
+
+    /// ⌘P: pin the highlighted row to the top, or unpin it. Refused mid-rename
+    /// for the same reason ⌘C is — the field editor's keystrokes are its own.
+    func togglePinOnSelected() {
+        guard !isRenaming, let index = selectedItemIndex else { return }
+        onTogglePin?(index)
     }
 
     @objc private func tableClicked() {
@@ -485,6 +512,20 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 9
+
+        // A pinned row is already at the top; the glyph says *why* it's there,
+        // which is the difference between an order you chose and one you're
+        // trying to account for.
+        if item.isPinned,
+           let pin = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned") {
+            let mark = NSImageView(image: pin)
+            mark.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+            mark.contentTintColor = PaletteStyle.secondaryText
+            mark.setContentHuggingPriority(.required, for: .horizontal)
+            mark.setContentCompressionResistancePriority(.required, for: .horizontal)
+            stack.addArrangedSubview(mark)
+            stack.setCustomSpacing(6, after: mark)
+        }
 
         if index == editingIndex {
             let field = NSTextField(string: item.editableName)

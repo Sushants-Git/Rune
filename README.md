@@ -142,6 +142,7 @@ words; hovering one spells it out.
 | `⌘⌥=` | Equalize the splits |
 | `⌘K` | Switch to workspace… |
 | `⌘R` | Rename the workspace, in place in `⌘K` |
+| `⌘P` | Pin the highlighted workspace to the top of `⌘K` (see below) |
 | `⌘C` | Close the highlighted workspace, in `⌘K` (see below) |
 | `⌘T` | New tab in this workspace |
 | `⌘N` | New workspace |
@@ -153,6 +154,17 @@ words; hovering one spells it out.
 | `⌥1`–`⌥9` | Jump to a tab by position |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
+
+`⌘P` pins the highlighted workspace to the top of the list, and pinned rows
+stay in **the order you pinned them** — pinning A then B leaves A above B, not
+wherever they happen to sit in creation order. That's the point: pinning twice
+is how you build the order you want. Unpinning drops a workspace back among the
+unpinned ones, still in creation order. Pinned rows carry a pin glyph, so an
+order you chose never has to be reverse-engineered from the list.
+
+The list `⌘K` shows is also what `⌘1`–`⌘9` address, so the number you press is
+always the position you can see, pinned or not. Pins live for as long as the
+window does; they aren't written to disk.
 
 `⌘C` means copy everywhere except one place: with `⌘K` open it closes the
 highlighted workspace and every tab and split in it. The panel stays up, since

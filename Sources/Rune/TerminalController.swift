@@ -99,6 +99,38 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// Workspace IDs most-recently-used first, to pick a survivor on close.
     private var mruWorkspaces: [UUID] = []
 
+    /// Workspace IDs pinned to the top of ⌘K, **in the order they were pinned**.
+    /// Appending is the whole feature: pins stack, so the first thing you pin
+    /// stays first and you can build the order you want by pinning in it.
+    private var pinnedWorkspaces: [UUID] = []
+
+    /// The order workspaces are actually presented in: pinned ones first, in
+    /// the order they were pinned, then everything else in creation order.
+    ///
+    /// This — not `workspaces` — is what ⌘K lists and what ⌘1–⌘9 address, so
+    /// the number you press is always the position you can see. Every index
+    /// that crosses the palette boundary is an index into this.
+    var orderedWorkspaces: [Workspace] {
+        let pinned = pinnedWorkspaces.compactMap { id in workspaces.first { $0.id == id } }
+        let rest = workspaces.filter { !pinnedWorkspaces.contains($0.id) }
+        return pinned + rest
+    }
+
+    func isPinned(_ workspace: Workspace) -> Bool {
+        pinnedWorkspaces.contains(workspace.id)
+    }
+
+    /// ⌘P: pin or unpin. Pinning appends rather than inserting at the front, so
+    /// pinning A then B leaves A above B — the order you pinned them in, which
+    /// is the order you were thinking in.
+    func togglePin(_ workspace: Workspace) {
+        if let existing = pinnedWorkspaces.firstIndex(of: workspace.id) {
+            pinnedWorkspaces.remove(at: existing)
+        } else {
+            pinnedWorkspaces.append(workspace.id)
+        }
+    }
+
     /// The tab on screen right now.
     var activeTab: Tab? { activeWorkspace?.activeTab }
 
@@ -409,6 +441,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         if workspace.isEmpty {
             workspaces.removeAll { $0 === workspace }
             mruWorkspaces.removeAll { $0 == workspace.id }
+            pinnedWorkspaces.removeAll { $0 == workspace.id }
             if activeWorkspace === workspace { activeWorkspace = nil }
 
             // Fall back to the most recently used surviving workspace.
@@ -557,8 +590,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘1–⌘9 index the ⌘K list.
     func selectWorkspace(at index: Int) {
-        guard workspaces.indices.contains(index) else { return }
-        selectWorkspace(workspaces[index])
+        // Addressed by what ⌘K shows, so ⌘2 is the second row you can see even
+        // when pinning has moved it there.
+        guard let workspace = orderedWorkspaces[safe: index] else { return }
+        selectWorkspace(workspace)
     }
 
     /// ⌘1–⌘9 index the strip.
@@ -708,12 +743,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         let palette = SwitcherPalette(
             items: { [weak self] in
                 guard let self else { return [] }
-                return self.workspaces.map { workspace in
+                return self.orderedWorkspaces.map { workspace in
                     PaletteItem(
                         title: workspace.title,
                         subtitle: Self.subtitle(for: workspace),
                                         badge: Self.badge(for: workspace),
                         isCurrent: workspace === origin,
+                        isPinned: self.isPinned(workspace),
                         icon: Self.icon(for: workspace),
                         status: workspace.status,
                         searchText: workspace.searchText,
@@ -722,12 +758,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 }
             },
             onPreview: { [weak self] index in
-                guard let self, let workspace = self.workspaces[safe: index] else { return }
+                guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
                 self.previewWorkspace(workspace)
             },
             onCommit: { [weak self] index in
                 guard let self else { return }
-                let target = self.workspaces[safe: index]
+                let target = self.orderedWorkspaces[safe: index]
                 self.closeSwitcher()
                 if let target { self.selectWorkspace(target) }
             },
@@ -740,8 +776,17 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 if let target { self.selectWorkspace(target) }
             })
 
+        palette.onTogglePin = { [weak self] index in
+            guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
+            self.togglePin(workspace)
+            // The row just moved. Follow it, so pinning leaves you on the thing
+            // you pinned rather than on whatever slid into its old position.
+            let destination = self.orderedWorkspaces.firstIndex { $0 === workspace }
+            self.overlay?.palette.reload(selecting: destination)
+        }
+
         palette.onCloseItem = { [weak self] index in
-            guard let self, let workspace = self.workspaces[safe: index] else { return }
+            guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
             // Escape means "put me back where ⌘K was opened from", and that
             // can't be a workspace this just closed.
             if self.switcherOrigin === workspace { self.switcherOrigin = nil }
@@ -751,7 +796,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         }
 
         palette.onRename = { [weak self] index, name in
-            guard let self, let workspace = self.workspaces[safe: index] else { return }
+            guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
             workspace.customName = name.isEmpty ? nil : name
             self.syncTabBar()
             self.syncWindowTitle()
@@ -773,6 +818,11 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// ⌘C in the switcher: close the highlighted workspace, stay open.
     func closeSwitcherSelection() {
         overlay?.palette.closeSelected()
+    }
+
+    /// ⌘P in the switcher: pin the highlighted workspace to the top, or unpin.
+    func togglePinOnSwitcherSelection() {
+        overlay?.palette.togglePinOnSelected()
     }
 
     /// Put the switcher away because something else is about to take over the

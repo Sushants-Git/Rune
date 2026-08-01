@@ -72,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         ghostty?.shutdown()
     }
 
-    /// The two shortcuts that have to be caught before anything else sees them.
+    /// The shortcuts that have to be caught before anything else sees them.
     ///
     /// ⌥1–⌥9 would otherwise reach the terminal and be forwarded to libghostty
     /// as ordinary input — see `DigitShortcut` for why neither the menu nor
@@ -83,7 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     /// would never see it. Intercepting here is also what keeps the override
     /// honest: it applies only while the ⌘K switcher is up and not renaming, so
     /// copying out of a terminal — the thing a terminal must never lose — is
-    /// untouched everywhere else.
+    /// untouched everywhere else. ⌘P rides along for the same reason: a
+    /// terminal may want it, and the switcher's claim on it is temporary.
     private func installTabShortcuts() {
         tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -96,11 +97,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
                 return nil
             }
 
+            // ⌘C and ⌘P only mean anything with the switcher up and no rename
+            // in progress; everywhere else they stay Copy and whatever the
+            // terminal wants them to be.
             if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-               event.charactersIgnoringModifiers?.lowercased() == "c",
                controller.isSwitcherVisible, !controller.isRenaming {
-                controller.closeSwitcherSelection()
-                return nil
+                switch event.charactersIgnoringModifiers?.lowercased() {
+                case "c":
+                    controller.closeSwitcherSelection()
+                    return nil
+                case "p":
+                    controller.togglePinOnSwitcherSelection()
+                    return nil
+                default:
+                    break
+                }
             }
 
             return event
