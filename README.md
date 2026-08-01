@@ -139,6 +139,7 @@ words; hovering one spells it out.
 | `⌘D` / `⌘⇧D` | Split right / down |
 | `⌘⌥←↑↓→` | Focus the pane in that direction |
 | `⌘⇧↵` | Zoom the focused pane to fill the tab, or put it back |
+| — | While zoomed, the title bar shows a restore button (see below) |
 | `⌘⌥=` | Equalize the splits |
 | `⌘K` | Switch to workspace… |
 | `⌘R` | Rename the workspace, in place in `⌘K` |
@@ -154,6 +155,14 @@ words; hovering one spells it out.
 | `⌥1`–`⌥9` | Jump to a tab by position |
 | `⌘C` / `⌘V` | Copy / paste |
 | `⌘+` / `⌘-` / `⌘0` | Font size |
+
+A zoomed pane covers its siblings, which leaves it looking exactly like a tab
+that only ever had one terminal in it — the same trap Ghostty solves with its
+reset-zoom button. Rune puts an accent-coloured restore glyph at the trailing
+end of the title bar for as long as a pane is zoomed, and clicking it undoes
+the zoom, so the state is both visible and one click from reversible. Moving to
+another pane already unzooms on its own, since focusing something you can't see
+would be worse.
 
 `⌘P` pins the highlighted workspace to the top of the list, and pinned rows
 stay in **the order you pinned them** — pinning A then B leaves A above B, not

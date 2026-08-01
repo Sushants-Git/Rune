@@ -35,6 +35,8 @@ final class TabBar: NSView {
     var onSelect: ((Tab) -> Void)?
     var onClose: ((Tab) -> Void)?
     var onNewTab: (() -> Void)?
+    /// The zoom indicator was clicked — put the pane back.
+    var onResetZoom: (() -> Void)?
 
     private let stack = NSStackView()
     private let newButton = NSButton()
@@ -42,9 +44,13 @@ final class TabBar: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// Sits at the trailing end and is usually invisible. See `UpdatePill`.
     private let updatePill = UpdatePill()
-    /// Collapses the pill's slot when it has nothing to show, so the title
-    /// centred beside it gets the full width of the bar back.
-    private var pillCollapsed: NSLayoutConstraint!
+    /// Shown only while a pane is zoomed. See `update(tabs:...)`.
+    private let zoomButton = NSButton()
+    /// The trailing end of the bar. A stack rather than pinned views because
+    /// both of these are usually absent, and `NSStackView` collapses hidden
+    /// arranged subviews for free — which is exactly the behaviour wanted, so
+    /// the centred title gets the whole bar back when neither is showing.
+    private let trailingCluster = NSStackView()
 
     private var tabs: [Tab] = []
     private weak var active: Tab?
@@ -93,17 +99,36 @@ final class TabBar: NSView {
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addSubview(titleLabel)
 
-        addSubview(updatePill)
-        pillCollapsed = updatePill.widthAnchor.constraint(equalToConstant: 0)
-        pillCollapsed.isActive = updatePill.isHidden
-        updatePill.onVisibilityChange = { [weak self] in
-            guard let self else { return }
-            self.pillCollapsed.isActive = self.updatePill.isHidden
-        }
+        // A zoomed pane hides its siblings, and a terminal that is simply
+        // missing the other panes looks the same as one that never had them.
+        // This is the difference, and it's a button because the thing you want
+        // on seeing it is almost always to undo it.
+        zoomButton.title = ""
+        zoomButton.image = NSImage(
+            systemSymbolName: "arrow.down.right.and.arrow.up.left",
+            accessibilityDescription: "Pane zoomed")
+        zoomButton.imagePosition = .imageOnly
+        zoomButton.isBordered = false
+        zoomButton.bezelStyle = .inline
+        zoomButton.contentTintColor = .controlAccentColor
+        zoomButton.target = self
+        zoomButton.action = #selector(resetZoomClicked)
+        zoomButton.toolTip = "Pane zoomed — click to restore the splits (⌘⇧↵)"
+        zoomButton.isHidden = true
+        zoomButton.translatesAutoresizingMaskIntoConstraints = false
+
+        trailingCluster.orientation = .horizontal
+        trailingCluster.alignment = .centerY
+        trailingCluster.spacing = 6
+        trailingCluster.setViews([zoomButton, updatePill], in: .leading)
+        trailingCluster.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(trailingCluster)
 
         NSLayoutConstraint.activate([
-            updatePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            updatePill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailingCluster.trailingAnchor.constraint(
+                equalTo: trailingAnchor, constant: -12),
+            trailingCluster.centerYAnchor.constraint(equalTo: centerYAnchor),
+            zoomButton.widthAnchor.constraint(equalToConstant: 20),
 
             stack.leadingAnchor.constraint(
                 equalTo: leadingAnchor, constant: Self.leadingInset),
@@ -115,7 +140,7 @@ final class TabBar: NSView {
             newButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             newButton.widthAnchor.constraint(equalToConstant: 20),
             newButton.trailingAnchor.constraint(
-                lessThanOrEqualTo: updatePill.leadingAnchor, constant: -8),
+                lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
 
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -127,17 +152,20 @@ final class TabBar: NSView {
             titleLabel.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
             titleLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: updatePill.leadingAnchor, constant: -8),
+                lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
         ])
     }
 
     /// Rebuild the strip from the active workspace's tabs. `workspaceName` is
     /// the ⌘R name, if one is set — it wins over the terminal's own title,
     /// since naming a workspace and then not seeing the name would be odd.
-    func update(tabs: [Tab], active: Tab?, workspaceName: String? = nil) {
+    func update(
+        tabs: [Tab], active: Tab?, workspaceName: String? = nil, isZoomed: Bool = false
+    ) {
         self.tabs = tabs
         self.active = active
         self.workspaceName = workspaceName
+        zoomButton.isHidden = !isZoomed
 
         // One tab is nothing to choose between: name it and show no chrome.
         let single = tabs.count <= 1
@@ -188,6 +216,10 @@ final class TabBar: NSView {
 
     @objc private func newTabClicked() {
         onNewTab?()
+    }
+
+    @objc private func resetZoomClicked() {
+        onResetZoom?()
     }
 
     // The strip overlaps the draggable title bar, so let clicks that miss a

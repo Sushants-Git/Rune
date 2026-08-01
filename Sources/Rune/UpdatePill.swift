@@ -14,14 +14,6 @@ import Cocoa
 /// interested, and a right-click offers the release notes for when you are.
 @MainActor
 final class UpdatePill: NSView {
-    /// Width the strip should reserve for it — zero when there's nothing to
-    /// show, so the title beside it gets the whole bar back.
-    var isShowing: Bool { !isHidden }
-
-    /// Called when the pill appears or disappears, so the strip can re-do the
-    /// layout that depends on whether it's taking up room.
-    var onVisibilityChange: (() -> Void)?
-
     private let button = NSButton()
 
     override init(frame frameRect: NSRect) {
@@ -68,8 +60,6 @@ final class UpdatePill: NSView {
     }
 
     private func apply(_ state: Updater.State) {
-        let wasShowing = isShowing
-
         switch state {
         case .idle:
             isHidden = true
@@ -106,8 +96,6 @@ final class UpdatePill: NSView {
         default:
             button.layer?.backgroundColor = NSColor.clear.cgColor
         }
-
-        if isShowing != wasShowing { onVisibilityChange?() }
     }
 
     private func show(_ text: String, symbol: String, tint: NSColor) {

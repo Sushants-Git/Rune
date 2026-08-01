@@ -216,6 +216,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tabBar.onSelect = { [weak self] tab in self?.select(tab) }
         tabBar.onClose = { [weak self] tab in self?.closeTab(tab) }
         tabBar.onNewTab = { [weak self] in self?.newTab() }
+        tabBar.onResetZoom = { [weak self] in self?.toggleSplitZoom() }
         container.addSubview(tabBar)
 
         syncChrome()
@@ -649,13 +650,19 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // The zoomed pane is a new view in the hierarchy, so it has to be told
         // it still has the keyboard.
         if let surface = tab.focused { window?.makeFirstResponder(surface) }
+        // The title bar's zoom indicator is the only thing that distinguishes a
+        // zoomed pane from a tab that simply has one terminal in it.
+        syncTabBar()
     }
 
     // MARK: - Chrome
 
     private func syncTabBar() {
         tabBar.update(
-            tabs: tabs, active: activeTab, workspaceName: activeWorkspace?.customName)
+            tabs: tabs,
+            active: activeTab,
+            workspaceName: activeWorkspace?.customName,
+            isZoomed: activeTab?.isZoomed ?? false)
     }
 
     /// What an idle split pane is washed with: the terminal's own background,
