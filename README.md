@@ -325,7 +325,9 @@ git tag v0.2.0 && git push origin v0.2.0
 tag is what sets `CFBundleShortVersionString`; nothing in the repo records a
 version otherwise.
 
-Rune then updates itself from that same Release. It checks at most once a day,
+Rune then updates itself from that same Release. It checks at most once a day —
+on launch, hourly after that, and whenever the app is brought to the front, all
+governed by the same daily interval so the network cost is one request a day —
 says nothing unless it finds something, and puts a pill at the trailing end of
 the title bar when it does — one click to download, one to restart into it.
 `Check for Updates…` in the app menu does the same thing on demand and, unlike

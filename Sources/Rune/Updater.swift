@@ -97,12 +97,56 @@ final class Updater {
     /// notice a release without turning the app into a polling client.
     private static let checkInterval: TimeInterval = 24 * 60 * 60
 
-    /// The launch-time check. Silent about everything except actually finding an
-    /// update, and skipped entirely if one ran recently.
+    /// How often to *consider* checking. The daily interval above decides
+    /// whether considering turns into a request, so this only has to be fine
+    /// enough that a release isn't missed by most of a day.
+    private static let pollInterval: TimeInterval = 60 * 60
+
+    private var timer: Timer?
+
+    /// Begin checking, and keep checking.
+    ///
+    /// The keeping is the point, and it was missing: `checkInBackground` used to
+    /// be called once from `applicationDidFinishLaunching` and never again, so
+    /// an app that documented "it checks once a day" actually checked once per
+    /// *launch*. Rune is a terminal — it is opened once and left for days, which
+    /// is exactly the usage pattern where "once per launch" means "never".
+    ///
+    /// The timer is hourly and cheap: all but one wake-up a day compares two
+    /// dates and returns. Becoming active is worth a look too, since a laptop
+    /// that slept through the timer would otherwise sit idle until the next
+    /// hour, and coming back to the app is the moment someone might act on it.
+    func start() {
+        guard isSupported else { return }
+        checkInBackground()
+
+        timer?.invalidate()
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { _ in
+            Task { @MainActor in Updater.shared.checkInBackground() }
+        }
+        // Nothing here is time-critical; letting the OS coalesce these keeps a
+        // sleeping laptop asleep.
+        timer.tolerance = Self.pollInterval / 10
+        self.timer = timer
+
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            Task { @MainActor in Updater.shared.checkInBackground() }
+        }
+    }
+
+    /// A check that stays silent unless it finds something, and does nothing at
+    /// all if one ran recently.
     func checkInBackground() {
         guard isSupported else { return }
-        let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date
-        if let last, Date().timeIntervalSince(last) < Self.checkInterval { return }
+        if let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date {
+            let since = Date().timeIntervalSince(last)
+            // A timestamp in the future is a clock that moved, not a check that
+            // hasn't aged yet; treating it as fresh would suppress updates until
+            // the clock caught up with it.
+            if since >= 0, since < Self.checkInterval { return }
+        }
         check(userInitiated: false)
     }
 

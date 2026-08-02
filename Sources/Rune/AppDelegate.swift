@@ -30,8 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
         // Deliberately after the window is up. The check is a network round
         // trip that has nothing to do with Rune being ready to type into, and
-        // it stays quiet unless it finds something.
-        Updater.shared.checkInBackground()
+        // it stays quiet unless it finds something. `start` also schedules the
+        // repeat, without which a window left open for a week never looks again.
+        Updater.shared.start()
 
         if ZoomScrollTest.enabled, let controller {
             ZoomScrollTest.run(controller: controller)
