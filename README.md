@@ -332,6 +332,45 @@ that's the line to tighten when a Developer ID exists.
 Updates are disabled entirely when Rune isn't running from a `.app` — a
 `swift build` binary has nothing to replace.
 
+### Homebrew
+
+`scripts/make-cask.sh` generates the cask for a released version, with the
+sha256 taken from the bytes GitHub actually serves rather than from a local
+build — two builds of the same commit aren't byte-identical, and a checksum that
+matches only the machine that made it is worse than none:
+
+```sh
+VERSION=0.6.0 ./scripts/make-cask.sh > Casks/rune.rb
+```
+
+The cask lives in a **tap repository**, a separate GitHub repo named
+`homebrew-rune`, because that's where `brew tap` looks:
+
+```sh
+brew tap-new Sushants-Git/rune       # creates homebrew-rune locally
+# drop Casks/rune.rb in, push it to github.com/Sushants-Git/homebrew-rune
+brew tap sushants-git/rune
+brew install --cask rune
+```
+
+Two things have to be true before that works, and neither is a packaging
+problem:
+
+- **The repository must be public.** Homebrew downloads the release asset over
+  plain HTTPS with no credentials, so a private repo is a 404 to it — which is
+  exactly what `brew audit` reports today. This blocks a personal tap just as
+  much as the official one.
+- **Gatekeeper.** Rune is ad-hoc signed, so macOS refuses it on first launch
+  until the user clears quarantine by hand. Homebrew's own rules say a cask
+  "must not require System Integrity Protection or Gatekeeper to be disabled or
+  bypassed", so `homebrew/cask` proper is off the table until Rune is signed
+  with a Developer ID and notarized. A personal tap still works — users just
+  hit the same first-launch dialog as with the zip.
+
+The generated cask declares `auto_updates true`, since Rune updates itself; that
+stops Homebrew treating a self-updated copy as a version mismatch. It passes
+`brew style` clean.
+
 ### Testing an update
 
 `RUNE_TEST_UPDATE` drives the whole thing against a local feed, which beats
