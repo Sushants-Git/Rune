@@ -355,8 +355,8 @@ deliberate decision to become a cross-platform project, not as a packaging step.
 
 ## Releasing and updating
 
-Pushing a `v*` tag builds a universal `Rune.app` on CI and attaches the zip to a
-GitHub Release:
+Pushing a `v*` tag builds a universal `Rune.app` on CI and attaches two things
+to a GitHub Release — a zip and a disk image:
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0
@@ -366,6 +366,14 @@ git tag v0.2.0 && git push origin v0.2.0
 `GHOSTTY_COMMIT`, so only releases that move ghostty pay for the Zig build. The
 tag is what sets `CFBundleShortVersionString`; nothing in the repo records a
 version otherwise.
+
+Both artefacts, because they answer different questions. The **zip** is what the
+in-app updater downloads and unpacks with nobody watching. The **dmg**
+(`scripts/make-dmg.sh`, mountable with an `/Applications` symlink beside the
+app) is what a person opens — and that drag is what keeps Rune out of
+`~/Downloads`, where Raycast and Spotlight will never find it. The image is
+named after the architectures actually inside it, so a native-only local build
+doesn't produce a file claiming to be universal.
 
 Rune then updates itself from that same Release. It checks at most once a day —
 on launch, hourly after that, and whenever the app is brought to the front, all

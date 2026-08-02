@@ -1,5 +1,6 @@
 # Cut a release: push a tag like v0.1.0 and this builds Rune.app on an
-# Apple-silicon runner, zips it, and attaches it to a GitHub Release.
+# Apple-silicon runner and attaches both a zip and a disk image to a GitHub
+# Release.
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
@@ -70,12 +71,23 @@ jobs:
             case "$archs" in *"$want"*) ;; *) echo "error: missing $want" >&2; exit 1;; esac
           done
 
+      # Both, and they are not redundant. The zip is what the in-app updater
+      # downloads and unpacks unattended; the dmg is what a person opens, and
+      # its /Applications symlink is what stops Rune living in ~/Downloads
+      # where Raycast and Spotlight will never find it.
       - name: Zip the app
         run: ditto -c -k --keepParent build/Rune.app "Rune-${GITHUB_REF_NAME}-macos-universal.zip"
+
+      - name: Build the disk image
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" ./scripts/make-dmg.sh
+          mv build/Rune-*.dmg .
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: Rune-*-macos-universal.zip
+          files: |
+            Rune-*-macos-universal.zip
+            Rune-*-macos-universal.dmg
           generate_release_notes: true
