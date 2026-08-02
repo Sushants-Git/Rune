@@ -375,9 +375,12 @@ app) is what a person opens — and that drag is what keeps Rune out of
 named after the architectures actually inside it, so a native-only local build
 doesn't produce a file claiming to be universal.
 
-Rune then updates itself from that same Release. It checks at most once a day —
-on launch, hourly after that, and whenever the app is brought to the front, all
-governed by the same daily interval so the network cost is one request a day —
+Rune then updates itself from that same Release. It checks on launch, hourly
+after that, and whenever the app is brought to the front, with an hour's
+minimum gap between checks — one request an hour against an unauthenticated
+limit of sixty. It also checks regardless of that gap when the running version
+differs from the one that last checked, so a freshly installed build doesn't
+inherit its predecessor's timer —
 says nothing unless it finds something, and puts a pill at the trailing end of
 the title bar when it does — one click to download, one to restart into it.
 `Check for Updates…` in the app menu does the same thing on demand and, unlike

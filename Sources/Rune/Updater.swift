@@ -93,13 +93,25 @@ final class Updater {
     // MARK: - Checking
 
     private static let lastCheckKey = "RuneLastUpdateCheck"
-    /// Rune is a terminal — it stays open for days. A check a day is enough to
-    /// notice a release without turning the app into a polling client.
-    private static let checkInterval: TimeInterval = 24 * 60 * 60
+    /// The version that was running the last time a check happened.
+    private static let lastCheckVersionKey = "RuneLastUpdateCheckVersion"
 
-    /// How often to *consider* checking. The daily interval above decides
-    /// whether considering turns into a request, so this only has to be fine
-    /// enough that a release isn't missed by most of a day.
+    /// The shortest gap between two checks.
+    ///
+    /// This was a day, and a day is far too long. The failure it produces looks
+    /// exactly like a broken updater: check at 20:22, find nothing because
+    /// nothing is out yet, a release ships at 21:50, and the app then sits
+    /// silent until the following evening — with the pill it is supposed to
+    /// show sitting behind a timer nobody can see. That happened, and the
+    /// second report of "the updater isn't working" was it.
+    ///
+    /// An hour costs one request an hour against an unauthenticated limit of
+    /// sixty, which is nothing, and it means a terminal left open notices a
+    /// release over a coffee rather than over a night.
+    private static let checkInterval: TimeInterval = 60 * 60
+
+    /// How often to *consider* checking. Equal to the interval, so the timer is
+    /// the schedule rather than a sampler for a slower one.
     private static let pollInterval: TimeInterval = 60 * 60
 
     private var timer: Timer?
@@ -140,7 +152,17 @@ final class Updater {
     /// all if one ran recently.
     func checkInBackground() {
         guard isSupported else { return }
-        if let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date {
+
+        // A different version is running than the one that last checked, so the
+        // timer belongs to a copy of Rune that no longer exists. Installing a
+        // build and having it stay quiet because its predecessor looked an hour
+        // ago is the same silence-that-reads-as-broken as the interval itself.
+        let running = Self.currentVersion.map(String.init(describing:))
+        let checked = UserDefaults.standard.string(forKey: Self.lastCheckVersionKey)
+        let sameVersion = running != nil && running == checked
+
+        if sameVersion,
+           let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date {
             let since = Date().timeIntervalSince(last)
             // A timestamp in the future is a clock that moved, not a check that
             // hasn't aged yet; treating it as fresh would suppress updates until
@@ -174,6 +196,11 @@ final class Updater {
                 let release = try await Self.fetchLatest()
                 guard let self, !Task.isCancelled else { return }
                 UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
+                // Stamped with the version that did the checking, so a later
+                // build doesn't inherit this one's timer. See checkInBackground.
+                UserDefaults.standard.set(
+                    Self.currentVersion.map(String.init(describing:)),
+                    forKey: Self.lastCheckVersionKey)
 
                 guard let current = Self.currentVersion, let release, release.version > current
                 else {
