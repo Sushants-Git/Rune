@@ -25,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
         buildMenu()
         installTabShortcuts()
-        let controller = newWindow()
+        installCommandLineListener()
+        // `rune <path>` on a cold launch says where the first window belongs.
+        let controller = newWindow(workingDirectory: CLI.startupDirectory)
         NSApp.activate(ignoringOtherApps: true)
 
         // Deliberately after the window is up. The check is a network round
@@ -116,6 +118,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
             }
 
             return event
+        }
+    }
+
+    /// `rune <path>` run against an already-running Rune arrives here.
+    ///
+    /// A new *workspace* rather than a new window: everything Rune does lives in
+    /// one window on purpose, and a command run in a terminal is asking for a
+    /// place to work, not for another window to arrange.
+    private func installCommandLineListener() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: CLI.openNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            // Read the path out here: a Notification isn't Sendable, so it must
+            // not cross into the isolated closure, but a String happily does.
+            let path = note.object as? String
+            MainActor.assumeIsolated {
+                guard let self, let path else { return }
+                if let controller = self.keyController {
+                    controller.newWorkspace(workingDirectory: path)
+                } else {
+                    self.newWindow(workingDirectory: path)
+                }
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 

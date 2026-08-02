@@ -258,6 +258,7 @@ Sources/Rune/
   TabBar.swift                the ⌘T strip, drawn inside the title bar
   Activity.swift              the states a terminal can be in, and how they read
   AgentSession.swift          reads agent state from what each agent publishes
+  CLI.swift                   the same binary, run as the `rune` command
   AgentIcon.swift             agent detection + their marks, as inline SVG
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
   SwitcherOverlay.swift       the ⌘K backdrop the palette floats on
@@ -296,6 +297,47 @@ Four things that cost real debugging time, recorded so they don't again:
 it) and opens `n` extra workspaces in known directories, some with a second tab,
 before dropping into the switcher — for exercising the UI without driving the
 app through synthetic keystrokes. `RUNE_DEMO=0` just floats a plain window.
+
+## The `rune` command
+
+The app's own binary doubles as a command-line tool — it checks its arguments
+before AppKit starts, so `rune --version` prints a line instead of opening a
+window. Install it with a symlink, which means the command follows the app
+across self-updates:
+
+```sh
+./scripts/install-cli.sh          # /usr/local/bin or ~/.local/bin
+BIN=~/bin ./scripts/install-cli.sh
+```
+
+```
+rune                 open Rune, or bring it to the front
+rune <directory>     open a workspace there, in the Rune already running
+rune --version
+rune --help
+```
+
+`rune <directory>` deliberately does not start a second copy of a terminal you
+already have open: if Rune is running it hands the path over by distributed
+notification and exits, and the running app opens a *workspace* there. Only a
+cold start launches anything, and it goes through LaunchServices rather than
+becoming the app in your shell's session, which is what makes it activate
+properly.
+
+Note that the version has to come from the resolved bundle rather than
+`Bundle.main`: reached through a symlink on `$PATH`, `Bundle.main` is the
+directory holding the symlink, and every value in Info.plist silently isn't
+there. `rune --version` printing `unknown` was exactly that.
+
+## Showing up in Raycast and Spotlight
+
+Both index `/Applications`, `~/Applications` and `/System/Applications`, and
+nowhere else. A Rune sitting in `~/Downloads` or in this repo's `build/` is
+invisible to them no matter how many times it has been launched — move it:
+
+```sh
+mv ~/Downloads/Rune.app /Applications/
+```
 
 ## Platforms
 
