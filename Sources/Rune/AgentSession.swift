@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 
 /// Asks each coding agent what it's doing, using whatever the agent itself
 /// publishes.
@@ -22,6 +23,10 @@ import Foundation
 ///
 /// Codex has no equivalent, so it still reads its rollout log, which at least
 /// records explicit `task_started` / `task_complete` events.
+///
+/// opencode has no equivalent either, but it keeps its sessions in a SQLite
+/// database and stamps every assistant message with a completion time — so the
+/// question "is it still going" is a column rather than an inference.
 ///
 /// Nothing here reads the terminal, and nothing here runs on the main thread.
 enum AgentSession {}
@@ -66,6 +71,12 @@ final class AgentMonitor: @unchecked Sendable {
     private var codexByDirectory: [String: URL] = [:]
     private var codexIndexedAt: Date = .distantPast
     private var codexCwdCache: [URL: String?] = [:]
+
+    /// Queue-confined, same shape as the Codex index and refreshed on the same
+    /// cadence: one query covers every directory, so there is nothing to be
+    /// gained by asking per terminal.
+    private var openCodeByDirectory: [String: OpenCodeStore.State] = [:]
+    private var openCodeIndexedAt: Date = .distantPast
 
     private static let codexIndexInterval: TimeInterval = 15
     /// How many day-directories of rollouts to consider live, and how many of
@@ -125,12 +136,33 @@ final class AgentMonitor: @unchecked Sendable {
                 sessionName: nil)
         }
 
+        // opencode: its database says outright whether the turn is still going.
+        if agent == .openCode, let directory = probe.directory,
+           let state = openCodeState(directory: directory) {
+            return AgentVerdict(
+                surface: probe.surface,
+                agent: agent,
+                activity: state.activity,
+                detail: state.detail,
+                sessionName: nil)
+        }
+
         // A recognised agent that says nothing Rune can read. Claiming to know
         // what it's doing would be a guess, and a guess shown as fact is worse
         // than saying nothing — so it gets an icon and no indicator.
         return AgentVerdict(
             surface: probe.surface, agent: agent, activity: .idle,
             detail: nil, sessionName: nil)
+    }
+
+    // MARK: - opencode
+
+    private func openCodeState(directory: String) -> OpenCodeStore.State? {
+        if Date().timeIntervalSince(openCodeIndexedAt) >= Self.codexIndexInterval {
+            openCodeByDirectory = OpenCodeStore.index()
+            openCodeIndexedAt = Date()
+        }
+        return openCodeByDirectory[directory]
     }
 
     // MARK: - Codex
@@ -292,6 +324,147 @@ enum ClaudeSessionFile {
         var size = MemoryLayout<kinfo_proc>.stride
         guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size > 0 else { return nil }
         return info.kp_eproc.e_ppid
+    }
+}
+
+// MARK: - opencode
+
+/// opencode's SQLite database, at `~/.local/share/opencode/opencode.db`.
+///
+/// Nicer to read than a log: every message row carries `role`, and an assistant
+/// message gains a `time.completed` the moment its turn ends. So the state is a
+/// field rather than something reconstructed from the order of events — an
+/// assistant message without a completion time is a turn still running, and one
+/// with a completion time is your move.
+///
+/// Read-only, and deliberately not held open: opencode writes this database
+/// while Rune reads it, and the index is only rebuilt every 15 seconds, so
+/// there is nothing to gain from keeping a handle on someone else's file.
+enum OpenCodeStore {
+    struct State {
+        var activity: Activity
+        var detail: String?
+    }
+
+    /// Overridable so the states that only occur mid-turn can be exercised
+    /// against a copy, the same way `RUNE_UPDATE_FEED` exists for the updater.
+    /// An interrupted turn is easy to find in history and impossible to stage
+    /// on demand without spending someone's API quota.
+    static var databaseURL: URL {
+        if let override = ProcessInfo.processInfo.environment["RUNE_OPENCODE_DB"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".local/share/opencode/opencode.db")
+    }
+
+    /// Working directory to what opencode is doing there.
+    ///
+    /// One query for every session rather than one per terminal: the join is
+    /// cheap, and a directory maps to its most recently updated session, which
+    /// is the same "newest wins" rule the Codex index uses.
+    static func index() -> [String: State] {
+        guard FileManager.default.fileExists(atPath: databaseURL.path),
+              let db = open(databaseURL) else { return [:] }
+        defer { sqlite3_close(db) }
+
+        // The last message of each session, newest sessions first. `LIMIT` is a
+        // guard against a database with years of history in it, not a guess
+        // about how many terminals are open.
+        let sql = """
+            SELECT s.directory, s.id, m.data
+            FROM session s
+            JOIN message m ON m.id = (
+                SELECT id FROM message WHERE session_id = s.id
+                ORDER BY time_created DESC LIMIT 1
+            )
+            ORDER BY s.time_updated DESC
+            LIMIT 128
+            """
+
+        var result: [String: State] = [:]
+        forEachRow(db, sql) { statement in
+            guard let directory = text(statement, 0), result[directory] == nil,
+                  let sessionID = text(statement, 1),
+                  let data = text(statement, 2)?.data(using: .utf8),
+                  let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+
+            let role = message["role"] as? String
+            let time = message["time"] as? [String: Any]
+            let completed = time?["completed"] != nil
+
+            // A user message means the turn has just been handed over, so the
+            // agent owns it even though it hasn't written anything yet.
+            switch role {
+            case "assistant" where completed:
+                result[directory] = State(activity: .waiting, detail: nil)
+            case "assistant", "user":
+                result[directory] = State(
+                    activity: .working, detail: runningTool(db, session: sessionID))
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// What the turn is doing right now, when it's doing something nameable.
+    private static func runningTool(_ db: OpaquePointer, session: String) -> String? {
+        // Newest part first; a tool part carries the tool's name and whether it
+        // is still going. Anything else — plain text, step markers — has no
+        // name worth putting on a row.
+        let sql = """
+            SELECT data FROM part
+            WHERE session_id = '\(session.replacingOccurrences(of: "'", with: "''"))'
+            ORDER BY time_created DESC LIMIT 12
+            """
+        var detail: String?
+        forEachRow(db, sql) { statement in
+            guard detail == nil,
+                  let raw = text(statement, 0)?.data(using: .utf8),
+                  let part = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+                  part["type"] as? String == "tool",
+                  let tool = part["tool"] as? String,
+                  let state = part["state"] as? [String: Any],
+                  state["status"] as? String == "running"
+            else { return }
+            detail = "Running \(tool)"
+        }
+        return detail
+    }
+
+    // MARK: - SQLite, kept to the three calls this needs
+
+    private static func open(_ url: URL) -> OpaquePointer? {
+        var db: OpaquePointer?
+        // Read-only, but *not* `immutable`: opencode is writing to this while
+        // Rune reads it, and an immutable open ignores the write-ahead log —
+        // which would mean reading a consistent snapshot of the past.
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            if let db { sqlite3_close(db) }
+            return nil
+        }
+        // Don't sit on a locked database while an agent is mid-write.
+        sqlite3_busy_timeout(db, 100)
+        return db
+    }
+
+    private static func forEachRow(
+        _ db: OpaquePointer, _ sql: String, _ body: (OpaquePointer) -> Void
+    ) {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement
+        else { return }
+        defer { sqlite3_finalize(statement) }
+        while sqlite3_step(statement) == SQLITE_ROW { body(statement) }
+    }
+
+    private static func text(_ statement: OpaquePointer, _ column: Int32) -> String? {
+        guard let raw = sqlite3_column_text(statement, column) else { return nil }
+        return String(cString: raw)
     }
 }
 

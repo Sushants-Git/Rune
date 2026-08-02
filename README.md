@@ -113,8 +113,20 @@ works but carries no text.
 - **Codex** has no equivalent, so it reads `~/.codex/sessions/<date>/rollout-*.jsonl`
   for its explicit `task_started` / `task_complete` events, matched to a
   terminal by the `cwd` in the log header.
-- **opencode** publishes nothing readable, so its terminals get an icon and no
-  indicator.
+- **opencode** keeps its sessions in a SQLite database at
+  `~/.local/share/opencode/opencode.db`, and stamps every assistant message with
+  a `time.completed` when its turn ends — so "is it still going" is a field
+  rather than something reconstructed from the order of events. An assistant
+  message without a completion time is a live turn; one with it is your move.
+  Sessions carry the `directory` they were started in, which is what matches
+  them to a terminal, and a tool part that is still `running` names what the
+  turn is doing (`Running bash`). Rune opens it read-only and never holds the
+  handle — one query covers every directory, on the same 15-second cadence as
+  the Codex index.
+
+An agent Rune can't read still gets its icon and no indicator: claiming to know
+what it's doing would be a guess, and a guess shown as fact is worse than
+silence.
 
 Matching on pid matters more than it sounds. Rune previously picked "the newest
 transcript in this directory", which is simply wrong once a directory has
@@ -245,7 +257,7 @@ Sources/Rune/
   Split.swift                 a tab's split tree: panes, dividers, focus
   TabBar.swift                the ⌘T strip, drawn inside the title bar
   Activity.swift              the states a terminal can be in, and how they read
-  AgentSession.swift          reads agent state from their own session logs
+  AgentSession.swift          reads agent state from what each agent publishes
   AgentIcon.swift             agent detection + their marks, as inline SVG
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
   SwitcherOverlay.swift       the ⌘K backdrop the palette floats on

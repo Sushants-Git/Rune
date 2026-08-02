@@ -18,6 +18,9 @@ let package = Package(
                 // oniguruma, harfbuzz and friends) and expects the host to
                 // provide the platform frameworks it renders and speaks to.
                 .linkedLibrary("c++"),
+                // opencode keeps its sessions in a SQLite database; see
+                // OpenCodeStore in AgentSession.swift.
+                .linkedLibrary("sqlite3"),
                 .linkedFramework("Metal"),
                 .linkedFramework("MetalKit"),
                 .linkedFramework("QuartzCore"),
