@@ -281,15 +281,18 @@ final class SwitcherPalette: NSView {
     }
 
     /// Keycap-style hints, the way a launcher does it: the key drawn as a key,
-    /// then what it does. Everything the switcher responds to is listed, since
-    /// a panel with no menu is a panel with nowhere else to learn it from.
+    /// then what it does.
+    ///
+    /// Only the ones worth saying. Arrows moving a selection and ⏎ taking it are
+    /// what every list on the machine already does, so spelling them out spent
+    /// half the bar teaching nobody anything — and made the four that *are*
+    /// particular to Rune harder to pick out for being in a crowd. The keys
+    /// themselves are unchanged; it's the sentence that was redundant.
     private static func hintBar() -> NSView {
         let stack = NSStackView()
         stack.orientation = .horizontal
         stack.spacing = 14
         for (keys, label) in [
-            (["↑", "↓"], "Navigate"),
-            (["↵"], "Open"),
             (["⌘R"], "Rename"),
             (["⌘P"], "Pin"),
             (["⌘C"], "Close"),
