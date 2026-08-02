@@ -124,13 +124,19 @@ final class Updater {
     /// *launch*. Rune is a terminal — it is opened once and left for days, which
     /// is exactly the usage pattern where "once per launch" means "never".
     ///
-    /// The timer is hourly and cheap: all but one wake-up a day compares two
-    /// dates and returns. Becoming active is worth a look too, since a laptop
-    /// that slept through the timer would otherwise sit idle until the next
-    /// hour, and coming back to the app is the moment someone might act on it.
+    /// The timer is hourly and cheap: most wake-ups compare two dates and
+    /// return. Becoming active is worth a look too, since a laptop that slept
+    /// through the timer would otherwise sit idle until the next hour, and
+    /// coming back to the app is the moment someone might act on it.
+    ///
+    /// Opening the app checks *unconditionally*, ignoring the interval. Launching
+    /// is a deliberate act and a natural moment to be told something is waiting,
+    /// and it's the one check a person can actually cause on purpose short of
+    /// finding the menu item. It costs a single request, and the interval still
+    /// governs everything that happens afterwards without anyone asking.
     func start() {
         guard isSupported else { return }
-        checkInBackground()
+        check(userInitiated: false)
 
         timer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { _ in

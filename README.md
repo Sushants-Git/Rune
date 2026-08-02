@@ -375,8 +375,9 @@ app) is what a person opens — and that drag is what keeps Rune out of
 named after the architectures actually inside it, so a native-only local build
 doesn't produce a file claiming to be universal.
 
-Rune then updates itself from that same Release. It checks on launch, hourly
-after that, and whenever the app is brought to the front, with an hour's
+Rune then updates itself from that same Release. It checks every time you open
+it — launching is deliberate, and the one check you can cause on purpose short
+of the menu item — hourly after that, and whenever the app is brought to the front, with an hour's
 minimum gap between checks — one request an hour against an unauthenticated
 limit of sixty. It also checks regardless of that gap when the running version
 differs from the one that last checked, so a freshly installed build doesn't
