@@ -202,6 +202,16 @@ Requires macOS 13+, Zig 0.16.0 (`brew install zig`), and Xcode.
 open build/Rune.app
 ```
 
+A plain `bundle.sh` builds for the machine you're on. Released builds are
+universal, which needs a universal libghostty underneath it — a Swift build for
+x86_64 can't link an arm64-only xcframework, and the failure is a wall of
+missing symbols rather than anything that says "wrong architecture":
+
+```sh
+TARGET=universal ./scripts/build-libghostty.sh
+ARCH=universal ./scripts/bundle.sh
+```
+
 `bundle.sh` runs the libghostty build for you if the xcframework is missing.
 
 Both scripts build optimized by default, which matters more than it usually
@@ -275,10 +285,24 @@ it) and opens `n` extra workspaces in known directories, some with a second tab,
 before dropping into the switcher — for exercising the UI without driving the
 app through synthetic keystrokes. `RUNE_DEMO=0` just floats a plain window.
 
+## Platforms
+
+macOS 13 or newer, on Apple silicon and Intel — released builds are universal,
+so one download covers both.
+
+There is no Linux or Windows build, and there can't be a cheap one. libghostty
+is portable and Ghostty itself ships a GTK app on Linux, but that portability
+stops at the terminal: everything Rune adds — workspaces, the split tree, the
+⌘K switcher, the tab strip in the title bar — is AppKit, across most of the
+files in `Sources/Rune`. A Linux port isn't a build-system change or a
+conditional import, it's writing that UI a second time against GTK, with a
+second set of behaviours to keep in step forever after. Worth doing only as a
+deliberate decision to become a cross-platform project, not as a packaging step.
+
 ## Releasing and updating
 
-Pushing a `v*` tag builds `Rune.app` on CI and attaches an arm64 zip to a GitHub
-Release:
+Pushing a `v*` tag builds a universal `Rune.app` on CI and attaches the zip to a
+GitHub Release:
 
 ```sh
 git tag v0.2.0 && git push origin v0.2.0

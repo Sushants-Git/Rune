@@ -5,7 +5,8 @@
 #
 # The expensive step is libghostty (a full Zig build of ghostty's core), so the
 # resulting xcframework is cached keyed on GHOSTTY_COMMIT — releases that don't
-# bump ghostty skip it entirely. Builds are arm64-only and ad-hoc signed, which
+# bump ghostty skip it entirely. Builds are universal (arm64 + x86_64) so one
+# download covers both Apple silicon and Intel Macs, and ad-hoc signed, which
 # means downloaders currently have to clear Gatekeeper once
 # (right-click → Open, or `xattr -dr com.apple.quarantine Rune.app`).
 name: Release
@@ -35,7 +36,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: vendor/ghostty/macos/GhosttyKit.xcframework
-          key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-${{ runner.arch }}
+          # 'universal' is part of the key: a cached arm64-only xcframework
+          # would fail the x86_64 link, and an artefact that can't be rebuilt
+          # from its own key is worse than a cache miss.
+          key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-universal
 
       - name: Set up Zig
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
@@ -45,22 +49,33 @@ jobs:
 
       - name: Build libghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
-        run: ./scripts/build-libghostty.sh
+        run: TARGET=universal ./scripts/build-libghostty.sh
 
       - name: Build and bundle Rune.app
         run: |
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}" ./scripts/bundle.sh
+            ARCH=universal VERSION="${GITHUB_REF_NAME#v}" ./scripts/bundle.sh
           else
-            ./scripts/bundle.sh
+            ARCH=universal ./scripts/bundle.sh
           fi
 
+      # Both slices have to actually be present. A universal build that
+      # quietly came out single-architecture would only be discovered by an
+      # Intel user, after release.
+      - name: Verify the binary is universal
+        run: |
+          archs="$(lipo -archs build/Rune.app/Contents/MacOS/Rune)"
+          echo "architectures: $archs"
+          for want in arm64 x86_64; do
+            case "$archs" in *"$want"*) ;; *) echo "error: missing $want" >&2; exit 1;; esac
+          done
+
       - name: Zip the app
-        run: ditto -c -k --keepParent build/Rune.app "Rune-${GITHUB_REF_NAME}-macos-arm64.zip"
+        run: ditto -c -k --keepParent build/Rune.app "Rune-${GITHUB_REF_NAME}-macos-universal.zip"
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: Rune-*-macos-arm64.zip
+          files: Rune-*-macos-universal.zip
           generate_release_notes: true

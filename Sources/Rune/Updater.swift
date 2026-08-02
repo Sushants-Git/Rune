@@ -39,9 +39,14 @@ final class Updater {
     /// the browser than pretend it can install something itself.
     static let releasesPage = URL(string: "https://github.com/Sushants-Git/Rune/releases/latest")!
 
-    /// The asset a release has to carry for Rune to install it. Matches what
-    /// `.github/workflows/release.yml` attaches.
-    private static let assetSuffix = "macos-arm64.zip"
+    /// The assets a release can carry for Rune to install it, best first.
+    ///
+    /// Two of them because the artefact was renamed when builds went universal:
+    /// releases up to v0.5.0 attach `macos-arm64.zip` and later ones attach
+    /// `macos-universal.zip`. An updater that only knew the new name would look
+    /// at an older release and report finding nothing — which is precisely the
+    /// silent-failure shape this code has already been bitten by once.
+    private static let assetSuffixes = ["macos-universal.zip", "macos-arm64.zip"]
 
     enum State {
         case idle
@@ -170,9 +175,13 @@ final class Updater {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let feed = try decoder.decode(Feed.self, from: data)
 
+        let asset = assetSuffixes.lazy
+            .compactMap { suffix in feed.assets.first { $0.name.hasSuffix(suffix) } }
+            .first
+
         guard !feed.draft, !feed.prerelease,
               let version = Version(feed.tagName),
-              let asset = feed.assets.first(where: { $0.name.hasSuffix(assetSuffix) }),
+              let asset,
               let assetURL = URL(string: asset.browserDownloadUrl),
               let page = URL(string: feed.htmlUrl)
         else { return nil }

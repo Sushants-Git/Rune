@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
 # Build Rune and assemble build/Rune.app.
 #
-#   ./scripts/bundle.sh              # release
+#   ./scripts/bundle.sh              # release, this machine's architecture
 #   CONFIG=debug ./scripts/bundle.sh
 #   VERSION=1.2.0 ./scripts/bundle.sh   # stamp a version (used by CI on tags)
+#   ARCH=universal ./scripts/bundle.sh  # arm64 + x86_64, for a shipped build
+#
+# ARCH=universal needs a universal GhosttyKit too — a Swift build for x86_64
+# can't link an arm64-only xcframework, and the failure is a wall of missing
+# symbols rather than anything that says "wrong architecture". Build it with
+# TARGET=universal ./scripts/build-libghostty.sh.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${CONFIG:-release}"
+ARCH="${ARCH:-native}"
 APP="$REPO_ROOT/build/Rune.app"
 
-if [ ! -d "$REPO_ROOT/vendor/ghostty/macos/GhosttyKit.xcframework" ]; then
+XCFRAMEWORK="$REPO_ROOT/vendor/ghostty/macos/GhosttyKit.xcframework"
+if [ ! -d "$XCFRAMEWORK" ]; then
   echo "==> GhosttyKit.xcframework missing, building libghostty first"
-  "$REPO_ROOT/scripts/build-libghostty.sh"
+  TARGET="$([ "$ARCH" = universal ] && echo universal || echo native)" \
+    "$REPO_ROOT/scripts/build-libghostty.sh"
 fi
 
-echo "==> swift build ($CONFIG)"
-swift build --package-path "$REPO_ROOT" -c "$CONFIG"
+SWIFT_ARCH_FLAGS=()
+if [ "$ARCH" = universal ]; then
+  # Fail early and legibly rather than deep in the linker.
+  if [ ! -d "$XCFRAMEWORK/macos-arm64_x86_64" ]; then
+    echo "error: $XCFRAMEWORK has no universal slice." >&2
+    echo "       Run: TARGET=universal ./scripts/build-libghostty.sh" >&2
+    exit 1
+  fi
+  SWIFT_ARCH_FLAGS=(--arch arm64 --arch x86_64)
+fi
 
-BIN="$(swift build --package-path "$REPO_ROOT" -c "$CONFIG" --show-bin-path)/Rune"
+echo "==> swift build ($CONFIG, $ARCH)"
+swift build --package-path "$REPO_ROOT" -c "$CONFIG" "${SWIFT_ARCH_FLAGS[@]}"
+
+BIN="$(swift build --package-path "$REPO_ROOT" -c "$CONFIG" "${SWIFT_ARCH_FLAGS[@]}" --show-bin-path)/Rune"
 [ -x "$BIN" ] || { echo "error: no binary at $BIN" >&2; exit 1; }
 
 echo "==> assembling $APP"
@@ -36,4 +56,4 @@ fi
 codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 \
   || echo "warning: ad-hoc codesign failed; the app may not launch correctly" >&2
 
-echo "==> $APP"
+echo "==> $APP ($(lipo -archs "$APP/Contents/MacOS/Rune"))"
