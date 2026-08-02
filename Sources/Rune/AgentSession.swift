@@ -68,6 +68,12 @@ final class AgentMonitor: @unchecked Sendable {
     private var codexCwdCache: [URL: String?] = [:]
 
     private static let codexIndexInterval: TimeInterval = 15
+    /// How many day-directories of rollouts to consider live, and how many of
+    /// the resulting logs to keep. Both are bounded because this re-runs every
+    /// 15 seconds; both are generous because falling out of the index is
+    /// indistinguishable, from the outside, from the agent going quiet.
+    private static let dayWindow = 10
+    private static let logLimit = 48
 
     /// Look at every probe and hand back what it found. The completion runs on
     /// the main actor.
@@ -141,26 +147,31 @@ final class AgentMonitor: @unchecked Sendable {
         let root = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent(".codex/sessions")
 
-        // year/month/day, newest first, and only the newest few days: anything
-        // older is not a live session.
+        // year/month/day, newest first. The window is days rather than hours
+        // because a rollout is filed under the date the session *started* and
+        // then written to for as long as it lives — and a coding agent left
+        // running over a weekend is the case Rune exists for. At three days a
+        // session older than that dropped out of the index entirely, Rune
+        // stopped being able to say what it was doing, and the pane kept
+        // whatever the last bell had claimed.
         var days: [URL] = []
         for year in Self.newestChildren(of: root, limit: 2) {
             for month in Self.newestChildren(of: year, limit: 2) {
-                days.append(contentsOf: Self.newestChildren(of: month, limit: 3))
-                if days.count >= 3 { break }
+                days.append(contentsOf: Self.newestChildren(of: month, limit: Self.dayWindow))
+                if days.count >= Self.dayWindow { break }
             }
-            if days.count >= 3 { break }
+            if days.count >= Self.dayWindow { break }
         }
 
         var logs: [URL] = []
-        for day in days.prefix(3) {
+        for day in days.prefix(Self.dayWindow) {
             logs.append(contentsOf: (try? FileManager.default.contentsOfDirectory(
                 at: day, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
         }
         logs = logs
             .filter { $0.pathExtension == "jsonl" }
             .sorted { Self.modified($0) > Self.modified($1) }
-            .prefix(24)
+            .prefix(Self.logLimit)
             .map { $0 }
 
         // Newest first, first write wins, so a directory maps to its most
@@ -293,14 +304,38 @@ enum CodexRollout {
         var detail: String?
     }
 
-    /// How much of the tail to read. These run to megabytes; the decisive entry
-    /// is always within a few kilobytes of the end.
-    private static let tailBytes = 96 * 1024
+    /// How much of the tail to read, widening until the turn boundary is in it.
+    ///
+    /// This used to be a single 96KB gulp, on the theory that the decisive entry
+    /// is always within a few kilobytes of the end. It isn't. Codex writes whole
+    /// response items into the log, so one turn that reads a few large files
+    /// pushes its own `task_started` a long way back — measured at 374KB in a
+    /// real session here.
+    ///
+    /// The consequence was not a missing badge, which would at least look like
+    /// ignorance. `read` returned nil, the terminal fell back to "no idea", and
+    /// the *bell* Codex rang at the end of the previous turn stayed the only
+    /// thing anyone had said about that pane — so it sat on "your turn" while
+    /// Codex was visibly working. A stale fact outlives a missing one.
+    ///
+    /// Widening steps rather than one big read because the first window is
+    /// nearly always enough, and this runs for every Codex terminal on every
+    /// poll.
+    private static let tailWindows = [96 * 1024, 768 * 1024, 6 * 1024 * 1024]
     private static let headerLimit = 512 * 1024
 
     static func read(url: URL) -> State? {
-        guard let lines = tail(of: url) else { return nil }
+        for window in tailWindows {
+            guard let (lines, fromStart) = tail(of: url, bytes: window) else { return nil }
+            if let state = scan(lines) { return state }
+            // The whole file has been read and it says nothing decisive; a
+            // wider window would just be the same bytes again.
+            if fromStart { return nil }
+        }
+        return nil
+    }
 
+    private static func scan(_ lines: [Substring]) -> State? {
         var detail: String?
         for line in lines.reversed() {
             guard let entry = json(line),
@@ -356,12 +391,14 @@ enum CodexRollout {
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
-    private static func tail(of url: URL) -> [Substring]? {
+    /// The last `bytes` of the file as lines, plus whether that reached the
+    /// beginning — which is how the caller knows a wider window is pointless.
+    private static func tail(of url: URL, bytes: Int) -> (lines: [Substring], fromStart: Bool)? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
 
         guard let end = try? handle.seekToEnd(), end > 0 else { return nil }
-        let start = end > UInt64(tailBytes) ? end - UInt64(tailBytes) : 0
+        let start = end > UInt64(bytes) ? end - UInt64(bytes) : 0
         try? handle.seek(toOffset: start)
         guard let data = try? handle.readToEnd(), !data.isEmpty else { return nil }
 
@@ -369,6 +406,6 @@ enum CodexRollout {
         var lines = text.split(separator: "\n", omittingEmptySubsequences: true)
         // Seeking to a byte offset almost certainly landed mid-line.
         if start > 0, !lines.isEmpty { lines.removeFirst() }
-        return lines
+        return (lines, start == 0)
     }
 }

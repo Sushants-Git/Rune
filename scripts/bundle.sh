@@ -24,6 +24,11 @@ if [ ! -d "$XCFRAMEWORK" ]; then
     "$REPO_ROOT/scripts/build-libghostty.sh"
 fi
 
+# Bash 3.2 — which is what macOS ships — treats expanding an empty array under
+# `set -u` as an unbound variable, so every reference below uses the
+# ${arr[@]+"${arr[@]}"} form. Without it a plain native `bundle.sh` dies before
+# it builds anything, while the universal path (a non-empty array) works fine
+# and hides it.
 SWIFT_ARCH_FLAGS=()
 if [ "$ARCH" = universal ]; then
   # Fail early and legibly rather than deep in the linker.
@@ -36,9 +41,9 @@ if [ "$ARCH" = universal ]; then
 fi
 
 echo "==> swift build ($CONFIG, $ARCH)"
-swift build --package-path "$REPO_ROOT" -c "$CONFIG" "${SWIFT_ARCH_FLAGS[@]}"
+swift build --package-path "$REPO_ROOT" -c "$CONFIG" ${SWIFT_ARCH_FLAGS[@]+"${SWIFT_ARCH_FLAGS[@]}"}
 
-BIN="$(swift build --package-path "$REPO_ROOT" -c "$CONFIG" "${SWIFT_ARCH_FLAGS[@]}" --show-bin-path)/Rune"
+BIN="$(swift build --package-path "$REPO_ROOT" -c "$CONFIG" ${SWIFT_ARCH_FLAGS[@]+"${SWIFT_ARCH_FLAGS[@]}"} --show-bin-path)/Rune"
 [ -x "$BIN" ] || { echo "error: no binary at $BIN" >&2; exit 1; }
 
 echo "==> assembling $APP"
