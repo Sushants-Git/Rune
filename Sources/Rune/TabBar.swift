@@ -45,7 +45,7 @@ final class TabBar: NSView {
     /// Sits at the trailing end and is usually invisible. See `UpdatePill`.
     private let updatePill = UpdatePill()
     /// Shown only while a pane is zoomed. See `update(tabs:...)`.
-    private let zoomButton = NSButton()
+    private let zoomButton = ChromeButton()
     /// The trailing end of the bar. A stack rather than pinned views because
     /// both of these are usually absent, and `NSStackView` collapses hidden
     /// arranged subviews for free — which is exactly the behaviour wanted, so
@@ -103,18 +103,36 @@ final class TabBar: NSView {
         // missing the other panes looks the same as one that never had them.
         // This is the difference, and it's a button because the thing you want
         // on seeing it is almost always to undo it.
+        //
+        // Contained, and in the same shape as the update pill beside it, so
+        // the trailing end of the bar reads as one row of controls. Bare
+        // arrows floating next to a filled pill looked like a stray glyph.
+        //
+        // Not accent-coloured, either: the accent is what the pill uses for
+        // "there is something to do here", and a zoomed pane is a state you're
+        // already in, not a task waiting on you.
+        //
+        // The glyph stays the conventional un-zoom arrows. A split-layout
+        // glyph says more about where the click takes you, but it also reads
+        // as "split this" — and an accidental ⌘D is a worse outcome than a
+        // slightly generic icon, especially on a control this small.
         zoomButton.title = ""
         zoomButton.image = NSImage(
             systemSymbolName: "arrow.down.right.and.arrow.up.left",
-            accessibilityDescription: "Pane zoomed")
+            accessibilityDescription: "Pane zoomed")?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
         zoomButton.imagePosition = .imageOnly
         zoomButton.isBordered = false
         zoomButton.bezelStyle = .inline
-        zoomButton.contentTintColor = .controlAccentColor
+        zoomButton.contentTintColor = .secondaryLabelColor
         zoomButton.target = self
         zoomButton.action = #selector(resetZoomClicked)
         zoomButton.toolTip = "Pane zoomed — click to restore the splits (⌘⇧↵)"
         zoomButton.isHidden = true
+        zoomButton.wantsLayer = true
+        zoomButton.layer?.cornerRadius = Chrome.cornerRadius
+        zoomButton.layer?.cornerCurve = .continuous
+        zoomButton.restingBackground = NSColor.secondaryLabelColor.withAlphaComponent(0.12)
         zoomButton.translatesAutoresizingMaskIntoConstraints = false
 
         trailingCluster.orientation = .horizontal
@@ -128,7 +146,8 @@ final class TabBar: NSView {
             trailingCluster.trailingAnchor.constraint(
                 equalTo: trailingAnchor, constant: -12),
             trailingCluster.centerYAnchor.constraint(equalTo: centerYAnchor),
-            zoomButton.widthAnchor.constraint(equalToConstant: 20),
+            zoomButton.widthAnchor.constraint(equalToConstant: 24),
+            zoomButton.heightAnchor.constraint(equalToConstant: Chrome.controlHeight),
 
             stack.leadingAnchor.constraint(
                 equalTo: leadingAnchor, constant: Self.leadingInset),
