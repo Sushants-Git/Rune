@@ -147,7 +147,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     private let container = NSView()
     private let tabBar = TabBar()
 
-    private var overlay: SwitcherOverlay?
+    private(set) var overlay: SwitcherOverlay?
     private var activityTimer: Timer?
 
     /// Reads agent state off the main thread. See `AgentSession.swift`.

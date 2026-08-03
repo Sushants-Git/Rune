@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // repeat, without which a window left open for a week never looks again.
         Updater.shared.start()
 
+        if PromoFilm.enabled, let controller {
+            PromoFilm.run(controller: controller)
+            return
+        }
+
         if PromoShot.enabled {
             PromoShot.run()
             return
