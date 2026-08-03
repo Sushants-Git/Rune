@@ -6,7 +6,7 @@
 #
 # The frames are the running app, captured by the RUNE_FILM harness — not a
 # mockup, so the video can't drift from the product. This script only frames
-# them: a title card, the window on a dark stage, captions, and an end card.
+# them: a title card, the window on a desk, captions, and an end card.
 #
 # Captions come from the script the harness wrote *as it recorded*, rather than
 # being listed again here. Two lists of timings is one too many; they drift the
@@ -19,44 +19,88 @@ FILM="$WORK/film"
 FRAMES="$WORK/out"
 OUT="$REPO_ROOT/build/rune-promo.mp4"
 
+# A macOS wallpaper, blurred to within an inch of its life. A flat backdrop left
+# the window looking pasted on; this reads as a desk without competing with it.
+WALLPAPER="${WALLPAPER:-/System/Library/Desktop Pictures/Radial Sky Blue.heic}"
+
 [ -f "$FILM/script.json" ] || {
   echo "error: no recording at $FILM — run the RUNE_FILM harness first" >&2; exit 1; }
 
 rm -rf "$FRAMES"; mkdir -p "$FRAMES" "$REPO_ROOT/build"
 
-swift - "$FILM" "$FRAMES" <<'SWIFT'
+swift - "$FILM" "$FRAMES" "$WALLPAPER" <<'SWIFT'
 import AppKit
+import CoreImage
 
 let film = URL(fileURLWithPath: CommandLine.arguments[1])
 let out = URL(fileURLWithPath: CommandLine.arguments[2])
+let wallpaper = URL(fileURLWithPath: CommandLine.arguments[3])
 
 let script = try! JSONSerialization.jsonObject(
     with: Data(contentsOf: film.appendingPathComponent("script.json"))) as! [String: Any]
-let fps = script["fps"] as! Double
-let shot = script["frames"] as! Int
+// The capture runs at whatever rate a live terminal allows, so frames arrive
+// unevenly and the recording is timestamped rather than counted. Everything
+// below works in seconds and resamples to a steady 30fps on the way out.
+let fps = 30.0
+let duration = script["duration"] as! Double
+let times = script["times"] as! [Double]
 let marks = (script["marks"] as! [[String: Any]]).map {
-    (frame: $0["frame"] as! Int, caption: $0["caption"] as! String)
+    (time: $0["time"] as! Double, key: $0["key"] as? String, caption: $0["caption"] as! String)
+}
+
+/// The captured frame showing at a given moment.
+func capture(at t: Double) -> Int {
+    var index = 0
+    for (i, stamp) in times.enumerated() where stamp <= t { index = i }
+    return index
 }
 
 let W = 1920.0, H = 1080.0
 
-// A dark stage: the product is dark, and a white surround would blow out beside
-// it in a timeline full of other people's videos.
-let stage = NSColor(calibratedWhite: 0.055, alpha: 1)
-let ink = NSColor(calibratedWhite: 0.97, alpha: 1)
-let dim = NSColor(calibratedWhite: 0.62, alpha: 1)
+let ink = NSColor(calibratedWhite: 0.98, alpha: 1)
+let dim = NSColor(calibratedWhite: 0.68, alpha: 1)
 let marker = NSColor(calibratedRed: 1, green: 0.886, blue: 0.478, alpha: 1)
+let slate = NSColor(calibratedWhite: 0.08, alpha: 1)
 
 func font(_ size: Double, _ weight: NSFont.Weight = .regular) -> NSFont {
     .systemFont(ofSize: size, weight: weight)
 }
 
+func attributed(_ s: String, _ f: NSFont, _ colour: NSColor, alpha: Double) -> NSAttributedString {
+    NSAttributedString(string: s, attributes: [
+        .font: f, .foregroundColor: colour.withAlphaComponent(alpha)])
+}
+
 /// `y` is the bottom of the line; the string is centred on `centreX`.
 func text(_ s: String, _ f: NSFont, _ colour: NSColor,
           centreX: Double, y: Double, alpha: Double = 1) {
-    let a = NSAttributedString(string: s, attributes: [
-        .font: f, .foregroundColor: colour.withAlphaComponent(alpha)])
+    let a = attributed(s, f, colour, alpha: alpha)
     a.draw(at: CGPoint(x: centreX - a.size().width / 2, y: y))
+}
+
+// MARK: - Backdrop
+
+/// The wallpaper, scaled to fill, blurred and dimmed. Built once — it is the
+/// same 1920x1080 pixels in every frame.
+let backdrop: CGImage = {
+    guard let source = CIImage(contentsOf: wallpaper) else {
+        fatalError("no wallpaper at \(wallpaper.path)")
+    }
+    let scale = max(W / source.extent.width, H / source.extent.height)
+    let scaled = source.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    let frame = CGRect(x: scaled.extent.midX - W / 2, y: scaled.extent.midY - H / 2,
+                       width: W, height: H)
+    // Clamped first, or the blur drags transparency in from beyond the edges.
+    let blurred = scaled.cropped(to: frame).clampedToExtent()
+        .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 70])
+    return CIContext().createCGImage(blurred, from: frame)!
+}()
+
+func drawBackdrop(_ ctx: CGContext) {
+    ctx.draw(backdrop, in: CGRect(x: 0, y: 0, width: W, height: H))
+    // Dark enough that a dark window is still the brightest thing in frame.
+    ctx.setFillColor(NSColor(calibratedWhite: 0.02, alpha: 0.66).cgColor)
+    ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
 }
 
 func mark(at centre: CGPoint, side: Double, _ ctx: CGContext, alpha: Double) {
@@ -90,18 +134,59 @@ func mark(at centre: CGPoint, side: Double, _ ctx: CGContext, alpha: Double) {
     ctx.fillPath()
 }
 
-/// The caption in force at a frame, and when it arrived.
-func caption(at frame: Int) -> (String, Int)? {
-    var current: (String, Int)?
-    for m in marks where m.frame <= frame { current = (m.caption, m.frame) }
+/// The caption in force at a moment, and when it arrived.
+func caption(at t: Double) -> ((key: String?, caption: String), Double)? {
+    var current: ((String?, String), Double)?
+    for m in marks where m.time <= t { current = ((m.key, m.caption), m.time) }
     return current
+}
+
+/// A shortcut on a key cap, then the line that goes with it, centred as one
+/// group. The cap carries the shortcut so the sentence doesn't have to, which
+/// keeps the line short enough to take in at a glance.
+func captionLine(_ key: String?, _ line: String, baseline: Double,
+                 _ ctx: CGContext, alpha: Double) {
+    let capFont = font(31, .semibold), lineFont = font(40, .medium)
+    let body = attributed(line, lineFont, ink, alpha: alpha)
+    let centre = baseline + body.size().height / 2
+
+    var cap: NSAttributedString?
+    var capWidth = 0.0
+    if let key {
+        cap = attributed(key, capFont, slate, alpha: alpha)
+        capWidth = max(cap!.size().width + 34, 62)
+    }
+    let gap = key == nil ? 0.0 : 22.0
+    var x = W / 2 - (capWidth + gap + body.size().width) / 2
+
+    if let cap {
+        let height = 56.0
+        let rect = CGRect(x: x, y: centre - height / 2, width: capWidth, height: height)
+        ctx.setFillColor(marker.withAlphaComponent(alpha).cgColor)
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 12, cornerHeight: 12, transform: nil))
+        ctx.fillPath()
+        cap.draw(at: CGPoint(x: rect.midX - cap.size().width / 2,
+                             y: centre - cap.size().height / 2))
+        x += capWidth + gap
+    }
+    body.draw(at: CGPoint(x: x, y: baseline))
 }
 
 // MARK: - Timeline
 
 let intro = Int(1.1 * fps)
-let outro = Int(2.0 * fps)
+let shot = Int(duration * fps)
+let outro = Int(2.2 * fps)
 let total = intro + shot + outro
+
+// The window, and the room around it. The band under it belongs to the caption
+// and nothing else — the eye learns after one beat where to look.
+let windowWidth = 1400.0
+let topMargin = 80.0
+let captionBaseline = 92.0
+
+/// The last frame that loaded, for ticks where the capture dropped one.
+var held: NSImage?
 
 for frame in 0..<total {
     let rep = NSBitmapImageRep(
@@ -113,8 +198,7 @@ for frame in 0..<total {
     NSGraphicsContext.current = graphics
     let ctx = graphics.cgContext
 
-    ctx.setFillColor(stage.cgColor)
-    ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    drawBackdrop(ctx)
 
     if frame < intro {
         // Held briefly and gone: the demo is the pitch, not the title card.
@@ -125,20 +209,22 @@ for frame in 0..<total {
         text("The terminal for humans who run agents.", font(34), dim,
              centreX: W / 2, y: H / 2 - 124, alpha: alpha)
     } else if frame < intro + shot {
-        let index = frame - intro
-        guard let image = NSImage(contentsOf:
-            film.appendingPathComponent(String(format: "%04d.png", index))) else { continue }
+        let elapsed = Double(frame - intro) / fps
+        // A dropped capture holds the frame before it. Skipping would leave a
+        // hole in the numbering, and ffmpeg stops at the first one it hits.
+        if let image = NSImage(contentsOf: film.appendingPathComponent(
+            String(format: "%04d.png", capture(at: elapsed)))) { held = image }
+        guard let image = held else { continue }
 
-        // Large enough to be the subject, with room under it for one line.
-        let width = 1560.0
-        let size = CGSize(width: width, height: width * image.size.height / image.size.width)
-        let rect = CGRect(x: (W - width) / 2, y: H - size.height - 92,
-                          width: width, height: size.height)
+        let size = CGSize(width: windowWidth,
+                          height: windowWidth * image.size.height / image.size.width)
+        let rect = CGRect(x: (W - windowWidth) / 2, y: H - size.height - topMargin,
+                          width: windowWidth, height: size.height)
         let rounded = CGPath(roundedRect: rect, cornerWidth: 14, cornerHeight: 14, transform: nil)
 
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -22), blur: 70,
-                      color: NSColor(calibratedWhite: 0, alpha: 0.65).cgColor)
+        ctx.setShadow(offset: CGSize(width: 0, height: -26), blur: 90,
+                      color: NSColor(calibratedWhite: 0, alpha: 0.75).cgColor)
         ctx.addPath(rounded)
         ctx.setFillColor(NSColor.black.cgColor)
         ctx.fillPath()
@@ -150,18 +236,18 @@ for frame in 0..<total {
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
         ctx.restoreGState()
 
-        // A hairline, or the dark window dissolves into the dark stage.
+        // A hairline, or the dark window dissolves into the dark backdrop.
         ctx.addPath(rounded)
-        ctx.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.09).cgColor)
+        ctx.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.11).cgColor)
         ctx.setLineWidth(2)
         ctx.strokePath()
 
-        if let (line, since) = caption(at: index) {
+        if let (line, since) = caption(at: elapsed) {
             // Each caption rises as it arrives, so a cut reads as a cut.
-            let age = Double(index - since) / fps
+            let age = elapsed - since
             let eased = 1 - pow(1 - min(age / 0.28, 1), 3)
-            text(line, font(40, .medium), ink,
-                 centreX: W / 2, y: 30 + eased * 8, alpha: min(1, age / 0.18))
+            captionLine(line.key, line.caption, baseline: captionBaseline + eased * 10,
+                        ctx, alpha: min(1, age / 0.18))
         }
     } else {
         let p = Double(frame - intro - shot) / Double(outro)
@@ -173,8 +259,7 @@ for frame in 0..<total {
         // strikethrough. Sized to the string so it underlines rather than
         // overhangs.
         let url = "github.com/Sushants-Git/Rune", urlFont = font(36, .medium)
-        let width = NSAttributedString(string: url, attributes: [.font: urlFont])
-            .size().width + 24
+        let width = attributed(url, urlFont, ink, alpha: 1).size().width + 24
         ctx.setFillColor(marker.withAlphaComponent(0.9 * alpha).cgColor)
         ctx.fill(CGRect(x: W / 2 - width / 2, y: H / 2 - 132, width: width, height: 12))
         text(url, urlFont, ink, centreX: W / 2, y: H / 2 - 116, alpha: alpha)
