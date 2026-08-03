@@ -113,16 +113,26 @@ works but carries no text.
 - **Codex** has no equivalent, so it reads `~/.codex/sessions/<date>/rollout-*.jsonl`
   for its explicit `task_started` / `task_complete` events, matched to a
   terminal by the `cwd` in the log header.
-- **opencode** keeps its sessions in a SQLite database at
-  `~/.local/share/opencode/opencode.db`, and stamps every assistant message with
-  a `time.completed` when its turn ends — so "is it still going" is a field
-  rather than something reconstructed from the order of events. An assistant
-  message without a completion time is a live turn; one with it is your move.
-  Sessions carry the `directory` they were started in, which is what matches
-  them to a terminal, and a tool part that is still `running` names what the
-  turn is doing (`Running bash`). Rune opens it read-only and never holds the
-  handle — one query covers every directory, on the same 15-second cadence as
-  the Codex index.
+- **opencode** has a plugin API, and `rune install-opencode-hook` uses it.
+  opencode publishes `session.status` as `busy` or `idle` outright, so with the
+  hook installed the state is *stated* rather than reconstructed, and it lands
+  the moment it changes instead of on the next poll. A running tool names what
+  the turn is doing (`Running bash`). The hook writes
+  `~/.local/state/rune/opencode.json`; Rune reads that and nothing else.
+
+  Installing takes two steps and both are required — a file opencode can
+  import, and an entry in `plugin` naming it. Dropping the file in on its own
+  does nothing whatsoever, which is not obvious and cost an hour to find.
+
+  Without the hook Rune falls back to opencode's SQLite database at
+  `~/.local/share/opencode/opencode.db`, inferring a live turn from an
+  assistant message with no `time.completed`. That is right eventually and
+  wrong in between, which is the reason the hook exists.
+
+  Each entry records the server's pid, and Rune ignores entries whose server is
+  gone: opencode's server is *detached* — its parent is launchd — so it outlives
+  the terminal that started it, and a crashed one would otherwise leave a
+  "working" on screen with nothing behind it.
 
 An agent Rune can't read still gets its icon and no indicator: claiming to know
 what it's doing would be a guess, and a guess shown as fact is worse than

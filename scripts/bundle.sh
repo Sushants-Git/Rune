@@ -52,6 +52,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Rune"
 cp "$REPO_ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$REPO_ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# Shipped inside the bundle so `rune install-opencode-hook` has something to
+# install; see CLI.swift.
+cp "$REPO_ROOT/Resources/opencode-plugin.js" "$APP/Contents/Resources/opencode-plugin.js"
 
 if [ -n "${VERSION:-}" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"

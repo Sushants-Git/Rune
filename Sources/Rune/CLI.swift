@@ -82,6 +82,9 @@ enum CLI {
         case "--help", "-h", "help":
             print(usage)
             exit(0)
+        case "install-opencode-hook":
+            installOpenCodeHook()
+            exit(0)
         default:
             break
         }
@@ -144,6 +147,65 @@ enum CLI {
         exit(0)
     }
 
+    /// Install the opencode plugin and register it.
+    ///
+    /// Two steps because opencode needs both: a file it can import, and an
+    /// entry in `plugin` naming it. Dropping the file in on its own does
+    /// nothing at all, which cost an hour to discover.
+    private static func installOpenCodeHook() {
+        let config = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".config/opencode")
+        let destination = config.appendingPathComponent("plugin/rune.js")
+
+        guard let source = bundle.url(forResource: "opencode-plugin", withExtension: "js") else {
+            fail("this build doesn't carry the plugin (Resources/opencode-plugin.js)")
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let contents = try Data(contentsOf: source)
+            try contents.write(to: destination)
+        } catch {
+            fail("couldn't write \(destination.path): \(error.localizedDescription)")
+        }
+
+        // The registration. Editing rather than replacing: this file is the
+        // user's, and it has their providers and MCP servers in it.
+        let settings = config.appendingPathComponent("opencode.json")
+        var root: [String: Any] = [:]
+        if let data = try? Data(contentsOf: settings),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            root = existing
+        }
+        root["$schema"] = root["$schema"] ?? "https://opencode.ai/config.json"
+
+        let spec = "file://\(destination.path)"
+        var plugins = root["plugin"] as? [Any] ?? []
+        let already = plugins.contains { ($0 as? String).map {
+            $0 == spec || $0.hasSuffix("/rune.js")
+        } ?? false }
+        if !already { plugins.append(spec) }
+        root["plugin"] = plugins
+
+        do {
+            let data = try JSONSerialization.data(
+                withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            try data.write(to: settings)
+        } catch {
+            fail("couldn't update \(settings.path): \(error.localizedDescription)")
+        }
+
+        print("installed \(destination.path)")
+        print(already ? "already registered in opencode.json" : "registered in opencode.json")
+        print("Restart any running opencode session for it to load.")
+    }
+
+    private static func fail(_ message: String) -> Never {
+        FileHandle.standardError.write(Data("rune: \(message)\n".utf8))
+        exit(70)
+    }
+
     private static var usage: String {
         """
         rune \(version) — a terminal for running several coding agents at once
@@ -153,6 +215,12 @@ enum CLI {
           rune <directory>     open a workspace there, in the Rune already running
           rune --version       print the version
           rune --help          print this
+
+        agents:
+          rune install-opencode-hook
+              Teach opencode to report what it's doing. Without it Rune reads
+              opencode's database and infers a live turn from a missing
+              timestamp; with it opencode says so itself, immediately.
 
         The command is this app's own binary. Install it with:
           ./scripts/install-cli.sh

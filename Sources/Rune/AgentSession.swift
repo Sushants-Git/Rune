@@ -361,10 +361,67 @@ enum OpenCodeStore {
 
     /// Working directory to what opencode is doing there.
     ///
-    /// One query for every session rather than one per terminal: the join is
-    /// cheap, and a directory maps to its most recently updated session, which
-    /// is the same "newest wins" rule the Codex index uses.
+    /// The hook's file first, then the database. The database is a record of
+    /// what *happened* — a live turn has to be inferred from a missing
+    /// completion timestamp, which is right eventually and wrong in between.
+    /// `Resources/opencode-plugin.js` reports `session.status` as opencode
+    /// publishes it, so when it's installed the state is stated rather than
+    /// reconstructed, and it lands the moment it changes.
     static func index() -> [String: State] {
+        let live = hookIndex()
+        return live.isEmpty ? databaseIndex() : live
+    }
+
+    // MARK: - The hook
+
+    static var hookURL: URL {
+        if let override = ProcessInfo.processInfo.environment["RUNE_OPENCODE_STATE"],
+           !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".local/state/rune/opencode.json")
+    }
+
+    /// What the plugin last wrote, for sessions whose server is still alive.
+    private static func hookIndex() -> [String: State] {
+        guard let data = try? Data(contentsOf: hookURL),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessions = root["sessions"] as? [String: [String: Any]]
+        else { return [:] }
+
+        // Newest session per directory, same rule the database index uses.
+        var newest: [String: (at: Int, state: State)] = [:]
+        for (_, session) in sessions {
+            guard let directory = session["directory"] as? String,
+                  let status = session["status"] as? String
+            else { continue }
+
+            // opencode's server is detached — its parent is launchd — so it
+            // outlives the terminal that started it, and a crashed one would
+            // otherwise leave a "working" on screen that never ends.
+            if let pid = session["pid"] as? Int32, !isRunning(pid) { continue }
+
+            let at = session["at"] as? Int ?? 0
+            if let existing = newest[directory], existing.at >= at { continue }
+            newest[directory] = (
+                at,
+                State(
+                    activity: status == "busy" ? .working : .waiting,
+                    detail: session["detail"] as? String))
+        }
+        return newest.mapValues(\.state)
+    }
+
+    private static func isRunning(_ pid: Int32) -> Bool {
+        // Signal 0 asks the question without sending anything. EPERM means it
+        // exists and belongs to someone else, which still counts as alive.
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    // MARK: - The database, for when the hook isn't installed
+
+    private static func databaseIndex() -> [String: State] {
         guard FileManager.default.fileExists(atPath: databaseURL.path),
               let db = open(databaseURL) else { return [:] }
         defer { sqlite3_close(db) }
