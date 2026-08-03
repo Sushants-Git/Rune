@@ -925,6 +925,27 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        activeSurface?.setFocus(true)
+
+        // The ⌘K panel owns the keyboard for as long as it's on screen, and
+        // that has to survive leaving the app and coming back. Becoming key
+        // installs the window's *initial* first responder — a terminal — so
+        // without this the panel stayed up while ↑ and ↓ went to the pane
+        // behind it, which reads as the app ignoring the keys.
+        if let palette = overlay?.palette {
+            // A rename owns its own field; the search field must not take it
+            // back mid-edit.
+            guard !palette.isRenaming else { return }
+            // An editing text field is represented by the shared field editor,
+            // not by itself, so "is the search field focused" is a question
+            // about who that editor is working for.
+            let editor = window?.firstResponder as? NSTextView
+            if editor?.delegate !== palette.searchField {
+                window?.makeFirstResponder(palette.searchField)
+            }
+            return
+        }
+
         // Becoming key makes AppKit install the window's *initial* first
         // responder, which is whatever view happens to be first in the key
         // loop. Put the keyboard back on the pane the tab says is focused,
@@ -932,7 +953,6 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         if let surface = activeSurface, window?.firstResponder !== surface {
             window?.makeFirstResponder(surface)
         }
-        activeSurface?.setFocus(true)
     }
 
     func windowDidResignKey(_ notification: Notification) {
