@@ -82,6 +82,8 @@ enum CLI {
         case "--help", "-h", "help":
             print(usage)
             exit(0)
+        case "update":
+            Updater.updateFromCommandLine()
         case "install-opencode-hook":
             installOpenCodeHook()
             exit(0)
@@ -213,6 +215,7 @@ enum CLI {
         usage:
           rune                 open Rune, or bring it to the front
           rune <directory>     open a workspace there, in the Rune already running
+          rune update          update Rune in place
           rune --version       print the version
           rune --help          print this
 

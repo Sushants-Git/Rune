@@ -27,7 +27,7 @@ final class Updater {
 
     /// Where a check looks. Overridable so the flow can be exercised against a
     /// fixture without cutting a real release.
-    private static var feedURL: URL {
+    nonisolated private static var feedURL: URL {
         if let override = ProcessInfo.processInfo.environment["RUNE_UPDATE_FEED"],
            let url = URL(string: override) {
             return url
@@ -46,7 +46,7 @@ final class Updater {
     /// `macos-universal.zip`. An updater that only knew the new name would look
     /// at an older release and report finding nothing — which is precisely the
     /// silent-failure shape this code has already been bitten by once.
-    private static let assetSuffixes = ["macos-universal.zip", "macos-arm64.zip"]
+    nonisolated private static let assetSuffixes = ["macos-universal.zip", "macos-arm64.zip"]
 
     enum State {
         case idle
@@ -79,8 +79,8 @@ final class Updater {
     /// The running build's version, or nil when Rune isn't running from a
     /// bundle at all (`swift run`), which is the signal to disable updates.
     static var currentVersion: Version? {
-        guard Bundle.main.bundleURL.pathExtension == "app",
-              let string = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        guard CLI.bundle.bundleURL.pathExtension == "app",
+              let string = CLI.bundle.infoDictionary?["CFBundleShortVersionString"] as? String
         else { return nil }
         return Version(string)
     }
@@ -244,7 +244,7 @@ final class Updater {
     /// Ask GitHub what the newest release is. Returns nil when the newest
     /// release isn't installable — a draft, a prerelease, or one with no macOS
     /// asset attached, all of which mean "nothing to offer" rather than an error.
-    private static func fetchLatest() async throws -> Release? {
+    nonisolated private static func fetchLatest() async throws -> Release? {
         var request = URLRequest(url: feedURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Rune", forHTTPHeaderField: "User-Agent")
@@ -352,7 +352,7 @@ final class Updater {
     /// it preserves the symlinks and resource forks an app bundle relies on, and
     /// getting either of those wrong produces a bundle that unpacks fine and
     /// then won't launch.
-    private static func unpack(_ zip: URL) throws -> URL {
+    nonisolated private static func unpack(_ zip: URL) throws -> URL {
         let staging = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("rune-update-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
@@ -379,12 +379,12 @@ final class Updater {
     /// The day Rune is signed with a Developer ID, this gains a
     /// `--requirement` check pinning the team identifier, and that's the line
     /// that would make the download trustworthy on its own.
-    private static func verify(stagedApp app: URL, is version: Version) throws {
+    nonisolated private static func verify(stagedApp app: URL, is version: Version) throws {
         let plist = app.appendingPathComponent("Contents/Info.plist")
         guard let info = NSDictionary(contentsOf: plist) as? [String: Any] else {
             throw UpdateError.notRune
         }
-        guard info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier else {
+        guard info["CFBundleIdentifier"] as? String == CLI.bundle.bundleIdentifier else {
             throw UpdateError.notRune
         }
         guard let shipped = (info["CFBundleShortVersionString"] as? String)
@@ -434,6 +434,7 @@ final class Updater {
                 staged.path,
                 destination.path,
                 staged.deletingLastPathComponent().path,
+                "1",
             ]
             try process.run()
         } catch {
@@ -446,9 +447,9 @@ final class Updater {
 
     /// Wait for Rune to quit, swap the bundle, put it back if the swap fails,
     /// and start the new one.
-    private static let installScript = """
+    nonisolated private static let installScript = """
     #!/bin/sh
-    # $1 pid  $2 new app  $3 installed app  $4 staging dir
+    # $1 pid  $2 new app  $3 installed app  $4 staging dir  $5 reopen (1/0)
     # Written by Rune's updater; safe to delete.
     while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
 
@@ -466,9 +467,152 @@ final class Updater {
     # app ask to be vouched for on first launch, as though it were unknown.
     /usr/bin/xattr -dr com.apple.quarantine "$3" 2>/dev/null
     rm -rf "$backup" "$4"
-    /usr/bin/open "$3"
+    [ "$5" = 1 ] && /usr/bin/open "$3"
 
     """
+
+    // MARK: - `rune update`
+
+    /// The whole update from a shell, start to finish, blocking.
+    ///
+    /// Deliberately not "tell the running app to update": from a terminal the
+    /// expected thing is that the command does the work and says what happened,
+    /// rather than nudging a window somewhere else and exiting silently. It is
+    /// also the only way to update a Rune that isn't running.
+    ///
+    /// Everything it needs — fetch, unpack, verify, the install script — is the
+    /// same code the pill uses. Only the ending differs: the app quits itself
+    /// and comes back, whereas this quits Rune only if it was already running,
+    /// and reopens it only in that case.
+    nonisolated static func updateFromCommandLine() -> Never {
+        let bundle = CLI.bundle
+        guard bundle.bundleURL.pathExtension == "app",
+              let currentString = bundle.infoDictionary?["CFBundleShortVersionString"] as? String,
+              let current = Version(currentString)
+        else {
+            note("rune: this isn't running from an installed Rune.app, so there's nothing to update")
+            exit(70)
+        }
+
+        note("current: \(current)")
+
+        let outcome = blocking { () async throws -> (Release, URL)? in
+            guard let release = try await fetchLatest() else { return nil }
+            guard release.version > current else { return (release, URL(fileURLWithPath: "")) }
+
+            note("downloading \(release.version)…")
+            let zip = try await Download.run(from: release.asset) { _ in }
+            defer { try? FileManager.default.removeItem(at: zip) }
+            let app = try unpack(zip)
+            try verify(stagedApp: app, is: release.version)
+            return (release, app)
+        }
+
+        let release: Release
+        let staged: URL
+        switch outcome {
+        case .failure(let error):
+            note("rune: \(message(for: error))")
+            exit(70)
+        case .success(nil):
+            note("no releases visible")
+            exit(0)
+        case .success(.some(let found)):
+            (release, staged) = found
+        }
+
+        guard release.version > current else {
+            note("already on the latest release")
+            exit(0)
+        }
+
+        // Quit a running Rune before swapping the bundle out from under it —
+        // but only *this* Rune. Matching on bundle identifier alone finds every
+        // copy on the machine, so updating a build in /tmp went and terminated
+        // the one in /Applications.
+        let installed = bundle.bundleURL.standardizedFileURL
+        let app = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundle.bundleIdentifier ?? "com.rune.rune")
+            .first {
+                $0.processIdentifier != getpid()
+                    && $0.bundleURL?.standardizedFileURL == installed
+            }
+
+        if let app {
+            note("quitting Rune…")
+            app.terminate()
+            // Bounded: terminate() is a request, and something modal or wedged
+            // can refuse it. Waiting forever here is how this hung.
+            let deadline = Date().addingTimeInterval(15)
+            while !app.isTerminated, Date() < deadline { usleep(200_000) }
+            if !app.isTerminated {
+                note("rune: Rune is still running and wouldn't quit — quit it and try again")
+                exit(75)  // EX_TEMPFAIL
+            }
+        }
+
+        do {
+            // Waiting on this process: it exits in a moment, so the script gets
+            // going immediately rather than waiting on an app that has already
+            // gone.
+            try swap(staged: staged, into: installed, waitingFor: getpid(),
+                     reopen: app != nil)
+        } catch {
+            note("rune: \(error.localizedDescription)")
+            exit(70)
+        }
+
+        note("updated \(current) → \(release.version)")
+        exit(0)
+    }
+
+    /// Hand the swap to the detached script, same as the in-app install does.
+    nonisolated private static func swap(
+        staged: URL, into destination: URL, waitingFor pid: pid_t, reopen: Bool
+    ) throws {
+        let script = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rune-install-\(UUID().uuidString).sh")
+        try installScript.write(to: script, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [
+            script.path,
+            String(pid),
+            staged.path,
+            destination.path,
+            staged.deletingLastPathComponent().path,
+            reopen ? "1" : "0",
+        ]
+        try process.run()
+        // Not waited on: the script's first act is to wait for `pid` — this
+        // process — to exit, so waiting here would deadlock by construction.
+    }
+
+    /// Run an async job from a synchronous command-line context.
+    nonisolated private static func blocking<T: Sendable>(
+        _ work: @escaping @Sendable () async throws -> T
+    ) -> Result<T, Error> {
+        let done = DispatchSemaphore(value: 0)
+        // Deliberately not `nonisolated(unsafe) var` shared across a hop: the
+        // box is written once inside the task and read once after the wait.
+        let box = ResultBox<T>()
+        Task.detached {
+            do { box.value = .success(try await work()) }
+            catch { box.value = .failure(error) }
+            done.signal()
+        }
+        done.wait()
+        return box.value ?? .failure(UpdateError.unpackFailed)
+    }
+
+    private final class ResultBox<T>: @unchecked Sendable {
+        var value: Result<T, Error>?
+    }
+
+    nonisolated private static func note(_ line: String) {
+        FileHandle.standardError.write(Data("\(line)\n".utf8))
+    }
 
     // MARK: - Plumbing
 
@@ -493,7 +637,7 @@ final class Updater {
     }
 
     /// Run a tool and throw if it doesn't exit cleanly.
-    private static func run(
+    nonisolated private static func run(
         _ tool: String, _ arguments: [String], failure: UpdateError
     ) throws {
         let process = Process()
@@ -507,7 +651,7 @@ final class Updater {
     }
 
     /// Short enough for a title bar pill; the full text is the tooltip.
-    private static func message(for error: Error) -> String {
+    nonisolated private static func message(for error: Error) -> String {
         if let update = error as? UpdateError { return update.errorDescription ?? "Update failed" }
         if (error as? URLError)?.code == .notConnectedToInternet { return "You're offline" }
         return (error as NSError).localizedDescription
