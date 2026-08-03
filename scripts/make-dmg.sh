@@ -76,6 +76,13 @@ let width = Double(CommandLine.arguments[2])!, height = Double(CommandLine.argum
 /// the display, which is the only way to get a background that isn't soft on a
 /// retina screen — a single 2x PNG is drawn at its pixel size and overflows the
 /// window instead of filling it.
+///
+/// Light, on the website's palette, and not by preference: Finder draws the
+/// icon labels itself, in the light appearance, whenever a window has a
+/// background picture — and there is no way to ask it for anything else. On the
+/// near-black this used to be, "Rune" and "Applications" came out near-black
+/// too and simply vanished. The window is the one surface in the product that
+/// has to be light, because the text on it isn't ours to colour.
 func draw(scale: Double) -> NSBitmapImageRep {
     let pixelsWide = Int(width * scale), pixelsHigh = Int(height * scale)
     let rep = NSBitmapImageRep(
@@ -93,11 +100,11 @@ func draw(scale: Double) -> NSBitmapImageRep {
     // squares it, and the 2x layer lands drawn at 4x — mostly off-canvas, which
     // is what the first attempt shipped.
 
-    // The same near-black the app icon is built from, so the window and the
-    // thing you're dragging out of it look like one product.
+    // --page from the website, warmed very slightly toward the bottom so the
+    // window has a top and a bottom rather than being a flat sheet.
     let colours = [
-        NSColor(calibratedRed: 0.109, green: 0.109, blue: 0.113, alpha: 1).cgColor,
-        NSColor(calibratedRed: 0.063, green: 0.063, blue: 0.067, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.988, green: 0.988, blue: 0.988, alpha: 1).cgColor,
+        NSColor(calibratedRed: 0.945, green: 0.945, blue: 0.949, alpha: 1).cgColor,
     ] as CFArray
     if let gradient = CGGradient(
         colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colours, locations: [0, 1]) {
@@ -110,14 +117,16 @@ func draw(scale: Double) -> NSBitmapImageRep {
     // it is a hint about direction, not the subject of the window.
     let midY = height - 200
     let from = 250.0, to = 410.0
-    context.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.22).cgColor)
+    context.setStrokeColor(NSColor(calibratedWhite: 0.11, alpha: 0.28).cgColor)
     context.setLineWidth(2)
     context.setLineCap(.round)
     context.move(to: CGPoint(x: from, y: midY))
     context.addLine(to: CGPoint(x: to - 12, y: midY))
     context.strokePath()
 
-    context.setStrokeColor(NSColor(calibratedRed: 1, green: 0.886, blue: 0.478, alpha: 0.85).cgColor)
+    // The marker yellow needs to be a shade deeper to hold its own on white;
+    // --marker straight off the website washes out here.
+    context.setStrokeColor(NSColor(calibratedRed: 0.878, green: 0.694, blue: 0.153, alpha: 1).cgColor)
     context.setLineWidth(2.4)
     context.setLineJoin(.round)
     context.move(to: CGPoint(x: to - 22, y: midY + 9))
@@ -130,17 +139,16 @@ func draw(scale: Double) -> NSBitmapImageRep {
         style.alignment = .center
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: size, weight: weight),
-            .foregroundColor: NSColor(calibratedWhite: 1, alpha: alpha),
+            .foregroundColor: NSColor(calibratedWhite: 0.105, alpha: alpha),
             .paragraphStyle: style,
         ]
         NSAttributedString(string: text, attributes: attributes)
             .draw(in: NSRect(x: 0, y: y, width: width, height: size * 2))
     }
 
-    write("Drag Rune into Applications", size: 15, weight: .medium, alpha: 0.82, y: 96)
-    // Where it has to end up, and why — the reason this window exists at all.
-    write("Anywhere else and Spotlight and Raycast won't find it",
-          size: 11.5, weight: .regular, alpha: 0.38, y: 72)
+    write("Drag Rune into Applications", size: 15, weight: .medium, alpha: 0.92, y: 96)
+    write("The terminal for humans who run agents",
+          size: 11.5, weight: .regular, alpha: 0.45, y: 72)
 
     NSGraphicsContext.restoreGraphicsState()
     return rep
