@@ -369,11 +369,29 @@ version otherwise.
 
 Both artefacts, because they answer different questions. The **zip** is what the
 in-app updater downloads and unpacks with nobody watching. The **dmg**
-(`scripts/make-dmg.sh`, mountable with an `/Applications` symlink beside the
-app) is what a person opens — and that drag is what keeps Rune out of
-`~/Downloads`, where Raycast and Spotlight will never find it. The image is
-named after the architectures actually inside it, so a native-only local build
-doesn't produce a file claiming to be universal.
+(`scripts/make-dmg.sh`) is what a person opens — and that drag is what keeps
+Rune out of `~/Downloads`, where Raycast and Spotlight will never find it. The
+image is named after the architectures actually inside it, so a native-only
+local build doesn't produce a file claiming to be universal.
+
+The dmg window is dressed: a drawn background with the two icons either side of
+an arrow, the app's own icon on the volume, and the reason for the drag written
+under it. `PLAIN=1` skips all of that.
+
+Arranging it means scripting Finder, which a build machine may not have, so
+every part of the dressing is best-effort — a failure downgrades to a plain
+image rather than failing the release. Three things about it are non-obvious,
+and each one produced a plain-looking image while every command reported
+success:
+
+- The volume must be mounted **browsable**. Finder can only script a disk it has
+  been told about; `-nobrowse` fails with "Can't get disk".
+- The **mount point has to be read back**, not assumed. If anything already
+  holds the volume name, macOS mounts at `…$VOLUME 1`, and the assumed path
+  resolves onto the read-only system volume.
+- `.VolumeIcon.icns` has to be written to the mounted volume **after** Finder
+  has finished with it. `hdiutil create -srcfolder` drops it on the way in, and
+  Finder deletes it again when it opens the window.
 
 Rune then updates itself from that same Release. It checks every time you open
 it — launching is deliberate, and the one check you can cause on purpose short
