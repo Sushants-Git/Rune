@@ -379,9 +379,10 @@ Rune then updates itself from that same Release. It checks every time you open
 it — launching is deliberate, and the one check you can cause on purpose short
 of the menu item — hourly after that, and whenever the app is brought to the front, with an hour's
 minimum gap between checks — one request an hour against an unauthenticated
-limit of sixty. It also checks regardless of that gap when the running version
-differs from the one that last checked, so a freshly installed build doesn't
-inherit its predecessor's timer —
+limit of sixty. It also checks regardless of that gap unless the *same copy* set it:
+`UserDefaults` is keyed by bundle identifier, so every Rune on the machine —
+installed, a `build/` one, an old download — shares the timer, and one would
+otherwise silence the others with no way to tell why —
 says nothing unless it finds something, and puts a pill at the trailing end of
 the title bar when it does — one click to download, one to restart into it.
 `Check for Updates…` in the app menu does the same thing on demand and, unlike

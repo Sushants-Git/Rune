@@ -95,6 +95,15 @@ final class Updater {
     private static let lastCheckKey = "RuneLastUpdateCheck"
     /// The version that was running the last time a check happened.
     private static let lastCheckVersionKey = "RuneLastUpdateCheckVersion"
+    /// And which copy of Rune it was.
+    ///
+    /// `UserDefaults` is keyed by bundle identifier, so every Rune on the
+    /// machine shares this one timer — the installed app, a build in `build/`,
+    /// an old copy in `~/Downloads`. Anyone who develops Rune while also using
+    /// it has at least two, and one silences the other for an hour with no way
+    /// to tell why. That is not hypothetical: a test build wrote this timestamp
+    /// and the installed app then sat quiet on a stale version.
+    private static let lastCheckPathKey = "RuneLastUpdateCheckPath"
 
     /// The shortest gap between two checks.
     ///
@@ -159,15 +168,19 @@ final class Updater {
     func checkInBackground() {
         guard isSupported else { return }
 
-        // A different version is running than the one that last checked, so the
-        // timer belongs to a copy of Rune that no longer exists. Installing a
-        // build and having it stay quiet because its predecessor looked an hour
-        // ago is the same silence-that-reads-as-broken as the interval itself.
+        // The timer only applies to the copy of Rune that set it. A different
+        // version means a build that no longer exists; a different path means a
+        // different copy entirely, and neither should be able to silence this
+        // one. Installing a build and having it stay quiet because its
+        // predecessor looked an hour ago is the same silence-that-reads-as-
+        // broken as the interval itself.
         let running = Self.currentVersion.map(String.init(describing:))
         let checked = UserDefaults.standard.string(forKey: Self.lastCheckVersionKey)
-        let sameVersion = running != nil && running == checked
+        let path = Bundle.main.bundleURL.standardizedFileURL.path
+        let checkedPath = UserDefaults.standard.string(forKey: Self.lastCheckPathKey)
+        let sameCopy = running != nil && running == checked && path == checkedPath
 
-        if sameVersion,
+        if sameCopy,
            let last = UserDefaults.standard.object(forKey: Self.lastCheckKey) as? Date {
             let since = Date().timeIntervalSince(last)
             // A timestamp in the future is a clock that moved, not a check that
@@ -202,11 +215,14 @@ final class Updater {
                 let release = try await Self.fetchLatest()
                 guard let self, !Task.isCancelled else { return }
                 UserDefaults.standard.set(Date(), forKey: Self.lastCheckKey)
-                // Stamped with the version that did the checking, so a later
-                // build doesn't inherit this one's timer. See checkInBackground.
+                // Stamped with which copy did the checking, so no other copy
+                // inherits this one's timer. See checkInBackground.
                 UserDefaults.standard.set(
                     Self.currentVersion.map(String.init(describing:)),
                     forKey: Self.lastCheckVersionKey)
+                UserDefaults.standard.set(
+                    Bundle.main.bundleURL.standardizedFileURL.path,
+                    forKey: Self.lastCheckPathKey)
 
                 guard let current = Self.currentVersion, let release, release.version > current
                 else {
