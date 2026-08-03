@@ -36,6 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // repeat, without which a window left open for a week never looks again.
         Updater.shared.start()
 
+        if PromoShot.enabled {
+            PromoShot.run()
+            return
+        }
+
         if ZoomScrollTest.enabled, let controller {
             ZoomScrollTest.run(controller: controller)
             return
