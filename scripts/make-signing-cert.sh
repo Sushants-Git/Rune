@@ -89,7 +89,14 @@ Add two repository secrets (Settings → Secrets and variables → Actions):
   gh secret set RUNE_SIGNING_P12 < "$OUT/Rune.p12.base64"
   gh secret set RUNE_SIGNING_P12_PASSWORD < "$OUT/password.txt"
 
+Once the secrets are set, delete Rune.p12.base64 — it is only a copy of the
+same key in a form convenient for pasting, and it can be regenerated.
+
+Keep Rune.p12 and password.txt **together**, somewhere backed up. The .p12 is
+encrypted with that password and GitHub secrets cannot be read back, so
+throwing the password away leaves you with a file nobody can open — and no way
+to sign a release that keeps your users' permissions.
+
 Anyone holding this key can sign a binary that inherits the permissions your
-users have granted Rune. Treat it like a password, and delete the copies in
-$OUT once the secrets are set — keeping only the backup.
+users have granted Rune. Treat it like a password.
 EOF
