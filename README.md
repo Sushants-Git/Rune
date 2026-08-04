@@ -60,6 +60,10 @@ the screen:
 An agent Rune can't read gets its icon and no indicator. A guess shown as fact
 is worse than silence.
 
+**Rows without an agent still get a face.** vim, tmux, docker, psql, k9s and
+twenty more are recognised by their process, and anything unrecognised falls
+back to the icon the project itself ships — a favicon, a launcher icon.
+
 Anything with a hook can push its own words onto a row:
 
 ```sh
@@ -116,7 +120,7 @@ If it stops on `cannot execute tool 'metal'`, run
 Releases are cut by pushing a tag:
 
 ```sh
-git tag v0.8.3 && git push origin v0.8.3
+git tag v0.9.0 && git push origin v0.9.0
 ```
 
 ## More
