@@ -414,6 +414,19 @@ is satisfy Gatekeeper, so the quarantine flag still has to be cleared exactly
 as before. Only an Apple Developer ID and notarization would fix that, and
 that is a different problem from this one.
 
+Two things about the CI import are counter-intuitive enough to be worth stating
+outright, because both cost a release. The certificate is **not** trusted on the
+runner: `security find-identity -v` therefore reports `0 valid identities found`,
+and reading the identity name from it hangs the job forever, because "valid"
+means "trusted" and this certificate is trusted by nobody on purpose. `codesign`
+does not care — it signs by name and the result validates anywhere. So the name
+is read off the certificate with `openssl x509 -noout -subject`. And every
+`security` call that can ask for authorization — `add-trusted-cert`,
+`set-key-partition-list` — is gone, because on a machine with no screen those do
+not fail, they *wait*, for the job's entire six-hour budget. What is left signs
+something disposable under a `timeout` first, so a prompt becomes a one-minute
+error instead of a stalled release.
+
 The certificate is generated once by `scripts/make-signing-cert.sh` and lives
 in the `RUNE_SIGNING_P12` / `RUNE_SIGNING_P12_PASSWORD` repository secrets.
 **Regenerating it resets every user's permissions**, because a new certificate

@@ -77,31 +77,45 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           # Or it relocks mid-build and codesign fails with "no identity found".
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          # -A is what lets codesign reach the key without a partition-list
+          # dance; -T narrows that to codesign alone.
           security import "$RUNNER_TEMP/Rune.p12" -k "$KEYCHAIN" \
             -P "$P12_PASSWORD" -T /usr/bin/codesign -A
-          # Without this codesign blocks on a GUI prompt no one can answer.
-          security set-key-partition-list -S apple-tool:,apple: \
-            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
           # Unquoted on purpose: the existing list must stay separate words.
           security list-keychains -d user -s \
             $(security list-keychains -d user | tr -d ' "') "$KEYCHAIN"
 
-          # A self-signed certificate is not a signing identity until it is
-          # trusted for code signing on the machine doing the signing. Users
-          # need no such trust — the signature validates on its own.
+          # The name comes off the certificate rather than from
+          # `security find-identity`, which reports "0 valid identities found"
+          # here — validity means *trusted*, and this certificate is trusted by
+          # nobody, deliberately. codesign does not care: it signs by name and
+          # the resulting signature validates on any machine. Asking the
+          # keychain instead cost a release to a six-hour hang.
           openssl pkcs12 -in "$RUNNER_TEMP/Rune.p12" -clcerts -nokeys \
-            -out "$RUNNER_TEMP/cert.pem" -passin "pass:$P12_PASSWORD"
-          security add-trusted-cert -r trustRoot -p codeSign \
-            -k "$KEYCHAIN" "$RUNNER_TEMP/cert.pem"
+            -out "$RUNNER_TEMP/cert.pem" -passin env:P12_PASSWORD
+          identity="$(openssl x509 -in "$RUNNER_TEMP/cert.pem" -noout -subject \
+            | sed -n 's/.*CN *= *//p')"
           rm -f "$RUNNER_TEMP/Rune.p12" "$RUNNER_TEMP/cert.pem"
-
-          identity="$(security find-identity -v -p codesigning "$KEYCHAIN" \
-            | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)"
           if [ -z "$identity" ]; then
-            echo "::error::certificate imported but no valid signing identity"
+            echo "::error::could not read a common name off the certificate"
             exit 1
           fi
           echo "signing identity: $identity"
+
+          # Sign something disposable first, under a timeout. Every failure
+          # mode here is a GUI authorization prompt on a machine with no
+          # screen, which does not fail — it waits, for the job's whole
+          # six-hour budget. This turns that into a minute and an error.
+          mkdir -p "$RUNNER_TEMP/probe"
+          cp /usr/bin/true "$RUNNER_TEMP/probe/probe"
+          if ! timeout 60 codesign --force --timestamp=none \
+              --sign "$identity" --keychain "$KEYCHAIN" \
+              "$RUNNER_TEMP/probe/probe"; then
+            echo "::error::codesign cannot use the imported identity (timed out or refused)"
+            exit 1
+          fi
+          rm -rf "$RUNNER_TEMP/probe"
+
           echo "RUNE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
           echo "RUNE_SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
 
