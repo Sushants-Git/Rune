@@ -383,6 +383,43 @@ to a GitHub Release — a zip and a disk image:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
+### Signing, and why it is not ad-hoc
+
+Releases are signed with one self-signed certificate, reused for every build.
+This is not about trust — it is about **permissions surviving an update**.
+
+macOS files every permission a user grants an app under that app's *designated
+requirement*. For an ad-hoc signature the requirement is the cdhash of one
+particular build:
+
+```
+designated => cdhash H"bb77641afda875b8ded08e2320f211a72ff38075"
+```
+
+So each release was a different app as far as macOS was concerned. Update, and
+every grant was orphaned — the first time an agent touched `~/Documents` the
+prompt came back. With a certificate the requirement is instead
+
+```
+designated => identifier "com.rune.rune" and certificate leaf = H"…"
+```
+
+which is byte-identical for every build that certificate ever signs. Two builds
+with different cdhashes produce the same requirement; that is the whole trick.
+
+Users do not need the certificate, or any trust in it. An untrusted self-signed
+signature still validates on its own terms — `valid on disk`, `satisfies its
+Designated Requirement` — and the app launches normally. What it does *not* do
+is satisfy Gatekeeper, so the quarantine flag still has to be cleared exactly
+as before. Only an Apple Developer ID and notarization would fix that, and
+that is a different problem from this one.
+
+The certificate is generated once by `scripts/make-signing-cert.sh` and lives
+in the `RUNE_SIGNING_P12` / `RUNE_SIGNING_P12_PASSWORD` repository secrets.
+**Regenerating it resets every user's permissions**, because a new certificate
+is a new requirement — so it is backed up rather than recreated. Absent the
+secret the workflow warns and falls back to ad-hoc, which keeps forks building.
+
 `.github/workflows/release.yml` caches `GhosttyKit.xcframework` against
 `GHOSTTY_COMMIT`, so only releases that move ghostty pay for the Zig build. The
 tag is what sets `CFBundleShortVersionString`; nothing in the repo records a

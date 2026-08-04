@@ -60,8 +60,26 @@ if [ -n "${VERSION:-}" ]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 fi
 
-# Ad-hoc sign so macOS will let the app claim focus and open a pty.
-codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 \
-  || echo "warning: ad-hoc codesign failed; the app may not launch correctly" >&2
+# Signed with a stable identity when one is available, ad-hoc otherwise.
+#
+# This matters more than it looks. macOS files every permission a user grants —
+# Documents, Desktop, Full Disk Access — under the app's *designated
+# requirement*, and an ad-hoc signature's requirement is the cdhash of that one
+# build. Every release was therefore a different app as far as macOS was
+# concerned, and everything had to be granted again after every update. A real
+# certificate makes the requirement `identifier "com.rune.rune" and certificate
+# leaf = H"…"`, which is the same for every build it ever signs.
+#
+# Deliberately not `--options runtime`: the hardened runtime is a prerequisite
+# for notarization, which this certificate cannot do anyway, and turning it on
+# would add restrictions the app has never been tested against.
+if [ -n "${RUNE_SIGN_IDENTITY:-}" ]; then
+  codesign --force --timestamp=none --sign "$RUNE_SIGN_IDENTITY" \
+    ${RUNE_SIGN_KEYCHAIN:+--keychain "$RUNE_SIGN_KEYCHAIN"} "$APP"
+  echo "==> signed as $RUNE_SIGN_IDENTITY"
+else
+  codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 \
+    || echo "warning: ad-hoc codesign failed; the app may not launch correctly" >&2
+fi
 
 echo "==> $APP ($(lipo -archs "$APP/Contents/MacOS/Rune"))"

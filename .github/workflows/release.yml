@@ -52,12 +52,82 @@ jobs:
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: TARGET=universal ./scripts/build-libghostty.sh
 
+      # macOS files the permissions a user grants under the app's designated
+      # requirement, and an ad-hoc signature's requirement is the cdhash of
+      # that single build — so every release read as a brand-new app and every
+      # permission had to be granted again. Signing with one stable
+      # certificate fixes that. See scripts/make-signing-cert.sh.
+      #
+      # Absent the secret this is a no-op and the build is ad-hoc signed, so
+      # forks and pull requests still build.
+      - name: Import the signing certificate
+        env:
+          P12: ${{ secrets.RUNE_SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.RUNE_SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then
+            echo "::warning::No signing certificate configured; this build is ad-hoc signed and will reset users' permissions."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/rune-signing.keychain"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/Rune.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Or it relocks mid-build and codesign fails with "no identity found".
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security import "$RUNNER_TEMP/Rune.p12" -k "$KEYCHAIN" \
+            -P "$P12_PASSWORD" -T /usr/bin/codesign -A
+          # Without this codesign blocks on a GUI prompt no one can answer.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          # Unquoted on purpose: the existing list must stay separate words.
+          security list-keychains -d user -s \
+            $(security list-keychains -d user | tr -d ' "') "$KEYCHAIN"
+
+          # A self-signed certificate is not a signing identity until it is
+          # trusted for code signing on the machine doing the signing. Users
+          # need no such trust — the signature validates on its own.
+          openssl pkcs12 -in "$RUNNER_TEMP/Rune.p12" -clcerts -nokeys \
+            -out "$RUNNER_TEMP/cert.pem" -passin "pass:$P12_PASSWORD"
+          security add-trusted-cert -r trustRoot -p codeSign \
+            -k "$KEYCHAIN" "$RUNNER_TEMP/cert.pem"
+          rm -f "$RUNNER_TEMP/Rune.p12" "$RUNNER_TEMP/cert.pem"
+
+          identity="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | sed -n 's/.*"\(.*\)".*/\1/p' | head -1)"
+          if [ -z "$identity" ]; then
+            echo "::error::certificate imported but no valid signing identity"
+            exit 1
+          fi
+          echo "signing identity: $identity"
+          echo "RUNE_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "RUNE_SIGN_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
       - name: Build and bundle Rune.app
         run: |
           if [[ "$GITHUB_REF_NAME" == v* ]]; then
             ARCH=universal VERSION="${GITHUB_REF_NAME#v}" ./scripts/bundle.sh
           else
             ARCH=universal ./scripts/bundle.sh
+          fi
+
+      # The requirement is the whole point of signing, so it gets checked
+      # rather than assumed. A cdhash in here means the build went out ad-hoc
+      # and every user's permissions are about to reset.
+      - name: Verify the designated requirement is stable
+        run: |
+          requirement="$(codesign -d -r- build/Rune.app 2>&1 | tail -1)"
+          echo "$requirement"
+          if [ -n "${RUNE_SIGN_IDENTITY:-}" ]; then
+            case "$requirement" in
+              *cdhash*)
+                echo "::error::signed build still has a cdhash requirement"
+                exit 1 ;;
+              *"certificate leaf"*) echo "requirement is identity-based" ;;
+              *) echo "::error::unrecognised requirement"; exit 1 ;;
+            esac
           fi
 
       # Both slices have to actually be present. A universal build that
