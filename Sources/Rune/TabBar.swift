@@ -42,15 +42,6 @@ final class TabBar: NSView {
     private let newButton = NSButton()
     /// What the title bar shows instead of a strip when there's one tab.
     private let titleLabel = NSTextField(labelWithString: "")
-    /// The activity dot beside that title.
-    ///
-    /// A single-tab window has no chips, and the chips are where the dot used
-    /// to live exclusively — so the one arrangement most people actually run
-    /// in was the one that reported nothing. Same dot, same colours, same
-    /// pulse; it just also exists when there is nothing to switch between.
-    private let titleDot = NSView()
-    private let titleCluster = NSStackView()
-    private var titleActivity: Activity?
     /// Sits at the trailing end and is usually invisible. See `UpdatePill`.
     private let updatePill = UpdatePill()
     /// Shown only while a pane is zoomed. See `update(tabs:...)`.
@@ -106,21 +97,7 @@ final class TabBar: NSView {
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        titleDot.wantsLayer = true
-        titleDot.layer?.cornerRadius = 3
-        titleDot.translatesAutoresizingMaskIntoConstraints = false
-        titleDot.isHidden = true
-
-        titleCluster.orientation = .horizontal
-        titleCluster.alignment = .centerY
-        titleCluster.spacing = 6
-        // Hidden views leave the stack rather than holding a gap, so a quiet
-        // terminal's title sits dead centre instead of offset by an empty dot.
-        titleCluster.detachesHiddenViews = true
-        titleCluster.setViews([titleDot, titleLabel], in: .leading)
-        titleCluster.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(titleCluster)
+        addSubview(titleLabel)
 
         // A zoomed pane hides its siblings, and a terminal that is simply
         // missing the other panes looks the same as one that never had them.
@@ -184,19 +161,16 @@ final class TabBar: NSView {
             newButton.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
 
-            titleDot.widthAnchor.constraint(equalToConstant: 6),
-            titleDot.heightAnchor.constraint(equalToConstant: 6),
-
-            titleCluster.centerXAnchor.constraint(equalTo: centerXAnchor),
-            titleCluster.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             // Clear of the traffic lights on both sides, so a long title
             // truncates rather than sliding under them — and clear of the
             // update pill on the trailing side when there is one.
-            titleCluster.leadingAnchor.constraint(
+            titleLabel.leadingAnchor.constraint(
                 greaterThanOrEqualTo: leadingAnchor, constant: Self.leadingInset),
-            titleCluster.trailingAnchor.constraint(
+            titleLabel.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
-            titleCluster.trailingAnchor.constraint(
+            titleLabel.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
         ])
     }
@@ -216,11 +190,10 @@ final class TabBar: NSView {
         let single = tabs.count <= 1
         stack.isHidden = single
         newButton.isHidden = single
-        titleCluster.isHidden = !single
+        titleLabel.isHidden = !single
         if single {
             let title = workspaceName ?? active?.title ?? ""
             if titleLabel.stringValue != title { titleLabel.stringValue = title }
-            applyTitleActivity(active?.status.activity ?? .idle)
         }
 
         // Chips are reused rather than rebuilt. This runs on every status
@@ -255,26 +228,6 @@ final class TabBar: NSView {
                 isActive: tab === active,
                 status: tab.status,
                 background: backgroundColor)
-        }
-    }
-
-    /// Guarded on a change, like the chip's: assigning a `CAAnimation` every
-    /// time the poll fires restarts the pulse from the top, which reads as a
-    /// stutter rather than a breath.
-    private func applyTitleActivity(_ activity: Activity) {
-        guard titleActivity != activity else { return }
-        titleActivity = activity
-        guard let color = activity.color else {
-            titleDot.isHidden = true
-            Pulse.remove(from: titleDot.layer)
-            return
-        }
-        titleDot.isHidden = false
-        titleDot.layer?.backgroundColor = color.cgColor
-        if activity.pulses {
-            Pulse.apply(to: titleDot.layer)
-        } else {
-            Pulse.remove(from: titleDot.layer)
         }
     }
 

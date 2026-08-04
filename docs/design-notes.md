@@ -119,8 +119,10 @@ works but carries no text.
   so a turn that ended without a closing record left the indicator stuck on
   "your turn" through the entire answer. The log is still read, for the words
   describing what Codex is doing; the title decides whether it's doing it. The
-  spinner is stripped from the name everywhere the terminal is *named*, or the
-  tab and the ⌘K row would rename themselves several times a second.
+  spinner stays visible in the title bar and the tab chip — that's the
+  terminal's own liveness, shown where it put it — and is stripped from the ⌘K
+  row, which is a list you read and filter while arrowing through it, and a
+  name that rewrites itself five times a second is a name you can't read.
 - **opencode** has a plugin API, and `rune install-opencode-hook` uses it.
   opencode publishes `session.status` as `busy` or `idle` outright, so with the
   hook installed the state is *stated* rather than reconstructed, and it lands

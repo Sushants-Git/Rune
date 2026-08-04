@@ -410,15 +410,16 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     /// vector, and the monitor already pays for that on its own queue.
     var agent: AgentIcon? { verdict?.agent }
 
-    /// The full label for this surface, used by the ⌘K switcher.
+    /// The full label for this surface — exactly what the terminal calls
+    /// itself, spinner and all.
     ///
-    /// With any progress spinner taken off the front. Codex animates one there
-    /// while it works, and left in it would rename the tab and the ⌘K row
-    /// several times a second — a name that flickers is unreadable, and the
-    /// fact it was carrying is already shown as the activity indicator.
+    /// Codex animates a braille frame at the front of its title while it
+    /// works, and the title bar is where you'd expect to see it: it's the
+    /// terminal's own liveness, in the place the terminal put it. The ⌘K row
+    /// is the one place that wants a name that holds still — see
+    /// `Workspace.automaticTitle`.
     var displayTitle: String {
-        let name = CodexTitle.withoutSpinner(title)
-        return name.isEmpty ? (pwd.map { ($0 as NSString).lastPathComponent } ?? "Terminal") : name
+        title.isEmpty ? (pwd.map { ($0 as NSString).lastPathComponent } ?? "Terminal") : title
     }
 
     /// A short label — what the tab strip and ⌘K call this terminal.

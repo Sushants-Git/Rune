@@ -64,7 +64,16 @@ final class Workspace {
 
     /// The name the workspace would have without ⌘R — what its visible terminal
     /// is doing.
-    var automaticTitle: String { activeTab?.title ?? "Terminal" }
+    ///
+    /// Codex's spinner is taken off here and nowhere else. The title bar and
+    /// the tab chip want it — that's the terminal's own liveness, shown where
+    /// it put it. A ⌘K row doesn't: the list is something you read and filter
+    /// while arrowing through it, and a name that rewrites itself five times a
+    /// second is a name you can't read. The row already says "working" in
+    /// words, which is the same fact standing still.
+    var automaticTitle: String {
+        CodexTitle.withoutSpinner(activeTab?.title ?? "Terminal")
+    }
 
     var directory: String? { activeTab?.directory }
 
