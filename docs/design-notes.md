@@ -280,6 +280,7 @@ Sources/Rune/
   AgentSession.swift          reads agent state from what each agent publishes
   CLI.swift                   the same binary, run as the `rune` command
   AgentIcon.swift             agent detection + their marks, as inline SVG
+  ProgramIcon.swift           the same for programs that aren't agents
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
   SwitcherOverlay.swift       the ⌘K backdrop the palette floats on
   SwitcherPalette.swift       the switcher's filter field, list, ⌘R renaming

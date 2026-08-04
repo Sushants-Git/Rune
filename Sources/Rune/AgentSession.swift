@@ -48,6 +48,9 @@ struct AgentProbe: Sendable {
 struct AgentVerdict: Sendable {
     let surface: UUID
     let agent: AgentIcon?
+    /// A recognised program that isn't an agent — vim, docker, psql. Only ever
+    /// a picture for the ⌘K row; nothing here reports state.
+    var program: ProgramIcon?
     /// Already resolved, because the agent states this outright now rather than
     /// leaving it to be inferred.
     let activity: Activity
@@ -125,8 +128,15 @@ final class AgentMonitor: @unchecked Sendable {
                 sessionName: session.name)
         }
 
-        let agent = AgentIcon.detect(arguments: ProcessArguments.of(pid: probe.pid))
-        guard let agent else { return .none(probe.surface) }
+        let arguments = ProcessArguments.of(pid: probe.pid)
+        let agent = AgentIcon.detect(arguments: arguments)
+        guard let agent else {
+            // Not an agent, but possibly something worth putting a face on.
+            return AgentVerdict(
+                surface: probe.surface, agent: nil,
+                program: ProgramIcon.detect(arguments: arguments),
+                activity: .idle, detail: nil, sessionName: nil)
+        }
 
         // Codex: the title says whether it is generating *right now*; the
         // rollout log fills in the words. See `CodexTitle` for why the title

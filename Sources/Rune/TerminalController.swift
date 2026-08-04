@@ -887,9 +887,22 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// What marks the row: the agent running there if Rune knows it, else the
     /// project's own icon, else nothing and the row falls back to a glyph.
+    /// What a ⌘K row shows, most specific first: the agent running in it, then
+    /// any other program worth recognising, then the project's own icon.
+    ///
+    /// Shells come last, behind the project icon. A shell is the foreground
+    /// process of every idle terminal, so ranking it normally would replace
+    /// every project icon in the list with the same fish — a row that used to
+    /// tell you *which* project you were looking at would stop doing so.
     private static func icon(for workspace: Workspace) -> NSImage? {
-        if let agent = workspace.activeTab?.focused?.agent { return agent.image }
-        return workspace.directory.flatMap(ProjectIcon.image(forDirectory:))
+        let surface = workspace.activeTab?.focused
+        if let agent = surface?.agent { return agent.image }
+        let program = surface?.program
+        if let program, !program.isAmbient { return program.image }
+        if let project = workspace.directory.flatMap(ProjectIcon.image(forDirectory:)) {
+            return project
+        }
+        return program?.image
     }
 
     /// The row's second line: where the workspace *is*, not what it's called.

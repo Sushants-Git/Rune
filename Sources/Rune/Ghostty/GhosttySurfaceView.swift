@@ -410,6 +410,9 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     /// vector, and the monitor already pays for that on its own queue.
     var agent: AgentIcon? { verdict?.agent }
 
+    /// A recognised non-agent program — vim, docker, psql. See `ProgramIcon`.
+    var program: ProgramIcon? { verdict?.program }
+
     /// The full label for this surface — exactly what the terminal calls
     /// itself, spinner and all.
     ///
