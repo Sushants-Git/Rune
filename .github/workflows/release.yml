@@ -102,13 +102,19 @@ jobs:
           fi
           echo "signing identity: $identity"
 
-          # Sign something disposable first, under a timeout. Every failure
+          # Sign something disposable first, under a time limit. Every failure
           # mode here is a GUI authorization prompt on a machine with no
           # screen, which does not fail — it waits, for the job's whole
           # six-hour budget. This turns that into a minute and an error.
+          #
+          # `perl -e alarm` rather than `timeout`, which macOS does not ship —
+          # it is GNU coreutils. A local rehearsal passed because brew had put
+          # one on PATH, which is exactly the kind of difference a rehearsal is
+          # supposed to catch and this one hid.
           mkdir -p "$RUNNER_TEMP/probe"
           cp /usr/bin/true "$RUNNER_TEMP/probe/probe"
-          if ! timeout 60 codesign --force --timestamp=none \
+          if ! perl -e 'alarm shift; exec @ARGV or die' 60 \
+              codesign --force --timestamp=none \
               --sign "$identity" --keychain "$KEYCHAIN" \
               "$RUNNER_TEMP/probe/probe"; then
             echo "::error::codesign cannot use the imported identity (timed out or refused)"
