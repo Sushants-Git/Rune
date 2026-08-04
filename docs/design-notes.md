@@ -111,9 +111,16 @@ works but carries no text.
   about the program running in it — so there is no matching heuristic to get
   wrong. Rune walks up the process tree from the pty's foreground group, since
   running something from inside an agent puts a child in the foreground.
-- **Codex** has no equivalent, so it reads `~/.codex/sessions/<date>/rollout-*.jsonl`
-  for its explicit `task_started` / `task_complete` events, matched to a
-  terminal by the `cwd` in the log header.
+- **Codex** has no equivalent and publishes nothing live except one thing: it
+  animates a braille spinner at the front of the terminal title for exactly as
+  long as it is generating. Rune reads that back. It sounds crude and it is the
+  most reliable signal Codex offers — the alternative,
+  `~/.codex/sessions/<date>/rollout-*.jsonl`, is written a whole turn at a time,
+  so a turn that ended without a closing record left the indicator stuck on
+  "your turn" through the entire answer. The log is still read, for the words
+  describing what Codex is doing; the title decides whether it's doing it. The
+  spinner is stripped from the name everywhere the terminal is *named*, or the
+  tab and the ⌘K row would rename themselves several times a second.
 - **opencode** has a plugin API, and `rune install-opencode-hook` uses it.
   opencode publishes `session.status` as `busy` or `idle` outright, so with the
   hook installed the state is *stated* rather than reconstructed, and it lands

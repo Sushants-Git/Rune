@@ -38,6 +38,10 @@ struct AgentProbe: Sendable {
     /// against their own pid.
     let pid: pid_t
     let directory: String?
+    /// What the terminal is currently calling itself. Codex spins a braille
+    /// frame at the front of this for exactly as long as it is generating,
+    /// which is the only live signal it emits. See `CodexTitle`.
+    let title: String
 }
 
 /// What the monitor found.
@@ -124,15 +128,31 @@ final class AgentMonitor: @unchecked Sendable {
         let agent = AgentIcon.detect(arguments: ProcessArguments.of(pid: probe.pid))
         guard let agent else { return .none(probe.surface) }
 
-        // Codex: fall back to its rollout log.
-        if agent == .codex, let directory = probe.directory,
-           let url = codexSession(directory: directory),
-           let state = CodexRollout.read(url: url) {
+        // Codex: the title says whether it is generating *right now*; the
+        // rollout log fills in the words. See `CodexTitle` for why the title
+        // gets the final say on both answers.
+        if agent == .codex {
+            let logged = probe.directory
+                .flatMap(codexSession(directory:))
+                .flatMap(CodexRollout.read(url:))
+            let spinning = CodexTitle.isWorking(probe.title)
+            let activity: Activity
+            if spinning {
+                activity = .working
+            } else if logged?.activity == .working {
+                // The log's own idea of "still going" is what went stale — it
+                // is written a turn at a time, so a turn that ended without a
+                // closing record stayed "working" indefinitely. The absence of
+                // a spinner is proof it isn't.
+                activity = .waiting
+            } else {
+                activity = logged?.activity ?? .idle
+            }
             return AgentVerdict(
                 surface: probe.surface,
                 agent: agent,
-                activity: state.activity,
-                detail: state.detail,
+                activity: activity,
+                detail: spinning ? logged?.detail : nil,
                 sessionName: nil)
         }
 
@@ -526,6 +546,43 @@ enum OpenCodeStore {
 }
 
 // MARK: - Codex
+
+/// Codex's own progress spinner, read back out of the terminal title.
+///
+/// Codex sets the title to `"⠴ rune_website"` while it is generating and
+/// `"rune_website"` the moment it stops, cycling the braille frame a few times
+/// a second. It's the only thing Codex publishes live — everything else it
+/// writes lands in the rollout log a whole turn at a time, which is why the
+/// indicator used to sit on "your turn" through an entire answer.
+///
+/// Matching the block rather than the ten specific frames Codex happens to
+/// cycle through: the set is a detail of whichever spinner library it links,
+/// and a new frame appearing shouldn't read as "stopped".
+enum CodexTitle {
+    /// Braille Patterns. Every spinner frame lives in here, and nothing a
+    /// terminal would legitimately be *called* does.
+    private static let brailleRange: ClosedRange<UInt32> = 0x2800...0x28FF
+
+    static func isWorking(_ title: String) -> Bool {
+        guard let first = title.unicodeScalars.first else { return false }
+        return brailleRange.contains(first.value)
+    }
+
+    /// The title with the spinner frame removed, for anywhere the terminal is
+    /// named rather than described.
+    ///
+    /// Stricter than `isWorking`, and deliberately: that one only ever runs
+    /// against a terminal already identified as Codex, while this runs against
+    /// every title in the window. Requiring the trailing space Codex always
+    /// emits means a program that genuinely opens its title with a braille
+    /// character keeps its first letter.
+    static func withoutSpinner(_ title: String) -> String {
+        guard isWorking(title) else { return title }
+        let rest = title.dropFirst()
+        guard rest.first == " " else { return title }
+        return String(rest.dropFirst())
+    }
+}
 
 /// Codex's rollout log, which records the turn boundaries explicitly.
 enum CodexRollout {

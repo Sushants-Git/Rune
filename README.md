@@ -54,7 +54,7 @@ the screen:
 | | |
 | --- | --- |
 | Claude Code | `~/.claude/sessions/<pid>.json`, keyed by process id |
-| Codex | its rollout log's `task_started` / `task_complete` |
+| Codex | the progress spinner it animates in the terminal title |
 | opencode | a plugin — run `rune install-opencode-hook` |
 
 An agent Rune can't read gets its icon and no indicator. A guess shown as fact

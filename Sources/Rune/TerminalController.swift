@@ -256,7 +256,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
         let probes = surfaces.map { surface in
             AgentProbe(
-                surface: surface.id, pid: surface.foregroundPID, directory: surface.pwd)
+                surface: surface.id, pid: surface.foregroundPID,
+                directory: surface.pwd, title: surface.title)
         }
 
         isPolling = true
