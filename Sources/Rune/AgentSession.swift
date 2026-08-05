@@ -85,6 +85,9 @@ final class AgentMonitor: @unchecked Sendable {
     private var openCodeByDirectory: [String: OpenCodeStore.State] = [:]
     private var openCodeIndexedAt: Date = .distantPast
 
+    /// Queue-confined. What tmux says is in each attached client's pane.
+    private var tmuxPanes = TmuxPanes()
+
     private static let codexIndexInterval: TimeInterval = 15
     /// How many day-directories of rollouts to consider live, and how many of
     /// the resulting logs to keep. Both are bounded because this re-runs every
@@ -116,25 +119,66 @@ final class AgentMonitor: @unchecked Sendable {
     private func examine(_ probe: AgentProbe) -> AgentVerdict {
         guard probe.pid > 0 else { return .none(probe.surface) }
 
-        // Claude publishes against its own pid, so try that before spending a
-        // `sysctl` on identifying the process at all. A hit is proof of both
-        // which agent it is and what it's doing.
-        if let session = ClaudeSessionFile.find(startingAt: probe.pid) {
-            return AgentVerdict(
-                surface: probe.surface,
-                agent: .claude,
-                activity: session.activity,
-                detail: session.detail,
-                sessionName: session.name)
+        // Everything in the foreground group, not just its leader. A shell that
+        // could not exec what you asked for stays the leader with the real
+        // program beside it — see `ProcessGroup`.
+        var candidates = ProcessGroup.members(of: probe.pid)
+        if candidates.isEmpty { candidates = [probe.pid] }
+
+        // tmux is the one wrapper the process table cannot see through, so ask
+        // it. Whatever is in the pane outranks the client sitting in front of
+        // it: nobody wants to be told their terminal is running tmux.
+        var paneCommand: String?
+        if let client = candidates.first(where: { isTmux($0) }) {
+            tmuxPanes.refresh()
+            if let pane = tmuxPanes.byClient[client] {
+                paneCommand = pane.command
+                candidates = ProcessGroup.descendants(of: pane.pid) + candidates
+            }
         }
 
-        let arguments = ProcessArguments.of(pid: probe.pid)
-        let agent = AgentIcon.detect(arguments: arguments)
+        // Claude publishes against its own pid, so a hit is proof of both which
+        // agent it is and what it is doing.
+        for pid in candidates {
+            if let session = ClaudeSessionFile.find(startingAt: pid) {
+                return AgentVerdict(
+                    surface: probe.surface,
+                    agent: .claude,
+                    activity: session.activity,
+                    detail: session.detail,
+                    sessionName: session.name)
+            }
+        }
+
+        // The first recognised agent anywhere in the group, then tmux's own
+        // word for the pane as a fallback — inside a pane the process tree may
+        // not reach the agent, but tmux still names it.
+        var agent: AgentIcon?
+        for pid in candidates {
+            if let found = AgentIcon.detect(arguments: ProcessArguments.of(pid: pid)) {
+                agent = found
+                break
+            }
+        }
+        if agent == nil, let paneCommand {
+            agent = AgentIcon.detect(arguments: [paneCommand])
+        }
+
         guard let agent else {
             // Not an agent, but possibly something worth putting a face on.
+            var program: ProgramIcon?
+            for pid in candidates {
+                if let found = ProgramIcon.detect(arguments: ProcessArguments.of(pid: pid)),
+                   found != .tmux || paneCommand == nil {
+                    program = found
+                    break
+                }
+            }
+            if program == nil, let paneCommand {
+                program = ProgramIcon.detect(arguments: [paneCommand]) ?? .tmux
+            }
             return AgentVerdict(
-                surface: probe.surface, agent: nil,
-                program: ProgramIcon.detect(arguments: arguments),
+                surface: probe.surface, agent: nil, program: program,
                 activity: .idle, detail: nil, sessionName: nil)
         }
 
@@ -183,6 +227,10 @@ final class AgentMonitor: @unchecked Sendable {
         return AgentVerdict(
             surface: probe.surface, agent: agent, activity: .idle,
             detail: nil, sessionName: nil)
+    }
+
+    private func isTmux(_ pid: pid_t) -> Bool {
+        ProgramIcon.detect(arguments: ProcessArguments.of(pid: pid)) == .tmux
     }
 
     // MARK: - opencode

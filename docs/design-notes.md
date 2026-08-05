@@ -123,6 +123,30 @@ works but carries no text.
   terminal's own liveness, shown where it put it — and is stripped from the ⌘K
   row, which is a list you read and filter while arrowing through it, and a
   name that rewrites itself five times a second is a name you can't read.
+Two things sit between Rune and the program it is looking for, and both had to
+be dealt with before any of the above fires at all.
+
+`tcgetpgrp` gives the foreground process *group*, and Rune used to read only
+its leader. That is right when a shell can exec what you asked for — `zsh -c
+"vim"` *becomes* vim — and wrong the moment it cannot:
+
+```
+zsh -c "vim; true"    11468  /bin/zsh -c vim; true   ← leader, all Rune saw
+                      11469  vim                     ← the actual program
+```
+
+Any wrapper does this: `fish -c "cd x && tmux new"`, tmux under `tmuxp`, a
+launcher script. `ProcessGroup.members` walks the whole group instead, leader
+first, so the common case is unchanged and the wrapped one starts working.
+
+**tmux** is the one wrapper that defeats this, because its panes are children of
+a *server* — a daemon reparented to launchd — with no parent, child or sibling
+link to the client Rune can see. Nothing in the process table connects them, so
+Rune asks tmux, once per poll for every client at once, and reads
+`#{pane_current_command}` and `#{pane_pid}`. This is the only place Rune spawns
+a process to learn something. Before it, an agent run inside tmux was completely
+invisible: no icon, and — much worse — no "your turn", ever.
+
 - **opencode** has a plugin API, and `rune install-opencode-hook` uses it.
   opencode publishes `session.status` as `busy` or `idle` outright, so with the
   hook installed the state is *stated* rather than reconstructed, and it lands
