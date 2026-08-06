@@ -7,12 +7,11 @@ import Cocoa
 /// stays put on top.
 ///
 /// The panel can also be dragged. Grab it anywhere that isn't a row or the
-/// search field — its padding, the hint bar — and a grid appears; let go and it
-/// snaps to the nearest intersection and stays there for good. Nine positions
-/// rather than free placement, because the useful thing is "put it where it
-/// isn't covering what I'm reading", not pixel-level arrangement, and a panel
-/// that lands somewhere slightly different each time is worse than one that
-/// lands in the same nine places.
+/// search field — its padding, the hint bar — and guides appear. It goes
+/// wherever you drop it; the guides are only there to *tell* you when you have
+/// lined it up, brightening as the panel meets one. Nothing pulls it, because
+/// a magnet that fires when you didn't want it is worse than no magnet, and
+/// the position is remembered across launches either way.
 @MainActor
 final class SwitcherOverlay: NSView {
     let palette: SwitcherPalette
@@ -29,14 +28,17 @@ final class SwitcherOverlay: NSView {
 
     /// Distance from the window's edges the panel will not cross.
     private static let margin: CGFloat = 96
-    /// Three by three. Enough to get out of the way, few enough to be muscle
-    /// memory.
-    private static let stops: [CGFloat] = [0, 0.5, 1]
+    /// Where the guides sit: the edges and the middle of the panel's travel.
+    private static let guides: [CGFloat] = [0, 0.5, 1]
+    /// How close the panel has to be for a guide to count as met. Pixels, not
+    /// a fraction of the travel, so it feels the same in a small window as a
+    /// wide one.
+    private static let alignment: CGFloat = 4
 
     private var horizontal: NSLayoutConstraint!
     private var vertical: NSLayoutConstraint!
 
-    /// Set while a drag is in flight, which is the only time the grid shows.
+    /// Set while a drag is in flight, which is the only time the guides show.
     private var dragOrigin: CGPoint?
     private var isDragging = false { didSet { needsDisplay = true } }
 
@@ -121,28 +123,19 @@ final class SwitcherOverlay: NSView {
 
         let travel = self.travel
         guard travel.width > 0 || travel.height > 0 else { return }
-        // Follow the pointer, unsnapped — the snap happens on release, so the
-        // panel doesn't jump about underneath the cursor while you aim.
+        // Straight to the pointer, and it stays where it is let go. The guides
+        // report alignment; they do not cause it.
         let dx = travel.width > 0 ? (point.x - origin.x) / travel.width : 0
         let dy = travel.height > 0 ? (origin.y - point.y) / travel.height : 0
-        let free = CGPoint(
+        dragOrigin = point
+        anchor = CGPoint(
             x: min(max(anchor.x + dx, 0), 1),
             y: min(max(anchor.y + dy, 0), 1))
-        dragOrigin = point
-        anchor = free
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer {
-            dragOrigin = nil
-            isDragging = false
-        }
-        guard isDragging else { return }
-        anchor = CGPoint(x: Self.nearestStop(anchor.x), y: Self.nearestStop(anchor.y))
-    }
-
-    private static func nearestStop(_ value: CGFloat) -> CGFloat {
-        stops.min { abs($0 - value) < abs($1 - value) } ?? 0.5
+        dragOrigin = nil
+        isDragging = false
     }
 
     // MARK: - The grid
@@ -153,39 +146,37 @@ final class SwitcherOverlay: NSView {
 
         let travel = self.travel
         let panel = palette.frame.size
-        NSColor.white.withAlphaComponent(0.28).setStroke()
+        // Where the panel's centre is right now, which is what the guides are
+        // measured against.
+        let centre = CGPoint(
+            x: Self.margin + panel.width / 2 + anchor.x * travel.width,
+            y: Self.margin + panel.height / 2 + anchor.y * travel.height)
 
-        // Lines through where the panel's *centre* would land, which is what
-        // it snaps to — a grid drawn anywhere else would be a grid you can't
-        // actually hit.
-        for stop in Self.stops {
-            let x = Self.margin + panel.width / 2 + stop * travel.width
-            let line = NSBezierPath()
-            line.lineWidth = 1
-            line.setLineDash([4, 5], count: 2, phase: 0)
-            line.move(to: CGPoint(x: x, y: 0))
-            line.line(to: CGPoint(x: x, y: bounds.height))
-            line.stroke()
+        for guide in Self.guides {
+            let x = Self.margin + panel.width / 2 + guide * travel.width
+            let y = Self.margin + panel.height / 2 + guide * travel.height
+            // Flipped for drawing: `anchor.y` grows downwards, AppKit's y does not.
+            let drawnY = bounds.height - y
 
-            let y = bounds.height - (Self.margin + panel.height / 2 + stop * travel.height)
-            let across = NSBezierPath()
-            across.lineWidth = 1
-            across.setLineDash([4, 5], count: 2, phase: 0)
-            across.move(to: CGPoint(x: 0, y: y))
-            across.line(to: CGPoint(x: bounds.width, y: y))
-            across.stroke()
+            stroke(
+                from: CGPoint(x: x, y: 0), to: CGPoint(x: x, y: bounds.height),
+                lit: abs(centre.x - x) <= Self.alignment)
+            stroke(
+                from: CGPoint(x: 0, y: drawnY), to: CGPoint(x: bounds.width, y: drawnY),
+                lit: abs(centre.y - y) <= Self.alignment)
         }
+    }
 
-        // The nine places it can land, so the targets are visible rather than
-        // inferred from where the lines cross.
-        NSColor.white.withAlphaComponent(0.5).setFill()
-        for column in Self.stops {
-            for row in Self.stops {
-                let x = Self.margin + panel.width / 2 + column * travel.width
-                let y = bounds.height - (Self.margin + panel.height / 2 + row * travel.height)
-                let dot = NSRect(x: x - 2.5, y: y - 2.5, width: 5, height: 5)
-                NSBezierPath(ovalIn: dot).fill()
-            }
-        }
+    /// A guide the panel has met is drawn solid and bright; the rest stay faint
+    /// and dashed. That difference is the entire feature — it is the only way
+    /// the panel tells you it is lined up, since nothing pulls it there.
+    private func stroke(from: CGPoint, to: CGPoint, lit: Bool) {
+        let path = NSBezierPath()
+        path.lineWidth = lit ? 2.5 : 1.5
+        if !lit { path.setLineDash([9, 7], count: 2, phase: 0) }
+        NSColor.white.withAlphaComponent(lit ? 0.6 : 0.14).setStroke()
+        path.move(to: from)
+        path.line(to: to)
+        path.stroke()
     }
 }
