@@ -316,7 +316,7 @@ Sources/Rune/
   AgentIcon.swift             agent detection + their marks, as inline SVG
   ProgramIcon.swift           the same for programs that aren't agents
   ProjectIcon.swift           finds the favicon / launcher icon a repo ships
-  SwitcherOverlay.swift       the ⌘K backdrop, and dragging the panel on a grid
+  SwitcherOverlay.swift       the ⌘K backdrop, and dragging the panel freely
   SwitcherPalette.swift       the switcher's filter field, list, ⌘R renaming
   Updater.swift               in-app updates, fed from the GitHub Releases API
   UpdatePill.swift            the update's only chrome: a pill in the title bar

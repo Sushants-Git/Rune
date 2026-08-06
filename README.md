@@ -48,8 +48,9 @@ keeps it, `⎋` puts you back. `⌘R` renames a row in place, `⌘P` pins it to 
 top, `⌘C` closes it.
 
 **Drag the panel anywhere it isn't covering what you're reading.** Grab it by
-its padding — not a row, not the search field — and a grid appears; let go and
-it snaps to the nearest of nine positions and stays there.
+its padding — not a row, not the search field — and guides appear. It goes
+wherever you drop it; a guide lights up when you've lined up with it. Where you
+leave it is where it opens next time.
 
 **Every row says what its agent is doing** — `working`, `your turn`, or nothing
 at all. Read from what each agent publishes about itself, never from scraping
