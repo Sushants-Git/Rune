@@ -76,11 +76,28 @@ final class Updater {
     private var staged: URL?
     private var work: Task<Void, Never>?
 
-    /// The running build's version, or nil when Rune isn't running from a
+    /// The installed build's version, or nil when Rune isn't running from a
     /// bundle at all (`swift run`), which is the signal to disable updates.
+    ///
+    /// Read from disk on every call, deliberately, rather than through
+    /// `bundle.infoDictionary` — Foundation caches that for the life of the
+    /// process, so an app whose bundle is replaced underneath it goes on
+    /// reporting the version it launched as:
+    ///
+    ///     first read                    : 0.9.4
+    ///     after the bundle was replaced : 0.9.4   ← cached
+    ///     read straight from disk       : 0.9.5
+    ///
+    /// Which is exactly what `rune update` does to a running Rune. The app
+    /// kept comparing the new release against its own stale number and kept
+    /// offering an update that was already installed, with no way out but a
+    /// relaunch. One small plist read an hour is a very cheap fix for that.
     static var currentVersion: Version? {
-        guard CLI.bundle.bundleURL.pathExtension == "app",
-              let string = CLI.bundle.infoDictionary?["CFBundleShortVersionString"] as? String
+        let bundle = CLI.bundle.bundleURL
+        guard bundle.pathExtension == "app" else { return nil }
+        let plist = bundle.appendingPathComponent("Contents/Info.plist")
+        guard let info = NSDictionary(contentsOf: plist),
+              let string = info["CFBundleShortVersionString"] as? String
         else { return nil }
         return Version(string)
     }
