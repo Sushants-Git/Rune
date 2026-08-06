@@ -112,6 +112,14 @@ final class SwitcherPalette: NSView {
     private let backdrop = SwitcherPalette.makeBackdrop(cornerRadius: cornerRadius)
     private let scrim = NSView()
 
+    /// Covers the search strip so the top of the panel can be grabbed, the way
+    /// a title bar can. It deliberately implements nothing: an `NSView` that
+    /// does not override `mouseDown` passes the event up the responder chain,
+    /// which lands it on the overlay — the same path the panel's inert
+    /// background already took. Its only job is to stand in front of the text
+    /// field, which would otherwise swallow the click to place a cursor.
+    private let grip = NSView()
+
     /// Real glass where the system has it, vibrancy where it doesn't.
     ///
     /// `NSGlassEffectView` is macOS 26 and later; Rune runs on 13. The fallback
@@ -237,6 +245,9 @@ final class SwitcherPalette: NSView {
             ])
         panel.addSubview(searchField)
 
+        grip.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(grip)
+
         let headerDivider = Divider()
         headerDivider.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(headerDivider)
@@ -295,6 +306,13 @@ final class SwitcherPalette: NSView {
                 equalTo: panel.leadingAnchor, constant: Self.contentInset),
             searchField.trailingAnchor.constraint(
                 equalTo: panel.trailingAnchor, constant: -Self.contentInset),
+
+            // The whole strip, edge to edge, not just the field's own box —
+            // the padding around it should drag too.
+            grip.topAnchor.constraint(equalTo: panel.topAnchor),
+            grip.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            grip.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            grip.bottomAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 15),
 
             headerDivider.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 15),
             headerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
