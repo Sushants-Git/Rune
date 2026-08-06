@@ -7,11 +7,16 @@ import Cocoa
 /// stays put on top.
 ///
 /// The panel can also be dragged. Grab it anywhere that isn't a row or the
-/// search field — its padding, the hint bar — and guides appear. It goes
-/// wherever you drop it; the guides are only there to *tell* you when you have
-/// lined it up, brightening as the panel meets one. Nothing pulls it, because
-/// a magnet that fires when you didn't want it is worse than no magnet, and
-/// the position is remembered across launches either way.
+/// search field — its padding, the hint bar — and guides appear. It floats
+/// freely, except near a guide, where it takes hold: bring an edge within a
+/// few pixels of one and the panel snaps flush to it and the guide lights.
+/// Move away and it is loose again.
+///
+/// The guides are matched against the panel's *edges*, not its centre — a
+/// horizontal guide catches the top or bottom, a vertical guide the left or
+/// right — because lining a panel up means lining up the side you can see,
+/// not a midpoint you have to imagine. Centres are matched too, for the middle
+/// of the window.
 @MainActor
 final class SwitcherOverlay: NSView {
     let palette: SwitcherPalette
@@ -28,12 +33,9 @@ final class SwitcherOverlay: NSView {
 
     /// Distance from the window's edges the panel will not cross.
     private static let margin: CGFloat = 96
-    /// Where the guides sit: the edges and the middle of the panel's travel.
-    private static let guides: [CGFloat] = [0, 0.5, 1]
-    /// How close the panel has to be for a guide to count as met. Pixels, not
-    /// a fraction of the travel, so it feels the same in a small window as a
-    /// wide one.
-    private static let alignment: CGFloat = 4
+    /// How near an edge has to come before the guide takes hold. Pixels, so it
+    /// feels the same in a narrow window as a wide one.
+    private static let magnet: CGFloat = 10
 
     private var horizontal: NSLayoutConstraint!
     private var vertical: NSLayoutConstraint!
@@ -93,6 +95,42 @@ final class SwitcherOverlay: NSView {
             height: max(0, bounds.height - palette.frame.height - Self.margin * 2))
     }
 
+    /// Vertical guides, as distances from the left edge.
+    private var verticalGuides: [CGFloat] {
+        [Self.margin, bounds.width / 2, bounds.width - Self.margin]
+    }
+
+    /// Horizontal guides, as distances from the top edge.
+    private var horizontalGuides: [CGFloat] {
+        [Self.margin, bounds.height / 2, bounds.height - Self.margin]
+    }
+
+    /// The panel's left edge, centre and right edge — the three things a
+    /// vertical guide can catch.
+    private func columnEdges(left: CGFloat) -> [CGFloat] {
+        [left, left + palette.frame.width / 2, left + palette.frame.width]
+    }
+
+    /// Top, centre, bottom.
+    private func rowEdges(top: CGFloat) -> [CGFloat] {
+        [top, top + palette.frame.height / 2, top + palette.frame.height]
+    }
+
+    /// The smallest nudge that would bring one of `edges` flush to a guide, or
+    /// nil when none is close enough to take hold.
+    private func pull(_ edges: [CGFloat], to guides: [CGFloat]) -> CGFloat? {
+        var best: CGFloat?
+        for edge in edges {
+            for guide in guides {
+                let delta = guide - edge
+                if abs(delta) <= Self.magnet, abs(delta) < abs(best ?? .greatestFiniteMagnitude) {
+                    best = delta
+                }
+            }
+        }
+        return best
+    }
+
     private func applyAnchor() {
         let travel = self.travel
         horizontal.constant = (anchor.x - 0.5) * travel.width
@@ -123,14 +161,21 @@ final class SwitcherOverlay: NSView {
 
         let travel = self.travel
         guard travel.width > 0 || travel.height > 0 else { return }
-        // Straight to the pointer, and it stays where it is let go. The guides
-        // report alignment; they do not cause it.
-        let dx = travel.width > 0 ? (point.x - origin.x) / travel.width : 0
-        let dy = travel.height > 0 ? (origin.y - point.y) / travel.height : 0
         dragOrigin = point
+
+        // Work in pixels here. The magnet is a distance on screen, and doing
+        // it in fractions of the travel would make it grabbier in a narrow
+        // window than a wide one.
+        var left = Self.margin + anchor.x * travel.width + (point.x - origin.x)
+        var top = Self.margin + anchor.y * travel.height + (origin.y - point.y)
+
+        // Near a guide it takes hold; away from one it is loose.
+        if let nudge = pull(columnEdges(left: left), to: verticalGuides) { left += nudge }
+        if let nudge = pull(rowEdges(top: top), to: horizontalGuides) { top += nudge }
+
         anchor = CGPoint(
-            x: min(max(anchor.x + dx, 0), 1),
-            y: min(max(anchor.y + dy, 0), 1))
+            x: travel.width > 0 ? min(max((left - Self.margin) / travel.width, 0), 1) : 0,
+            y: travel.height > 0 ? min(max((top - Self.margin) / travel.height, 0), 1) : 0)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -145,31 +190,31 @@ final class SwitcherOverlay: NSView {
         guard isDragging else { return }
 
         let travel = self.travel
-        let panel = palette.frame.size
-        // Where the panel's centre is right now, which is what the guides are
-        // measured against.
-        let centre = CGPoint(
-            x: Self.margin + panel.width / 2 + anchor.x * travel.width,
-            y: Self.margin + panel.height / 2 + anchor.y * travel.height)
+        let left = Self.margin + anchor.x * travel.width
+        let top = Self.margin + anchor.y * travel.height
+        let columns = columnEdges(left: left)
+        let rows = rowEdges(top: top)
 
-        for guide in Self.guides {
-            let x = Self.margin + panel.width / 2 + guide * travel.width
-            let y = Self.margin + panel.height / 2 + guide * travel.height
-            // Flipped for drawing: `anchor.y` grows downwards, AppKit's y does not.
-            let drawnY = bounds.height - y
-
+        // A guide is lit when the panel is actually flush against it, which
+        // after the magnet has fired means within a pixel — so the light is a
+        // statement that it *has* caught, not that it is nearly there.
+        for guide in verticalGuides {
+            let held = columns.contains { abs($0 - guide) <= 1 }
             stroke(
-                from: CGPoint(x: x, y: 0), to: CGPoint(x: x, y: bounds.height),
-                lit: abs(centre.x - x) <= Self.alignment)
-            stroke(
-                from: CGPoint(x: 0, y: drawnY), to: CGPoint(x: bounds.width, y: drawnY),
-                lit: abs(centre.y - y) <= Self.alignment)
+                from: CGPoint(x: guide, y: 0), to: CGPoint(x: guide, y: bounds.height),
+                lit: held)
+        }
+        for guide in horizontalGuides {
+            let held = rows.contains { abs($0 - guide) <= 1 }
+            // Flipped: guides are measured from the top, AppKit draws from the
+            // bottom.
+            let y = bounds.height - guide
+            stroke(from: CGPoint(x: 0, y: y), to: CGPoint(x: bounds.width, y: y), lit: held)
         }
     }
 
-    /// A guide the panel has met is drawn solid and bright; the rest stay faint
-    /// and dashed. That difference is the entire feature — it is the only way
-    /// the panel tells you it is lined up, since nothing pulls it there.
+    /// A guide the panel has caught is drawn solid and bright; the rest stay
+    /// faint and dashed.
     private func stroke(from: CGPoint, to: CGPoint, lit: Bool) {
         let path = NSBezierPath()
         path.lineWidth = lit ? 2.5 : 1.5
