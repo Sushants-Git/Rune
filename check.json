@@ -1,0 +1,358 @@
+{
+  "applicationStatus": "check_in",
+  "hasProject": true,
+  "role": "hacker",
+  "team": null,
+  "uuid": "c3209ee8e57246dab679529dac40a201",
+  "name": "Rune",
+  "slug": "draft-project-3295",
+  "tagline": "The terminal for humans who run agents",
+  "description": [
+    {
+      "type": "long",
+      "title": "The problem it solves",
+      "content": "",
+      "required": false,
+      "subtitle": "describe what can people use it for, or how it makes existing tasks easier/safer e.t.c (markdown supported)"
+    },
+    {
+      "type": "long",
+      "title": "Challenges we ran into",
+      "content": "",
+      "required": false,
+      "subtitle": "tell us about any specific bug or hurdle you ran into while building this project. how did you get over it? (markdown supported)"
+    }
+  ],
+  "platforms": [
+    "macOS"
+  ],
+  "pictures": "hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/a7ed8ace-1458-4553-8121-85a41680eee1.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/77b6c540-5abe-4d48-b189-9bbb24e8a984.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/8e77c43e-6dcd-4bd8-bb87-2412d66b721b.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/c1eddf13-ba62-4bb5-b8f0-8054afae6918.png",
+  "cover_img": null,
+  "video_url": null,
+  "links": "https://github.com/Sushants-Git/Rune,https://github.com/Sushants-Git/Rune/releases/latest",
+  "status": "publish",
+  "discover": false,
+  "likes": 0,
+  "views": 0,
+  "favicon": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/projects/d35fc25133514d5980713f6ece768fea/mcp-field-28a81bb2-83fe-497d-8c2a-0e70e3ffe636.png",
+  "architecture_diagram": null,
+  "apply_for_network_school_fellowship_prize": null,
+  "source_code_url": null,
+  "by_student_team": false,
+  "published_at": "2026-08-06T07:57:59.048Z",
+  "created_at": "2026-08-06T07:47:38.957Z",
+  "hashtags": [
+    {
+      "uuid": "5501c2d8424d4fafa01b75ab3c3919b3",
+      "name": "Swift",
+      "verified": true,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "010eb6b2c2ba41be842d392a3c8950a8",
+      "name": "Metal",
+      "verified": false,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "777549b1899b45a58424b120ce64e9bb",
+      "name": "SwiftUI",
+      "verified": true,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "8647f018cf29461b894c31ae1b1767fc",
+      "name": "macOS",
+      "verified": false,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "88c7fc4f011b4aca800087babf55ca59",
+      "name": "Zig",
+      "verified": false,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "70ddc46c448c4a62b4660249aad7d556",
+      "name": "Claude Code",
+      "verified": false,
+      "project_hashtags": {}
+    },
+    {
+      "uuid": "adb260a9e78c43eeac9640ab42ff1232",
+      "name": "libghostty",
+      "verified": false,
+      "project_hashtags": {}
+    }
+  ],
+  "user_project": null,
+  "prizes": [],
+  "tracks": [],
+  "prize_tracks": [],
+  "user_hackathons": [
+    {
+      "uuid": "ddb94035b23e434897d05f5168f8e1b8",
+      "hackathon": {
+        "cover_img": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/assets/cover/318.png",
+        "name": "Fake Push to Prod",
+        "slug": "fake-push-to-prod",
+        "hackathon_setting": {
+          "logo": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/assets/logo/634.png",
+          "primary_color": "#abb8c3",
+          "subdomain": "fake-push-to-prod"
+        }
+      },
+      "user": {
+        "profile_image": null,
+        "username": "sushant_test",
+        "first_name": "Sushant",
+        "last_name": "Mishra",
+        "status": "active",
+        "profiles": []
+      }
+    }
+  ],
+  "project_commits": [
+    {
+      "uuid": "23691d9940a740c9a967ffe4a5f5cdf4",
+      "commit": "Add project logo",
+      "created_at": "2026-08-06T08:04:09.966+00:00"
+    },
+    {
+      "uuid": "529276c5dd6e438f9b7746432a583547",
+      "commit": "Fill in Rune submission",
+      "created_at": "2026-08-06T07:57:17.565+00:00"
+    },
+    {
+      "uuid": "1006911b00ef4f4885fd0eba11f113ae",
+      "commit": "Publish Rune submission",
+      "created_at": "2026-08-06T07:57:59.828+00:00"
+    },
+    {
+      "uuid": "1177abbd517945f8b9376e2948275cc2",
+      "commit": "Created Project",
+      "created_at": "2026-08-06T07:47:39.172+00:00"
+    },
+    {
+      "uuid": "8136b7cc057f40d78e81b44ee71160ca",
+      "commit": "Fix table headings in solution",
+      "created_at": "2026-08-06T08:01:01.839+00:00"
+    },
+    {
+      "uuid": "7729ba7bc6f74f1888203af0d84fe3c6",
+      "commit": "Set disclosure as a blockquote",
+      "created_at": "2026-08-06T08:02:24.757+00:00"
+    }
+  ],
+  "funding": null,
+  "project": {
+    "uuid": "c3209ee8e57246dab679529dac40a201",
+    "name": "Rune",
+    "slug": "draft-project-3295",
+    "tagline": "The terminal for humans who run agents",
+    "description": [
+      {
+        "type": "long",
+        "title": "The problem it solves",
+        "content": "",
+        "required": false,
+        "subtitle": "describe what can people use it for, or how it makes existing tasks easier/safer e.t.c (markdown supported)"
+      },
+      {
+        "type": "long",
+        "title": "Challenges we ran into",
+        "content": "",
+        "required": false,
+        "subtitle": "tell us about any specific bug or hurdle you ran into while building this project. how did you get over it? (markdown supported)"
+      }
+    ],
+    "platforms": [
+      "macOS"
+    ],
+    "pictures": "hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/a7ed8ace-1458-4553-8121-85a41680eee1.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/77b6c540-5abe-4d48-b189-9bbb24e8a984.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/8e77c43e-6dcd-4bd8-bb87-2412d66b721b.png,hackathons/fake-push-to-prod/projects/d35fc25133514d5980713f6ece768fea/c1eddf13-ba62-4bb5-b8f0-8054afae6918.png",
+    "cover_img": null,
+    "video_url": null,
+    "links": "https://github.com/Sushants-Git/Rune,https://github.com/Sushants-Git/Rune/releases/latest",
+    "status": "publish",
+    "discover": false,
+    "likes": 0,
+    "views": 0,
+    "favicon": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/projects/d35fc25133514d5980713f6ece768fea/mcp-field-28a81bb2-83fe-497d-8c2a-0e70e3ffe636.png",
+    "architecture_diagram": null,
+    "apply_for_network_school_fellowship_prize": null,
+    "source_code_url": null,
+    "by_student_team": false,
+    "published_at": "2026-08-06T07:57:59.048Z",
+    "created_at": "2026-08-06T07:47:38.957Z",
+    "hashtags": [
+      {
+        "uuid": "5501c2d8424d4fafa01b75ab3c3919b3",
+        "name": "Swift",
+        "verified": true,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "010eb6b2c2ba41be842d392a3c8950a8",
+        "name": "Metal",
+        "verified": false,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "777549b1899b45a58424b120ce64e9bb",
+        "name": "SwiftUI",
+        "verified": true,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "8647f018cf29461b894c31ae1b1767fc",
+        "name": "macOS",
+        "verified": false,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "88c7fc4f011b4aca800087babf55ca59",
+        "name": "Zig",
+        "verified": false,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "70ddc46c448c4a62b4660249aad7d556",
+        "name": "Claude Code",
+        "verified": false,
+        "project_hashtags": {}
+      },
+      {
+        "uuid": "adb260a9e78c43eeac9640ab42ff1232",
+        "name": "libghostty",
+        "verified": false,
+        "project_hashtags": {}
+      }
+    ],
+    "user_project": null,
+    "prizes": [],
+    "tracks": [],
+    "prize_tracks": [],
+    "user_hackathons": [
+      {
+        "uuid": "ddb94035b23e434897d05f5168f8e1b8",
+        "hackathon": {
+          "cover_img": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/assets/cover/318.png",
+          "name": "Fake Push to Prod",
+          "slug": "fake-push-to-prod",
+          "hackathon_setting": {
+            "logo": "https://assets.devfolio.co/hackathons/c9e4f2fa4e484121bd3412f70a0d2af2/assets/logo/634.png",
+            "primary_color": "#abb8c3",
+            "subdomain": "fake-push-to-prod"
+          }
+        },
+        "user": {
+          "profile_image": null,
+          "username": "sushant_test",
+          "first_name": "Sushant",
+          "last_name": "Mishra",
+          "status": "active",
+          "profiles": []
+        }
+      }
+    ],
+    "project_commits": [
+      {
+        "uuid": "23691d9940a740c9a967ffe4a5f5cdf4",
+        "commit": "Add project logo",
+        "created_at": "2026-08-06T08:04:09.966+00:00"
+      },
+      {
+        "uuid": "529276c5dd6e438f9b7746432a583547",
+        "commit": "Fill in Rune submission",
+        "created_at": "2026-08-06T07:57:17.565+00:00"
+      },
+      {
+        "uuid": "1006911b00ef4f4885fd0eba11f113ae",
+        "commit": "Publish Rune submission",
+        "created_at": "2026-08-06T07:57:59.828+00:00"
+      },
+      {
+        "uuid": "1177abbd517945f8b9376e2948275cc2",
+        "commit": "Created Project",
+        "created_at": "2026-08-06T07:47:39.172+00:00"
+      },
+      {
+        "uuid": "8136b7cc057f40d78e81b44ee71160ca",
+        "commit": "Fix table headings in solution",
+        "created_at": "2026-08-06T08:01:01.839+00:00"
+      },
+      {
+        "uuid": "7729ba7bc6f74f1888203af0d84fe3c6",
+        "commit": "Set disclosure as a blockquote",
+        "created_at": "2026-08-06T08:02:24.757+00:00"
+      }
+    ],
+    "funding": null
+  },
+  "project_field_answers": [
+    {
+      "uuid": "ce014b9911e14fd6b371c7f75f5c6ba4",
+      "value": "## Disclosure of prior work\n\n> **Rune is not a from-scratch hackathon build, and I want to be exact about that.** The public repository's first commit is **2026-07-27**, roughly two weeks before this event. As of submission it has **71 commits** and a shipped release (**v0.9.3**). The terminal core, the splits/tabs/workspaces model, the `⌘K` switcher, and the agent-state readers all predate the hackathon.\n>\n> Please judge the prior work as prior work — anything built on the event day will be added as clearly-labelled commits on top of this baseline.\n\n## What it is\n\nRune is a macOS terminal built on [libghostty](https://github.com/ghostty-org/ghostty), which does the genuinely hard part — VT parsing, pty handling, font shaping, Metal rendering. Rune is the shell around it: the workspace model, and the answer to \"which of these is waiting on me?\"\n\n## Three axes, so no list grows past reading it\n\nInstead of one tab strip absorbing everything, there are three places to put a terminal, and each list holds exactly one kind of thing:\n\n| Keys | Unit | What it holds |\n| --- | --- | --- |\n| `⌘D` `⌘⇧D` | **Splits** | panes side by side in one tab |\n| `⌘T` | **Tabs** | a strip *inside* the title bar, costing no vertical space |\n| `⌘N` | **Workspaces** | whole sets of tabs, reachable only from `⌘K` |\n\nWorkspaces never appear in a strip, so every strip stays short. Everything lives in the same macOS window — switching is instant and nothing moves on screen but the terminal itself.\n\n## `⌘K` is the switcher\n\nArrow keys **preview** the workspace behind the panel so you can see what you are about to pick; `⏎` keeps it, `⎋` puts you back having selected nothing. Rows stay in creation order — the order you learn is the order it keeps. `⌘R` renames a row in place, `⌘P` pins it, `⌘C` closes it. Typing filters on the row name and nothing else, by subsequence, so `usl` finds `usr-local`.\n\n## Every row says what its agent is doing\n\nThe core idea: **read what agents publish about themselves, never scrape the screen.** Three states — `working`, `your turn`, and silence.\n\n| Agent | How Rune reads it |\n| --- | --- |\n| **Claude Code** | `~/.claude/sessions/<pid>.json`, kept current for every live session with a `status` of `busy`/`idle`/`waiting` plus a `waitingFor` reason. Keyed by **process id** — exactly what a terminal already knows about the program running in it — so there is no matching heuristic to get wrong. Rune walks up the process tree from the pty's foreground group, since running something from inside an agent puts a child in the foreground. |\n| **Codex** | Publishes nothing live except one thing: it animates a braille spinner at the front of the terminal title for exactly as long as it is generating. Rune reads that back. It sounds crude, and it is the most reliable signal Codex offers. |\n| **opencode** | A plugin — `rune install-opencode-hook`. |\n| **Anything with a hook** | OSC 9 / OSC 777, which libghostty decodes: `printf '\\033]9;Build finished\\007'`. |\n\nAn agent Rune cannot read gets its icon and **no indicator at all**. A guess shown as fact is worse than silence.\n\n## Things deliberately not built\n\n- **No \"a command is running\" state.** It existed, inferred from how recently libghostty requested a frame, and it was always wrong — the renderer also requests a frame every time the cursor blinks, every 600ms, forever, so every focused terminal claimed to be busy for as long as it was open. Doing this honestly needs shell integration (OSC 133), not a guess.\n- **No third `needs you` state.** \"Blocked on you\" and \"finished and waiting\" are the same instruction to the human, so a third colour to decode bought nothing. What it is stuck on survives as detail text beside the label.\n\nRows without an agent still get a face: vim, tmux, docker, psql, k9s and twenty more are recognised by process, and anything unrecognised falls back to the icon the project itself ships.",
+      "project_field": {
+        "uuid": "242a7943422f4cbeb3295efcb3ede8c2",
+        "name": "How you are solving it?",
+        "type": "long",
+        "value": null,
+        "description": "Describe your approach, what you built, and how your solution works. Please focus on the work completed during the hackathon. If your submission includes previously written code or has been presented at another hackathon, clearly disclose the extent of its prior use.",
+        "options": null,
+        "placeholder": "How are you solving the problem?",
+        "hint": "Describe in depth your solution to the problem.",
+        "required": true,
+        "order": 2
+      }
+    },
+    {
+      "uuid": "52c491bc1916488da58f7c1e015665bd",
+      "value": "Claude shows up in Rune twice — as the thing it was built *with*, and as the thing it is built *for*.\n\n## 1. Claude Code is a first-class integration inside the product\n\nRune's headline feature is telling you which of your running agents is waiting on you, and **Claude Code is the agent it reads best.** Claude Code maintains `~/.claude/sessions/<pid>.json` for every live session, carrying a `status` of `busy`, `idle` or `waiting` and a `waitingFor` reason. Because that file is keyed by **process id**, Rune can map it to a terminal with zero ambiguity: it walks up the process tree from the pty's foreground process group and looks for a session file at each pid. No screen scraping, no title parsing, no fuzzy matching — the agent states its own condition and the terminal reports it verbatim.\n\nThat is why the `working` / `your turn` indicator is trustworthy for Claude Code specifically, and why the fallbacks for other agents are visibly weaker (Codex gets a spinner-in-the-title heuristic; opencode needs a plugin installed). Rune also decodes Claude Code's OSC 9 desktop notifications when its notification channel is set to `iterm2`, so whatever text Claude chooses to send lands directly on the `⌘K` row.\n\n## 2. Claude Code wrote a large share of the codebase\n\nI built Rune with Claude Code as the primary pair-programmer. **48 of the repository's 71 commits carry a `Co-Authored-By: Claude` trailer** — roughly two-thirds of the history. It was used for the parts where the cost is research rather than typing:\n\n- Getting **libghostty** building as a `GhosttyKit.xcframework` from a pinned Zig checkout, and keeping the build scripts working across Zig and Xcode toolchain changes.\n- Adapting Ghostty's macOS embedding layer for key translation, dead keys and IME composition — subtle work where matching the reference implementation matters more than cleverness.\n- Reading agent state **without touching the render lock**, which is the constraint that shaped the whole polling design.\n- The dmg, code-signing and self-updater pipelines, including several rounds of fixing a signing step that hung on a prompt no one could answer.\n\nThe project's `docs/design-notes.md` exists largely because working with Claude made it cheap to write down the approaches that were tried and rejected instead of deleting them — which is why this submission can be specific about *why* there is no \"command is running\" indicator, rather than just noting that there isn't one.",
+      "project_field": {
+        "uuid": "0761875047644d01ae97ea6931eb81ed",
+        "name": "How Did You Use Claude?",
+        "type": "long",
+        "value": null,
+        "description": "Tell us if and how you used Claude in your project. How did you integrate or leverage it?",
+        "options": null,
+        "placeholder": "How Did You Use Claude?",
+        "hint": "Describe how you leveraged Claude.",
+        "required": true,
+        "order": 3
+      }
+    },
+    {
+      "uuid": "ac385ada286e40acb61e8e7949c5134f",
+      "value": "https://github.com/Sushants-Git/Rune",
+      "project_field": {
+        "uuid": "43e1364da8fa44768d27d95b349523b0",
+        "name": "What is the deployed URL for this project?",
+        "type": "short",
+        "value": null,
+        "description": "Please specify the live deployed URL of your project.",
+        "options": null,
+        "placeholder": "What is the deployed URL for this project?",
+        "hint": "Please specify the live deployed URL of your project.",
+        "required": true,
+        "order": 4
+      }
+    },
+    {
+      "uuid": "d1417620a125419e83a97586783b4bb3",
+      "value": "## Four agents running, four terminals that look identical\n\nCoding agents changed what a terminal is for. A terminal used to be a place you typed into and watched. Now it is a place where something else works on your behalf for minutes at a time, and you are supposed to come back at the right moment.\n\nThat breaks every terminal built before agents existed:\n\n- **The tab strip stops being readable.** Past about eight tabs the labels truncate, and you start picking terminals by position rather than by name. Agents make you open more terminals, not fewer.\n- **Nothing tells you which one wants you.** Four agents running is four identical rectangles. Finding the one that stopped and is waiting on an answer means clicking through all four — and the cost of missing it is an agent sitting idle on a question for ten minutes while you look at something else.\n- **The obvious fix is worse than nothing.** You can try to infer activity by scraping the screen or watching for redraws, and it is wrong constantly. A confident indicator that lies is more expensive than no indicator, because you stop checking it.\n\nThe impact is small per instance and constant: the tax of running several agents at once is almost entirely attention management, and no terminal helps with it.",
+      "project_field": {
+        "uuid": "d388395a00794250b428bfd47c23b6ef",
+        "name": "What is the problem your project solves?",
+        "type": "long",
+        "value": null,
+        "description": "Tell us what problem you are solving, why it matters, and the impact your solution could have.",
+        "options": null,
+        "placeholder": "The problem your project solves.",
+        "hint": "Describe the the problem your project aims to solve.",
+        "required": true,
+        "order": 1
+      }
+    }
+  ]
+}

@@ -147,6 +147,16 @@ Rune asks tmux, once per poll for every client at once, and reads
 a process to learn something. Before it, an agent run inside tmux was completely
 invisible: no icon, and — much worse — no "your turn", ever.
 
+Asking tmux also settles two things about the *name* on a row. A surface's
+title starts as a placeholder, and a placeholder is not empty — so the old
+fallback to the working directory never fired, and anything that set no title
+was called "Terminal". `programTitle` is optional now, which is the fact that
+was actually being asked about. And inside tmux the title is worse than
+unhelpful, it is *frozen*: with `set-titles off` nothing a pane does reaches the
+outer terminal, so whatever was set last stays for the life of the window. The
+pane's directory is the only live answer, so that wins whenever tmux is in play
+— and it tracks a `cd` inside a pane, which OSC 7 cannot.
+
 - **opencode** has a plugin API, and `rune install-opencode-hook` uses it.
   opencode publishes `session.status` as `busy` or `idle` outright, so with the
   hook installed the state is *stated* rather than reconstructed, and it lands

@@ -189,7 +189,7 @@ final class Tab {
 
     /// What the strip and ⌘K call this tab.
     var title: String { focused?.shortTitle ?? surfaces.first?.shortTitle ?? "Terminal" }
-    var directory: String? { focused?.pwd ?? surfaces.first?.pwd }
+    var directory: String? { focused?.workingDirectory ?? surfaces.first?.workingDirectory }
 
     // MARK: - Focus
 

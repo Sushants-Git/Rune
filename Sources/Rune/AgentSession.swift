@@ -51,6 +51,8 @@ struct AgentVerdict: Sendable {
     /// A recognised program that isn't an agent — vim, docker, psql. Only ever
     /// a picture for the ⌘K row; nothing here reports state.
     var program: ProgramIcon?
+    /// Where the terminal really is, when only tmux could say.
+    var directory: String?
     /// Already resolved, because the agent states this outright now rather than
     /// leaving it to be inferred.
     let activity: Activity
@@ -129,10 +131,12 @@ final class AgentMonitor: @unchecked Sendable {
         // it. Whatever is in the pane outranks the client sitting in front of
         // it: nobody wants to be told their terminal is running tmux.
         var paneCommand: String?
+        var paneDirectory: String?
         if let client = candidates.first(where: { isTmux($0) }) {
             tmuxPanes.refresh()
             if let pane = tmuxPanes.byClient[client] {
                 paneCommand = pane.command
+                paneDirectory = pane.directory
                 candidates = ProcessGroup.descendants(of: pane.pid) + candidates
             }
         }
@@ -144,6 +148,7 @@ final class AgentMonitor: @unchecked Sendable {
                 return AgentVerdict(
                     surface: probe.surface,
                     agent: .claude,
+                    directory: paneDirectory,
                     activity: session.activity,
                     detail: session.detail,
                     sessionName: session.name)
@@ -179,6 +184,7 @@ final class AgentMonitor: @unchecked Sendable {
             }
             return AgentVerdict(
                 surface: probe.surface, agent: nil, program: program,
+                directory: paneDirectory,
                 activity: .idle, detail: nil, sessionName: nil)
         }
 
@@ -205,6 +211,7 @@ final class AgentMonitor: @unchecked Sendable {
             return AgentVerdict(
                 surface: probe.surface,
                 agent: agent,
+                directory: paneDirectory,
                 activity: activity,
                 detail: spinning ? logged?.detail : nil,
                 sessionName: nil)
@@ -216,6 +223,7 @@ final class AgentMonitor: @unchecked Sendable {
             return AgentVerdict(
                 surface: probe.surface,
                 agent: agent,
+                directory: paneDirectory,
                 activity: state.activity,
                 detail: state.detail,
                 sessionName: nil)
@@ -225,8 +233,8 @@ final class AgentMonitor: @unchecked Sendable {
         // what it's doing would be a guess, and a guess shown as fact is worse
         // than saying nothing — so it gets an icon and no indicator.
         return AgentVerdict(
-            surface: probe.surface, agent: agent, activity: .idle,
-            detail: nil, sessionName: nil)
+            surface: probe.surface, agent: agent, directory: paneDirectory,
+            activity: .idle, detail: nil, sessionName: nil)
     }
 
     private func isTmux(_ pid: pid_t) -> Bool {

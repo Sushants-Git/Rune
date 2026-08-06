@@ -15,8 +15,26 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     private(set) var surface: ghostty_surface_t?
     private(set) weak var ghosttyApp: GhosttyApp?
 
-    /// Title reported by the terminal, used by the Cmd-K switcher.
-    private(set) var title: String = "Terminal"
+    /// The title the program running here has set, if it ever set one.
+    ///
+    /// Optional rather than a string starting at "Terminal", because those are
+    /// different facts and conflating them was a bug: a placeholder is not
+    /// empty, so the fallback to the working directory never fired. tmux ships
+    /// with `set-titles off`, so it sets no title at all, and every tmux
+    /// workspace in ⌘K was called "Terminal".
+    private(set) var programTitle: String?
+
+    /// Title reported by the terminal, or a placeholder. Callers that want to
+    /// know whether it is real should ask `programTitle`.
+    var title: String { programTitle ?? "Terminal" }
+
+    /// The pane's working directory, when Rune had to ask tmux for it. OSC 7
+    /// from before `tmux` started is stale the moment you `cd` inside a pane.
+    private(set) var paneDirectory: String?
+
+    /// Where this terminal actually is: the pane's directory when there is one,
+    /// otherwise whatever the shell last reported over OSC 7.
+    var workingDirectory: String? { paneDirectory ?? pwd }
     /// Working directory reported by the shell via OSC 7.
     private(set) var pwd: String?
     /// This surface's background, from config and then from any OSC 11 change.
@@ -272,8 +290,10 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     // MARK: - Metadata
 
     func setTitle(_ newTitle: String) {
-        guard title != newTitle else { return }
-        title = newTitle
+        // An empty title is the program clearing it, not setting one.
+        let resolved = newTitle.isEmpty ? nil : newTitle
+        guard programTitle != resolved else { return }
+        programTitle = resolved
         onMetadataChange?()
     }
 
@@ -317,6 +337,10 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     @discardableResult
     func apply(_ verdict: AgentVerdict) -> Bool {
         self.verdict = verdict
+        if let directory = verdict.directory, directory != paneDirectory {
+            paneDirectory = directory
+            onMetadataChange?()
+        }
         // An agent that has started a turn isn't waiting on you, so whatever
         // rang the bell before it did is stale — very often the shell that was
         // in this terminal before the agent was. Without this, one stray beep
@@ -422,7 +446,16 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     /// is the one place that wants a name that holds still — see
     /// `Workspace.automaticTitle`.
     var displayTitle: String {
-        title.isEmpty ? (pwd.map { ($0 as NSString).lastPathComponent } ?? "Terminal") : title
+        // Inside tmux the title is not just unhelpful, it is *frozen*: tmux
+        // ships with `set-titles off`, so nothing the panes do reaches the
+        // outer terminal and whatever was set last — the command that started
+        // tmux, or nothing at all — stays there for the life of the window.
+        // The pane's directory is the only live answer, and Rune has it because
+        // it asked tmux.
+        if let paneDirectory { return (paneDirectory as NSString).lastPathComponent }
+        if let programTitle, !programTitle.isEmpty { return programTitle }
+        if let pwd { return (pwd as NSString).lastPathComponent }
+        return "Terminal"
     }
 
     /// A short label — what the tab strip and ⌘K call this terminal.

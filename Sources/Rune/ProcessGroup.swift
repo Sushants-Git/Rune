@@ -84,6 +84,9 @@ struct TmuxPanes {
         let pid: pid_t
         /// `vim`, `claude`, `zsh` — tmux's own name for what the pane is running.
         let command: String
+        /// Where the pane actually is. OSC 7 from before tmux started goes
+        /// stale the first time you `cd` inside it.
+        let directory: String
     }
 
     private(set) var byClient: [pid_t: Pane] = [:]
@@ -103,16 +106,17 @@ struct TmuxPanes {
         // Every attached client in one call, rather than one call per terminal.
         guard let output = run([
             "list-clients", "-F",
-            "#{client_pid}\t#{pane_pid}\t#{pane_current_command}",
+            "#{client_pid}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}",
         ]) else { return [:] }
 
         var result: [pid_t: Pane] = [:]
         for line in output.split(separator: "\n") {
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-            guard fields.count >= 3,
+            guard fields.count >= 4,
                   let client = pid_t(fields[0]), let pane = pid_t(fields[1])
             else { continue }
-            result[client] = Pane(pid: pane, command: String(fields[2]))
+            result[client] = Pane(
+                pid: pane, command: String(fields[2]), directory: String(fields[3]))
         }
         return result
     }
