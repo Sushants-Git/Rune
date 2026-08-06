@@ -47,6 +47,10 @@ Updates…`.
 keeps it, `⎋` puts you back. `⌘R` renames a row in place, `⌘P` pins it to the
 top, `⌘C` closes it.
 
+**Drag the panel anywhere it isn't covering what you're reading.** Grab it by
+its padding — not a row, not the search field — and a grid appears; let go and
+it snaps to the nearest of nine positions and stays there.
+
 **Every row says what its agent is doing** — `working`, `your turn`, or nothing
 at all. Read from what each agent publishes about itself, never from scraping
 the screen:
