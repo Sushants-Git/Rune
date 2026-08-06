@@ -1,0 +1,61 @@
+# Build libghostty on `main` so releases don't have to.
+#
+# The release workflow caches the xcframework keyed on GHOSTTY_COMMIT, but it
+# only ever *ran* on tags — and a cache written by one tag is invisible to the
+# next, because GitHub scopes caches by ref and sibling tags cannot see each
+# other's. The default branch is the exception: every ref can restore what
+# `main` cached. So nothing was ever restoring anything, and every release paid
+# fifteen minutes for a Zig build identical to the one before it.
+#
+# That is not only slow. It is fifteen minutes of exposure to whatever is wrong
+# with a given runner, and twice now a release has sat in that step for half an
+# hour or more and had to be cancelled and retried.
+#
+# This runs on `main` and does nothing but populate the cache. Tagged builds
+# then restore it and skip the step entirely.
+name: Warm the libghostty cache
+
+on:
+  push:
+    branches: [main]
+    # The build only depends on which ghostty commit is pinned and how it is
+    # built, so nothing else is worth a runner.
+    paths:
+      - GHOSTTY_COMMIT
+      - scripts/build-libghostty.sh
+      - scripts/fetch-ghostty.sh
+      - .github/workflows/warm-cache.yml
+  workflow_dispatch:
+
+jobs:
+  warm:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache GhosttyKit.xcframework
+        id: ghostty-cache
+        uses: actions/cache@v4
+        with:
+          path: vendor/ghostty/macos/GhosttyKit.xcframework
+          # Byte-identical to the release workflow's key, which is the entire
+          # point — a key that drifts warms a cache nothing will ever read.
+          key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-universal
+
+      - name: Set up Zig
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build libghostty
+        if: steps.ghostty-cache.outputs.cache-hit != 'true'
+        run: TARGET=universal ./scripts/build-libghostty.sh
+
+      - name: Report
+        run: |
+          if [ "${{ steps.ghostty-cache.outputs.cache-hit }}" = "true" ]; then
+            echo "Cache already warm for this GHOSTTY_COMMIT; nothing to do."
+          else
+            echo "Built and cached; the next tagged release will restore it."
+          fi

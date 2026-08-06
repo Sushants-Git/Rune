@@ -6,7 +6,10 @@
 #
 # The expensive step is libghostty (a full Zig build of ghostty's core), so the
 # resulting xcframework is cached keyed on GHOSTTY_COMMIT — releases that don't
-# bump ghostty skip it entirely. Builds are universal (arm64 + x86_64) so one
+# bump ghostty skip it entirely. That cache is written by warm-cache.yml on
+# `main`, and has to be: GitHub scopes caches by ref, so a cache written by one
+# tag is invisible to the next. Only the default branch's caches are readable
+# from everywhere. Builds are universal (arm64 + x86_64) so one
 # download covers both Apple silicon and Intel Macs, and ad-hoc signed, which
 # means downloaders currently have to clear Gatekeeper once
 # (right-click → Open, or `xattr -dr com.apple.quarantine Rune.app`).
