@@ -37,6 +37,9 @@ enum PaletteStyle {
     /// terminal has no edge at all, and the switcher needs to read as a thing
     /// sitting *on* the terminal.
     static let background = NSColor(white: 0.055, alpha: 1)
+    /// Laid over the glass so the rows' contrast is a constant, not a function
+    /// of whatever the terminal happens to be showing.
+    static let scrim = NSColor(white: 0.04, alpha: 0.42)
     static let border = NSColor(white: 1, alpha: 0.10)
     static let divider = NSColor(white: 1, alpha: 0.07)
     static let selection = NSColor(white: 1, alpha: 0.09)
@@ -102,6 +105,38 @@ final class SwitcherPalette: NSView {
     private static let rowHeight: CGFloat = 40
     private static let maxVisibleRows = 8
     private static let cornerRadius: CGFloat = 12
+
+    /// The live material behind the panel, and a fixed darkening on top of it.
+    /// Split in two on purpose: the material is what makes it glass, the scrim
+    /// is what stops the glass deciding how readable the rows are.
+    private let backdrop = SwitcherPalette.makeBackdrop(cornerRadius: cornerRadius)
+    private let scrim = NSView()
+
+    /// Real glass where the system has it, vibrancy where it doesn't.
+    ///
+    /// `NSGlassEffectView` is macOS 26 and later; Rune runs on 13. The fallback
+    /// is the same idea one generation earlier, and because the scrim carries
+    /// the contrast either way, the two look closer than they otherwise would.
+    private static func makeBackdrop(cornerRadius: CGFloat) -> NSView {
+        if #available(macOS 26, *) {
+            let glass = NSGlassEffectView()
+            glass.cornerRadius = cornerRadius
+            glass.style = .regular
+            return glass
+        }
+        let vibrancy = NSVisualEffectView()
+        // `.withinWindow`, not `.behindWindow`: the thing worth sampling is the
+        // terminal underneath the panel, which is a sibling view in this same
+        // window, not the desktop behind the whole thing.
+        vibrancy.blendingMode = .withinWindow
+        vibrancy.material = .hudWindow
+        vibrancy.state = .active
+        vibrancy.wantsLayer = true
+        vibrancy.layer?.cornerRadius = cornerRadius
+        vibrancy.layer?.cornerCurve = .continuous
+        vibrancy.layer?.masksToBounds = true
+        return vibrancy
+    }
     /// Rows are inset from the panel edge so the selection pill has somewhere
     /// to sit without touching the sides.
     fileprivate static let rowInset: CGFloat = 6
@@ -135,18 +170,47 @@ final class SwitcherPalette: NSView {
     // MARK: - Chrome
 
     private func build() {
-        // Solid, not vibrant. A blur samples the terminal behind it, so the
-        // panel's own darkness depended on what happened to be on screen —
-        // over a pale `ls` it went milky and the rows lost their contrast.
-        // Opaque black is the same panel every time.
+        // Glass, with a scrim under it.
+        //
+        // This was solid black for a long time, and for a good reason: a plain
+        // blur samples the terminal behind it, so over a pale `ls` the panel
+        // went milky and the rows lost their contrast. The panel's darkness
+        // should not depend on what happened to be on screen.
+        //
+        // What makes it workable now is that the darkness is no longer coming
+        // from the material. The glass provides the refraction and the live
+        // sample of what's behind; `scrim` provides a fixed floor of darkness
+        // underneath the text. Bright terminal, dark terminal, the rows sit on
+        // the same contrast either way — see `PaletteStyle.scrim`.
         panel.wantsLayer = true
-        panel.layer?.backgroundColor = PaletteStyle.background.cgColor
+        panel.layer?.backgroundColor = NSColor.clear.cgColor
         panel.layer?.cornerRadius = Self.cornerRadius
         panel.layer?.cornerCurve = .continuous
-        panel.layer?.borderWidth = 1
-        panel.layer?.borderColor = PaletteStyle.border.cgColor
         panel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(panel)
+
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(backdrop, positioned: .below, relativeTo: nil)
+
+        scrim.wantsLayer = true
+        scrim.layer?.backgroundColor = PaletteStyle.scrim.cgColor
+        scrim.layer?.cornerRadius = Self.cornerRadius
+        scrim.layer?.cornerCurve = .continuous
+        scrim.layer?.borderWidth = 1
+        scrim.layer?.borderColor = PaletteStyle.border.cgColor
+        scrim.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(scrim, positioned: .above, relativeTo: backdrop)
+
+        NSLayoutConstraint.activate([
+            backdrop.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            backdrop.topAnchor.constraint(equalTo: panel.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+            scrim.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            scrim.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            scrim.topAnchor.constraint(equalTo: panel.topAnchor),
+            scrim.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+        ])
 
         panel.shadow = NSShadow()
         panel.layer?.shadowOpacity = 0.55
