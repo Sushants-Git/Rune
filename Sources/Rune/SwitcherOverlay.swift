@@ -80,16 +80,40 @@ final class SwitcherOverlay: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    override func layout() {
-        super.layout()
+    // Applied here rather than in `layout()`. `travel` depends on `bounds`, so
+    // the first call — during init, before the overlay has been sized — works
+    // out to zero and pins the panel to the default. The corrected call then
+    // happened *inside* `layout()`, where changing a constraint is too late to
+    // be solved in that pass, so the constants were right and the frame was
+    // not. A dragged panel came back centred every time.
+    //
+    // `setFrameSize` lands before subviews are positioned, so by the time the
+    // pass runs the constants are already correct.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
         applyAnchor()
+    }
+
+    /// The panel's size, without needing it to have been laid out yet.
+    ///
+    /// Not `palette.frame`. On the first layout pass the palette has no frame,
+    /// so a `travel` derived from it is zero — and an anchor multiplied by zero
+    /// is the default position. That is the whole reason a dragged panel came
+    /// back centred: the saved value was read correctly and then multiplied
+    /// away. The width is a constant, and `fittingSize` gives the height
+    /// without waiting for anyone.
+    private var panelSize: CGSize {
+        CGSize(
+            width: SwitcherPalette.width,
+            height: palette.frame.height > 0 ? palette.frame.height : palette.fittingSize.height)
     }
 
     /// How far the panel may travel on each axis before it hits the margins.
     private var travel: CGSize {
-        CGSize(
-            width: max(0, bounds.width - palette.frame.width - Self.margin * 2),
-            height: max(0, bounds.height - palette.frame.height - Self.margin * 2))
+        let panel = panelSize
+        return CGSize(
+            width: max(0, bounds.width - panel.width - Self.margin * 2),
+            height: max(0, bounds.height - panel.height - Self.margin * 2))
     }
 
     /// Two verticals, at the thirds.
@@ -157,15 +181,16 @@ final class SwitcherOverlay: NSView {
         let travel = self.travel
         let left = Self.margin + anchor.x * travel.width
         let top = Self.margin + anchor.y * travel.height
-        let centreX = left + palette.frame.width / 2
+        let right = left + panelSize.width
 
-        // Verticals answer "is the panel centred on this third?", the
-        // horizontal answers "is its top edge on the line?" — the edge you are
-        // actually looking at in each case.
+        // Either edge, not the centre. A vertical line is something you line a
+        // *side* of the panel up against — the centre is invisible, so a guide
+        // lighting for it looks like it fired at nothing.
         for guide in verticalGuides {
+            let met = abs(left - guide) <= Self.alignment || abs(right - guide) <= Self.alignment
             stroke(
                 from: CGPoint(x: guide, y: 0), to: CGPoint(x: guide, y: bounds.height),
-                lit: abs(centreX - guide) <= Self.alignment)
+                lit: met)
         }
         for guide in horizontalGuides {
             // Flipped: guides are measured from the top, AppKit draws from the
