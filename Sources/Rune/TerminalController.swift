@@ -808,8 +808,20 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             // can't be a workspace this just closed.
             if self.switcherOrigin === workspace { self.switcherOrigin = nil }
             self.closeWorkspace(workspace)
+
+            // Land on a neighbour, not the top. `reload` anchors on the
+            // selected row's index, and the row just closed no longer resolves
+            // to anything — so it fell through to zero and threw you back to
+            // the first workspace every time you closed the last one.
+            //
+            // Clamping to the new end gives the row that slid up into this
+            // slot, or the one above when there is nothing below. Previewed,
+            // because the terminal behind should agree with the highlight; it
+            // used to keep showing the workspace you were looking at before.
+            let remaining = self.orderedWorkspaces.count
+            guard remaining > 0 else { return }
             // Closing the last one takes the window, and the overlay with it.
-            self.overlay?.palette.reload()
+            self.overlay?.palette.reload(selecting: min(index, remaining - 1), preview: true)
         }
 
         palette.onRename = { [weak self] index, name in

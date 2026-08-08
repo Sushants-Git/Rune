@@ -413,12 +413,15 @@ final class SwitcherPalette: NSView {
     /// Plain `reload` anchors on the selected row's *index*, which is exactly
     /// wrong after a pin: the indices are what moved, so anchoring would leave
     /// the highlight sitting on whichever workspace slid into the old slot.
-    func reload(selecting itemIndex: Int?) {
+    /// - Parameter preview: whether the terminal behind should follow. Pinning
+    ///   is bookkeeping and should not move you; closing a row leaves the
+    ///   highlight somewhere new, and a highlight that disagrees with what is
+    ///   on screen behind it is its own bug.
+    func reload(selecting itemIndex: Int?, preview: Bool = false) {
         applyFilter(searchField.stringValue, keepSelection: true)
         guard let itemIndex, let row = filtered.firstIndex(of: itemIndex) else { return }
         selection = row
-        // Not a preview: pinning is bookkeeping, not a request to go there.
-        syncSelection(preview: false)
+        syncSelection(preview: preview)
     }
 
     private func applyFilter(_ query: String, keepSelection: Bool) {
