@@ -378,6 +378,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             if view === self.activeSurface { work.formUnion([.title, .colors]) }
             self.scheduleChromeSync(work)
         }
+        // Set here rather than when a bar is created: this one has to be live
+        // *before* there is any UI, because it is how libghostty asks for the
+        // UI in the first place.
+        view.onSearchStart = { [weak self, weak view] needle in
+            guard let self, let view else { return }
+            self.beginSearch(on: view, needle: needle)
+        }
         return view
     }
 
@@ -728,6 +735,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tabBar.backgroundColor = color
         activeTab?.applyDividerTint(dividerColor)
         activeTab?.applyInactiveWash(inactivePaneWash)
+        activeTab?.applySearchTint(color)
 
         // Keep the traffic lights and the switcher's vibrancy legible against
         // whatever the terminal theme is. Only when the bucket flips: a new
@@ -944,6 +952,38 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// Trigger a libghostty keybinding action (e.g. "copy_to_clipboard") on the
     /// active surface. See Ghostty's docs for the action grammar.
+    // MARK: - Find
+
+    /// ⌘F. Opens the bar on the pane you are in, or re-focuses it if it is
+    /// already there so the next thing typed replaces the last needle.
+    func toggleSearch() {
+        activeTab?.focusedPane?.showSearch()
+    }
+
+    /// ⌘G and ⇧⌘G. Deliberately does nothing without a bar up: stepping through
+    /// results you cannot see, with no count and no way out, is worse than the
+    /// key doing nothing at all.
+    func navigateSearch(next: Bool) {
+        guard let pane = activeTab?.focusedPane, pane.searchBar != nil else { return }
+        pane.surface.navigateSearch(next: next)
+    }
+
+    func endSearch() {
+        activeTab?.focusedPane?.hideSearch()
+    }
+
+    /// libghostty asked for the search UI — `search_selection`, or a
+    /// `start_search` keybind in the user's own Ghostty config. It can name a
+    /// surface that is not the focused one, so the pane is looked up rather
+    /// than assumed.
+    func beginSearch(on surface: GhosttySurfaceView, needle: String) {
+        for workspace in workspaces {
+            guard let tab = workspace.tab(owning: surface) else { continue }
+            tab.pane(showing: surface)?.showSearch(needle: needle)
+            return
+        }
+    }
+
     func performSurfaceAction(_ action: String) {
         guard let surface = activeSurface?.surface else { return }
         _ = action.withCString { ptr in

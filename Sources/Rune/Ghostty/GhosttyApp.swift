@@ -231,6 +231,27 @@ final class GhosttyApp {
             view(for: surface)?.setTitle(String(cString: cTitle))
             return true
 
+        case GHOSTTY_ACTION_START_SEARCH:
+            let needle = action.action.start_search.needle.map { String(cString: $0) } ?? ""
+            view(for: surface)?.onSearchStart?(needle)
+            return true
+
+        case GHOSTTY_ACTION_END_SEARCH:
+            view(for: surface)?.clearSearchState()
+            view(for: surface)?.onSearchEnd?()
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            // Negative is the core's "no answer yet", not a count.
+            let total = action.action.search_total.total
+            view(for: surface)?.setSearchTotal(total < 0 ? nil : Int(total))
+            return true
+
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            let selected = action.action.search_selected.selected
+            view(for: surface)?.setSearchSelected(selected < 0 ? nil : Int(selected))
+            return true
+
         case GHOSTTY_ACTION_PWD:
             guard let cPwd = action.action.pwd.pwd else { return false }
             view(for: surface)?.setPwd(String(cString: cPwd))

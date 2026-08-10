@@ -31,6 +31,14 @@ final class SplitPane: NSView {
     /// terminal's own background — see `TerminalController.syncChrome`.
     var washColor: NSColor = .black.withAlphaComponent(0.22) { didSet { syncDim() } }
 
+    /// The find bar, once someone has asked for one. It lives in the pane
+    /// rather than in the window so a split carries its own search around with
+    /// it — the results belong to this surface's scrollback and nothing else's.
+    private(set) var searchBar: SearchBar?
+    /// Kept so the bar can be tinted the moment it is created, not only on the
+    /// next time the theme changes.
+    private var terminalBackground: NSColor = .black
+
     init(surface: GhosttySurfaceView) {
         self.surface = surface
         super.init(frame: .zero)
@@ -56,6 +64,71 @@ final class SplitPane: NSView {
         super.layout()
         surface.frame = bounds
         wash.frame = bounds
+    }
+
+    // MARK: - Search
+
+    /// Show the find bar and put the caret in it. Repeating ⌘F with the bar
+    /// already up re-focuses and selects, so the next thing typed replaces the
+    /// last needle instead of appending to it.
+    func showSearch(needle: String? = nil) {
+        let bar = searchBar ?? makeSearchBar()
+        if let needle, !needle.isEmpty {
+            bar.setNeedle(needle)
+            surface.search(for: needle)
+        }
+        bar.tint(background: terminalBackground)
+        bar.focus()
+        refreshSearchCount()
+    }
+
+    func hideSearch() {
+        guard let bar = searchBar else { return }
+        bar.removeFromSuperview()
+        searchBar = nil
+        surface.endSearch()
+        // The terminal is what you were using; give it the keyboard back.
+        window?.makeFirstResponder(surface)
+    }
+
+    private func makeSearchBar() -> SearchBar {
+        let bar = SearchBar()
+        bar.attach(to: self)
+        searchBar = bar
+
+        bar.onSearch = { [weak self] needle in
+            guard let self else { return }
+            self.surface.search(for: needle)
+            self.refreshSearchCount()
+        }
+        bar.onNavigate = { [weak self] next in self?.surface.navigateSearch(next: next) }
+        bar.onClose = { [weak self] in self?.hideSearch() }
+
+        surface.onSearchState = { [weak self] in self?.refreshSearchCount() }
+        surface.onSearchEnd = { [weak self] in self?.hideSearch() }
+        return bar
+    }
+
+    private func refreshSearchCount() {
+        guard let bar = searchBar else { return }
+        bar.show(
+            total: surface.searchTotal,
+            selected: surface.searchSelected,
+            searching: !bar.needle.isEmpty)
+
+        // The core finds the matches but selects none of them; left alone, you
+        // would type a needle, see "200", and have to press Return before the
+        // terminal moved anywhere. Every find bar jumps to the first hit as you
+        // type, so ask for it once results exist and nothing is chosen yet.
+        // Selection stays set afterwards, so this cannot run away with itself.
+        if !bar.needle.isEmpty, (surface.searchTotal ?? 0) > 0, surface.searchSelected == nil {
+            surface.navigateSearch(next: true)
+        }
+    }
+
+    func applySearchTint(_ background: NSColor) {
+        terminalBackground = background
+        searchBar?.tint(background: background)
     }
 
     private func syncDim() {
@@ -482,5 +555,21 @@ final class Tab {
     /// Re-mix the idle-pane wash when the terminal theme changes.
     func applyInactiveWash(_ color: NSColor) {
         for pane in panes { pane.washColor = color }
+    }
+
+    /// The find bar paints itself from the terminal's colour, so it has to be
+    /// told when that changes along with everything else in the chrome.
+    func applySearchTint(_ background: NSColor) {
+        for pane in panes { pane.applySearchTint(background) }
+    }
+
+    /// The pane you are typing in, which is the one a find bar belongs to.
+    var focusedPane: SplitPane? {
+        guard let focused else { return nil }
+        return panes.first { $0.surface === focused }
+    }
+
+    func pane(showing surface: GhosttySurfaceView) -> SplitPane? {
+        panes.first { $0.surface === surface }
     }
 }

@@ -297,6 +297,58 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         onMetadataChange?()
     }
 
+    // MARK: - Search
+    //
+    // libghostty owns the searching; Rune owns the box you type into. The core
+    // is told what to look for through binding actions and reports back through
+    // apprt actions, so these are the two halves of that conversation.
+
+    /// How many matches, or nil while the core is still counting — a search
+    /// over a large scrollback reports a total only once it has one.
+    private(set) var searchTotal: Int?
+    /// Which match is selected, 1-based, or nil for none.
+    private(set) var searchSelected: Int?
+
+    /// The counts moved. Only the numbers — the bar is already up.
+    var onSearchState: (() -> Void)?
+    /// libghostty asked for the search UI, with a needle to start from. Comes
+    /// from `search_selection` or a `start_search` keybind in the user's
+    /// Ghostty config, so it can arrive without Rune having opened anything.
+    var onSearchStart: ((String) -> Void)?
+    var onSearchEnd: (() -> Void)?
+
+    func setSearchTotal(_ total: Int?) {
+        guard searchTotal != total else { return }
+        searchTotal = total
+        onSearchState?()
+    }
+
+    func setSearchSelected(_ selected: Int?) {
+        guard searchSelected != selected else { return }
+        searchSelected = selected
+        onSearchState?()
+    }
+
+    func clearSearchState() {
+        searchTotal = nil
+        searchSelected = nil
+    }
+
+    /// Hand a needle to the core. Empty cancels the search without taking the
+    /// UI down, which is exactly what an emptied text field should do.
+    func search(for needle: String) {
+        _ = performBindingAction("search:\(needle)")
+    }
+
+    func navigateSearch(next: Bool) {
+        _ = performBindingAction("navigate_search:\(next ? "next" : "previous")")
+    }
+
+    func endSearch() {
+        clearSearchState()
+        _ = performBindingAction("end_search")
+    }
+
     func setBackgroundColor(_ color: NSColor) {
         guard backgroundColor != color else { return }
         backgroundColor = color

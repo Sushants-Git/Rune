@@ -337,6 +337,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func decreaseFontAction(_ sender: Any?) { keyController?.performSurfaceAction("decrease_font_size:1") }
     @objc private func resetFontAction(_ sender: Any?) { keyController?.performSurfaceAction("reset_font_size") }
 
+    @objc private func findAction(_ sender: Any?) { keyController?.toggleSearch() }
+    @objc private func findNextAction(_ sender: Any?) { keyController?.navigateSearch(next: true) }
+    @objc private func findPreviousAction(_ sender: Any?) { keyController?.navigateSearch(next: false) }
+
     @objc private func checkForUpdatesAction(_ sender: Any?) { Updater.shared.checkNow() }
     @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
@@ -396,6 +400,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         addResponderItem(to: editMenu, "Copy", #selector(NSText.copy(_:)), "c")
         addResponderItem(to: editMenu, "Paste", #selector(NSText.paste(_:)), "v")
         addResponderItem(to: editMenu, "Select All", #selector(NSResponder.selectAll(_:)), "a")
+        editMenu.addItem(.separator())
+        bind(.find, to: editMenu, #selector(findAction(_:)))
+        bind(.findNext, to: editMenu, #selector(findNextAction(_:)))
+        bind(.findPrevious, to: editMenu, #selector(findPreviousAction(_:)))
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
