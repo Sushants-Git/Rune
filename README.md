@@ -125,7 +125,7 @@ If it stops on `cannot execute tool 'metal'`, run
 Releases are cut by pushing a tag:
 
 ```sh
-git tag v0.10.5 && git push origin v0.10.5
+git tag v0.11.0 && git push origin v0.11.0
 ```
 
 ## More
