@@ -36,7 +36,10 @@ enum PaletteStyle {
     /// Near-black rather than pure black: a true #000 panel over a #000
     /// terminal has no edge at all, and the switcher needs to read as a thing
     /// sitting *on* the terminal.
-    static let background = NSColor(white: 0.055, alpha: 1)
+    /// Settable in Settings ▸ Appearance. Computed rather than stored so the
+    /// next ⌘K picks up a change without anything having to be told about it —
+    /// the panel is built fresh on every open.
+    @MainActor static var background: NSColor { Settings.shared.panelBackground }
     /// Laid over the glass so the rows' contrast is a constant, not a function
     /// of whatever the terminal happens to be showing.
     static let scrim = NSColor(white: 0.04, alpha: 0.42)
@@ -939,7 +942,7 @@ private final class FieldWell: NSView {
         layer?.cornerCurve = .continuous
         layer?.backgroundColor = NSColor(white: 1, alpha: 0.09).cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.8).cgColor
+        layer?.borderColor = Settings.shared.effectiveAccent.withAlphaComponent(0.8).cgColor
 
         field.translatesAutoresizingMaskIntoConstraints = false
         addSubview(field)
@@ -982,7 +985,7 @@ extension SwitcherPalette: NSTextFieldDelegate {
         else { return }
         editor.insertionPointColor = PaletteStyle.primaryText
         editor.selectedTextAttributes = [
-            .backgroundColor: NSColor.controlAccentColor.withAlphaComponent(0.5),
+            .backgroundColor: Settings.shared.effectiveAccent.withAlphaComponent(0.5),
             .foregroundColor: PaletteStyle.primaryText,
         ]
     }

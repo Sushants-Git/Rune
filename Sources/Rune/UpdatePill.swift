@@ -101,6 +101,11 @@ final class UpdatePill: NSView {
         NotificationCenter.default.addObserver(
             self, selector: #selector(stateChanged),
             name: Updater.stateChanged, object: nil)
+        // The pill is tinted with the accent, so a change in Settings has to
+        // repaint it — `apply` is idempotent and rebuilds from the same state.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(stateChanged),
+            name: Settings.changed, object: nil)
         apply(Updater.shared.state)
     }
 
@@ -179,14 +184,14 @@ final class UpdatePill: NSView {
                  tint: .secondaryLabelColor)
         case .available(let release):
             show("Update to \(release.version)", symbol: "arrow.down.circle.fill",
-                 tint: .controlAccentColor, actionable: true)
+                 tint: Settings.shared.effectiveAccent, actionable: true)
         case .downloading(_, let fraction):
             let text = fraction.map { "Downloading \(Int($0 * 100))%" } ?? "Downloading…"
             show(text, symbol: "arrow.down.circle", tint: .secondaryLabelColor,
                  progress: fraction)
         case .readyToInstall:
             show("Restart to update", symbol: "checkmark.circle.fill",
-                 tint: .controlAccentColor, actionable: true)
+                 tint: Settings.shared.effectiveAccent, actionable: true)
         case .upToDate:
             show("You're up to date", symbol: "checkmark.circle", tint: .secondaryLabelColor)
         case .failed(let reason):

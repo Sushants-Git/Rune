@@ -68,6 +68,11 @@ final class TabBar: NSView {
     private func build() {
         wantsLayer = true
 
+        NotificationCenter.default.addObserver(
+            forName: Settings.changed, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.chips.forEach { $0.refreshAccent() } }
+            }
+
         // Tabs are flush rectangles filling the strip's height, editor-style:
         // the active one is the same colour as the terminal below it, so it
         // reads as attached to what it's showing rather than floating above it.
@@ -291,7 +296,7 @@ private final class TabChip: NSView {
         // A 2pt bar along the top edge marks the active tab. It sits on the
         // boundary rather than around the tab, so nothing boxes in the title.
         accent.wantsLayer = true
-        accent.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        accent.layer?.backgroundColor = Settings.shared.effectiveAccent.cgColor
         accent.isHidden = true
         accent.translatesAutoresizingMaskIntoConstraints = false
         addSubview(accent)
@@ -372,6 +377,13 @@ private final class TabChip: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Re-read the accent from Settings. Chips outlive a trip through the
+    /// settings window, so a colour changed there has to reach the strip
+    /// without waiting for a tab to be closed and remade.
+    func refreshAccent() {
+        accent.layer?.backgroundColor = Settings.shared.effectiveAccent.cgColor
     }
 
     /// Point this chip at a tab. Every write is guarded, because most calls

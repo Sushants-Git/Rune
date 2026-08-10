@@ -24,6 +24,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         }
 
         buildMenu()
+        // A rebound shortcut has to reach the menu bar, and the menu bar is
+        // where key equivalents live — so the whole thing is rebuilt rather
+        // than hunted through for the one item that moved.
+        NotificationCenter.default.addObserver(
+            forName: Settings.changed, object: nil, queue: .main) { [weak self] note in
+                guard note.object as? Settings.Kind == .shortcuts else { return }
+                MainActor.assumeIsolated { self?.buildMenu() }
+            }
         installTabShortcuts()
         installCommandLineListener()
         // `rune <path>` on a cold launch says where the first window belongs.
@@ -330,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func resetFontAction(_ sender: Any?) { keyController?.performSurfaceAction("reset_font_size") }
 
     @objc private func checkForUpdatesAction(_ sender: Any?) { Updater.shared.checkNow() }
+    @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
@@ -349,6 +358,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         appMenu.addItem(.separator())
         add(to: appMenu, "Check for Updates…", #selector(checkForUpdatesAction(_:)), "")
         appMenu.addItem(.separator())
+        // ⌘, is fixed rather than rebindable, and that is on purpose: it is the
+        // way back into the window where a binding can be undone, so it must
+        // not be possible to bind it away.
+        add(to: appMenu, "Settings…", #selector(showSettingsAction(_:)), ",")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Rune", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
@@ -362,16 +376,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // and workspaces within a window.
         let shellItem = NSMenuItem()
         let shellMenu = NSMenu(title: "Shell")
-        add(to: shellMenu, "New Tab", #selector(newTabAction(_:)), "t")
-        add(to: shellMenu, "New Workspace", #selector(newWorkspaceAction(_:)), "n")
+        bind(.newTab, to: shellMenu, #selector(newTabAction(_:)))
+        bind(.newWorkspace, to: shellMenu, #selector(newWorkspaceAction(_:)))
         shellMenu.addItem(.separator())
         // Everything stays in one window until you explicitly ask for another.
-        add(to: shellMenu, "New Window", #selector(newWindowAction(_:)), "N")
-            .keyEquivalentModifierMask = [.command, .shift]
+        bind(.newWindow, to: shellMenu, #selector(newWindowAction(_:)))
         shellMenu.addItem(.separator())
-        add(to: shellMenu, "Close Terminal", #selector(closeTabAction(_:)), "w")
-        add(to: shellMenu, "Close Window", #selector(closeWindowAction(_:)), "W")
-            .keyEquivalentModifierMask = [.command, .shift]
+        bind(.closeTerminal, to: shellMenu, #selector(closeTabAction(_:)))
+        bind(.closeWindow, to: shellMenu, #selector(closeWindowAction(_:)))
         shellItem.submenu = shellMenu
         mainMenu.addItem(shellItem)
 
@@ -390,40 +402,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // View menu
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
-        add(to: viewMenu, "Increase Font Size", #selector(increaseFontAction(_:)), "+")
-        add(to: viewMenu, "Decrease Font Size", #selector(decreaseFontAction(_:)), "-")
-        add(to: viewMenu, "Reset Font Size", #selector(resetFontAction(_:)), "0")
+        bind(.increaseFont, to: viewMenu, #selector(increaseFontAction(_:)))
+        bind(.decreaseFont, to: viewMenu, #selector(decreaseFontAction(_:)))
+        bind(.resetFont, to: viewMenu, #selector(resetFontAction(_:)))
         viewMenu.addItem(.separator())
-        viewMenu.addItem(withTitle: "Toggle Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
-            .keyEquivalentModifierMask = [.command, .control]
+        bind(.toggleFullScreen, to: viewMenu, #selector(NSWindow.toggleFullScreen(_:)), responder: true)
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
         // Splits menu — dividing a tab, and moving between the pieces.
         let splitItem = NSMenuItem()
         let splitMenu = NSMenu(title: "Splits")
-        add(to: splitMenu, "Split Right", #selector(splitRightAction(_:)), "d")
-        add(to: splitMenu, "Split Down", #selector(splitDownAction(_:)), "D")
-            .keyEquivalentModifierMask = [.command, .shift]
+        bind(.splitRight, to: splitMenu, #selector(splitRightAction(_:)))
+        bind(.splitDown, to: splitMenu, #selector(splitDownAction(_:)))
         splitMenu.addItem(.separator())
         // ⌘⌥arrow rather than ⌘arrow: the terminal needs the plain arrows, and
         // ⌘arrow is line-start/end in a shell's editing mode.
-        for (i, spec) in [
-            ("Focus Split Left", "\u{2190}"),
-            ("Focus Split Right", "\u{2192}"),
-            ("Focus Split Up", "\u{2191}"),
-            ("Focus Split Down", "\u{2193}"),
+        for (i, action) in [
+            ShortcutAction.focusSplitLeft, .focusSplitRight, .focusSplitUp, .focusSplitDown,
         ].enumerated() {
-            let item = add(to: splitMenu, spec.0, #selector(focusSplitAction(_:)), spec.1)
-            item.keyEquivalentModifierMask = [.command, .option]
-            item.tag = i
+            bind(action, to: splitMenu, #selector(focusSplitAction(_:))).tag = i
         }
         splitMenu.addItem(.separator())
         // ⌘⇧↵, the same chord Ghostty uses for it.
-        add(to: splitMenu, "Zoom Split", #selector(toggleSplitZoomAction(_:)), "\r")
-            .keyEquivalentModifierMask = [.command, .shift]
-        add(to: splitMenu, "Equalize Splits", #selector(equalizeSplitsAction(_:)), "=")
-            .keyEquivalentModifierMask = [.command, .option]
+        bind(.zoomSplit, to: splitMenu, #selector(toggleSplitZoomAction(_:)))
+        bind(.equalizeSplits, to: splitMenu, #selector(equalizeSplitsAction(_:)))
         splitItem.submenu = splitMenu
         mainMenu.addItem(splitItem)
 
@@ -431,13 +434,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // bar moves between the tabs of the one you're in.
         let tabsItem = NSMenuItem()
         let tabsMenu = NSMenu(title: "Workspaces")
-        add(to: tabsMenu, "Switch to Workspace…", #selector(switchWorkspaceAction(_:)), "k")
-        add(to: tabsMenu, "Rename Workspace…", #selector(renameWorkspaceAction(_:)), "r")
+        bind(.switchWorkspace, to: tabsMenu, #selector(switchWorkspaceAction(_:)))
+        bind(.renameWorkspace, to: tabsMenu, #selector(renameWorkspaceAction(_:)))
         tabsMenu.addItem(.separator())
-        let next = add(to: tabsMenu, "Next Tab", #selector(nextTabAction(_:)), "]")
-        next.keyEquivalentModifierMask = [.command, .shift]
-        let prev = add(to: tabsMenu, "Previous Tab", #selector(prevTabAction(_:)), "[")
-        prev.keyEquivalentModifierMask = [.command, .shift]
+        bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
+        bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))
         tabsMenu.addItem(.separator())
         // ⌘1–⌘9 address the ⌘K list…
         for i in 1...9 {
@@ -457,6 +458,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         mainMenu.addItem(tabsItem)
 
         NSApp.mainMenu = mainMenu
+    }
+
+    /// Add a rebindable item, taking its title and chord from the catalogue.
+    ///
+    /// `target: nil` sends it down the responder chain — the right thing for
+    /// items AppKit itself implements, like full screen.
+    @discardableResult
+    private func bind(
+        _ action: ShortcutAction,
+        to menu: NSMenu,
+        _ selector: Selector,
+        target: AnyObject? = nil,
+        responder: Bool = false
+    ) -> NSMenuItem {
+        let chord = Settings.shared.chord(for: action)
+        let item = NSMenuItem(title: action.title, action: selector, keyEquivalent: chord.key)
+        item.keyEquivalentModifierMask = chord.modifiers
+        item.target = responder ? nil : (target ?? self)
+        menu.addItem(item)
+        return item
     }
 
     @discardableResult
