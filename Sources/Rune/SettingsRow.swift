@@ -161,10 +161,13 @@ final class SettingsCard: NSView {
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.6).cgColor
+            // Quiet. A card's edge only has to say where the group stops — at
+            // full strength, five of them stacked down a pane draw more
+            // attention than anything written inside them.
+            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
             for divider in dividers {
                 divider.layer?.backgroundColor = NSColor.separatorColor
-                    .withAlphaComponent(0.5).cgColor
+                    .withAlphaComponent(0.28).cgColor
             }
         }
     }

@@ -390,19 +390,23 @@ final class SettingsWindowController: NSWindowController {
         Self.style(well)
     }
 
-    /// A bordered swatch rather than the default well. Half these colours are
-    /// near-black sitting on a near-black pane, and without an edge an unset
-    /// background swatch is indistinguishable from a hole in the window.
+    /// The standard well, and no border of Rune's own.
+    ///
+    /// `.minimal` draws the colour as a *circle*, so the rounded-rectangle
+    /// border I had wrapped round it was two shapes disagreeing. Matching them
+    /// by making the box circular does not work either: the well refuses to be
+    /// square — constrain it to 22×22 and AppKit still lays it out at 29×26,
+    /// because the style carries a minimum size of its own.
+    ///
+    /// `.default` settles it. The fill is a rectangle in a bezel the system
+    /// draws, so the shapes agree, and the bezel is also what keeps a near-black
+    /// swatch from looking like a hole in a near-black pane — which is the only
+    /// reason there was a border here at all.
     static func style(_ well: NSColorWell) {
-        well.colorWellStyle = .minimal
+        well.colorWellStyle = .default
         well.translatesAutoresizingMaskIntoConstraints = false
         well.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        well.heightAnchor.constraint(equalToConstant: 20).isActive = true
-        well.wantsLayer = true
-        well.layer?.cornerRadius = 5
-        well.layer?.cornerCurve = .continuous
-        well.layer?.borderWidth = 1
-        well.layer?.borderColor = NSColor.separatorColor.cgColor
+        well.heightAnchor.constraint(equalToConstant: 22).isActive = true
     }
 
     private func syncAppearance() {
