@@ -171,6 +171,25 @@ final class SettingsWindowController: NSWindowController {
         // screen.
         if pane == .ghostty { reloadGhosttyRows() }
         resize(to: pane)
+        scrollToTop(views[pane])
+    }
+
+    /// Open a pane at its beginning. Flipping the document gets the initial
+    /// position right; this also covers coming back to a pane you had scrolled,
+    /// where the top is still where you want to start reading.
+    private func scrollToTop(_ pane: NSView?) {
+        guard let pane, let scroll = Self.firstScrollView(in: pane) else { return }
+        scroll.layoutSubtreeIfNeeded()
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    private static func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scroll = view as? NSScrollView { return scroll }
+        for sub in view.subviews {
+            if let hit = firstScrollView(in: sub) { return hit }
+        }
+        return nil
     }
 
     /// Appearance is a short pane and the others are long; a window sized for
@@ -242,7 +261,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func scrolling(_ content: NSView) -> NSScrollView {
-        let document = NSView()
+        let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(content)
         NSLayoutConstraint.activate([

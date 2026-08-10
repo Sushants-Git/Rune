@@ -172,3 +172,15 @@ final class SettingsCard: NSView {
         }
     }
 }
+
+/// A document view that lays out from the top down.
+///
+/// `NSView`'s origin is bottom-left, and a scroll view over an unflipped
+/// document opens showing the *bottom* of it — so a settings pane started 85
+/// points below its first heading, with the top of the list hidden under the
+/// header. Flipping the document is the whole fix: top-left origin, and the
+/// scroll view opens where the content starts.
+@MainActor
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
