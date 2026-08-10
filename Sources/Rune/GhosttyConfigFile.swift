@@ -29,29 +29,47 @@ struct GhosttyConfigFile {
         ]
     }
 
-    /// The file to edit: the last existing one Ghostty would load, or — when
-    /// there is nothing at all — the modern XDG path, which is where a new
-    /// config belongs.
+    /// The file to edit: the last one Ghostty loads that actually sets
+    /// something, falling back to the last that exists, then to the modern XDG
+    /// path where a new config belongs.
     ///
-    /// Worth knowing: when no XDG config exists, Ghostty creates an empty one
-    /// under Application Support on first run, all by itself. So on a machine
-    /// with no config at all this resolves to that file — which is right, since
-    /// it is both the one Ghostty made and the one it loads last.
+    /// The "sets something" part is load-bearing. Ghostty creates an *empty*
+    /// config under Application Support on first run when no XDG file exists,
+    /// and that file is loaded last — so a plain last-one-wins rule points the
+    /// whole pane at a blank file and reports every setting unset while the
+    /// user's real config sits one directory away. Precedence is preserved
+    /// either way: writing to an earlier file still takes effect, because the
+    /// later one is empty and overrides nothing.
     static var location: URL { resolve(candidates) }
 
     /// Split out from `location` so the ordering rule can be tested against a
     /// list the test controls. The real candidates include paths under
     /// Application Support, which no environment variable can redirect.
     static func resolve(_ candidates: [URL]) -> URL {
-        candidates.last { FileManager.default.fileExists(atPath: $0.path) }
+        let existing = candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
+        return existing.last { GhosttyConfigFile(url: $0).setsAnything }
+            ?? existing.last
             ?? candidates[1]
     }
 
-    /// True when more than one config file exists. Ghostty loads them all and
-    /// warns; the settings window says so too, because "I changed it and
-    /// nothing happened" is otherwise impossible to work out.
-    static var hasMultipleFiles: Bool {
-        candidates.filter { FileManager.default.fileExists(atPath: $0.path) }.count > 1
+    /// Does this file assign anything at all, as opposed to being empty or
+    /// nothing but comments?
+    var setsAnything: Bool {
+        lines.contains { Self.key(ofLine: $0) != nil }
+    }
+
+    /// Config files that actually set something, beyond the one being edited.
+    ///
+    /// Only these are worth warning about. An empty file Ghostty made for
+    /// itself is not a conflict, and saying it is would be crying wolf on every
+    /// machine that has never had an XDG config.
+    static var competingFiles: [URL] {
+        let editing = location
+        return candidates.filter {
+            $0 != editing
+                && FileManager.default.fileExists(atPath: $0.path)
+                && GhosttyConfigFile(url: $0).setsAnything
+        }
     }
 
     let url: URL

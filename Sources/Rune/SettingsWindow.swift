@@ -51,7 +51,8 @@ final class SettingsWindowController: NSWindowController {
         static let columnSpacing: CGFloat = 12
         /// Gap above a section heading — enough to group what follows it.
         static let sectionGap: CGFloat = 18
-        static let captionWidth: CGFloat = 320
+        static let labelColumn: CGFloat = 140
+        static let captionWidth: CGFloat = 300
     }
 
     private init() {
@@ -214,6 +215,10 @@ final class SettingsWindowController: NSWindowController {
         grid.rowSpacing = Metric.rowSpacing
         grid.columnSpacing = Metric.columnSpacing
         grid.column(at: 0).xPlacement = .trailing
+        // Fixed rather than sized to the longest label. Left to itself the
+        // column grows to fit "Padding, horizontal" and every control on the
+        // pane moves right with it, leaving a band of nothing down the left.
+        grid.column(at: 0).width = Metric.labelColumn
         for index in 1..<columns { grid.column(at: index).xPlacement = .leading }
         grid.translatesAutoresizingMaskIntoConstraints = false
         return grid
@@ -226,6 +231,10 @@ final class SettingsWindowController: NSWindowController {
         heading.textColor = .tertiaryLabelColor
         let row = grid.addRow(with: [heading])
         row.mergeCells(in: NSRange(location: 0, length: grid.numberOfColumns))
+        // A merged cell inherits the placement of the column it starts in, and
+        // column 0 is trailing so every heading was flung to the right-hand
+        // edge of the window. Headings anchor the left margin.
+        row.cell(at: 0).xPlacement = .leading
         // Space above the heading rather than below it, so a heading sits with
         // the rows it introduces instead of floating between groups.
         if !first { row.topPadding = Metric.sectionGap }
@@ -246,7 +255,9 @@ final class SettingsWindowController: NSWindowController {
         if grid.numberOfColumns > 2 {
             row.mergeCells(in: NSRange(location: 1, length: grid.numberOfColumns - 1))
         }
-        row.topPadding = -4
+        row.cell(at: 1).xPlacement = .leading
+        row.topPadding = -2
+        row.bottomPadding = 2
     }
 
     private func scrolling(_ grid: NSGridView) -> NSScrollView {
@@ -380,9 +391,22 @@ final class SettingsWindowController: NSWindowController {
     private func configure(_ well: NSColorWell, action: Selector) {
         well.target = self
         well.action = action
+        Self.style(well)
+    }
+
+    /// A bordered swatch rather than the default well. Half these colours are
+    /// near-black sitting on a near-black pane, and without an edge an unset
+    /// background swatch is indistinguishable from a hole in the window.
+    static func style(_ well: NSColorWell) {
+        well.colorWellStyle = .minimal
         well.translatesAutoresizingMaskIntoConstraints = false
-        well.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        well.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        well.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        well.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        well.wantsLayer = true
+        well.layer?.cornerRadius = 5
+        well.layer?.cornerCurve = .continuous
+        well.layer?.borderWidth = 1
+        well.layer?.borderColor = NSColor.separatorColor.cgColor
     }
 
     private func syncAppearance() {
@@ -601,17 +625,43 @@ final class SettingsWindowController: NSWindowController {
                 + "the rest are Ghostty's defaults."
 
         var warnings: [String] = []
-        if GhosttyConfigFile.hasMultipleFiles {
+        let competing = GhosttyConfigFile.competingFiles
+        if !competing.isEmpty {
+            let names = competing
+                .map { $0.path.replacingOccurrences(of: home, with: "~") }
+                .joined(separator: ", ")
             warnings.append(
-                "More than one Ghostty config file exists. Ghostty loads them all and the "
-                + "last one wins, which is the one shown above.")
+                "Ghostty also loads \(names), which sets values of its own. Where the two "
+                + "disagree, the later file wins.")
         }
         warnings.append(contentsOf: NSApp.ghosttyApp?.configDiagnostics() ?? [])
         configWarning.stringValue = warnings.joined(separator: "\n")
         configWarning.isHidden = warnings.isEmpty
     }
 
+    /// Queue a change, unless it is not one.
+    ///
+    /// A control that lands on the value the file already holds must write
+    /// nothing. Without this, brushing a slider rewrote `background-opacity = 1`
+    /// as `1.00`, and any control that fires on its own — focus moving, a pane
+    /// being shown — would leave a diff in a file the user never meant to
+    /// touch. The safest write is the one that does not happen.
     private func edit(_ key: String, to value: String?) {
+        let current = GhosttyConfigFile().value(for: key)
+        if Self.same(current, value) {
+            pendingEdits.removeValue(forKey: key)
+            return
+        }
+        // Writing a key that is absent, at the value Ghostty already uses, adds
+        // a line that changes nothing. `font-thicken = false` is how a config
+        // acquires clutter it did not ask for — and it is exactly the line that
+        // turned up in a real file here.
+        if current == nil,
+           let option = GhosttyOptions.all.first(where: { $0.key == key }),
+           Self.same(option.default.isEmpty ? nil : option.default, value) {
+            pendingEdits.removeValue(forKey: key)
+            return
+        }
         pendingEdits[key] = value
         flushWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -619,6 +669,19 @@ final class SettingsWindowController: NSWindowController {
         }
         flushWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    /// Equal as Ghostty would read them. `1` and `1.00` are the same opacity,
+    /// and rewriting one as the other is churn in someone's file.
+    private static func same(_ a: String?, _ b: String?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (x?, y?):
+            if x == y { return true }
+            if let left = Double(x), let right = Double(y) { return left == right }
+            return x.caseInsensitiveCompare(y) == .orderedSame
+        default: return false
+        }
     }
 
     private func flushEdits() {

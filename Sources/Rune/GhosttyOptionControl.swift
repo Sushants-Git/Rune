@@ -38,10 +38,12 @@ final class GhosttyOptionControl: NSObject {
         // A glyph rather than a word: it repeats down the whole pane, and
         // twenty buttons saying "Default" would be the loudest thing on screen
         // instead of the quietest.
-        revert.title = "\u{21BA}"
-        revert.bezelStyle = .accessoryBarAction
-        revert.controlSize = .small
-        revert.font = .systemFont(ofSize: 10)
+        revert.image = NSImage(
+            systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "Reset")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        revert.isBordered = false
+        revert.bezelStyle = .inline
+        revert.contentTintColor = .secondaryLabelColor
         revert.target = self
         revert.action = #selector(revertToDefault)
         revert.toolTip = "Remove this from the config file and use Ghostty's default"
@@ -89,9 +91,7 @@ final class GhosttyOptionControl: NSObject {
         case .color:
             well.target = self
             well.action = #selector(changed)
-            well.translatesAutoresizingMaskIntoConstraints = false
-            well.widthAnchor.constraint(equalToConstant: 48).isActive = true
-            well.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            SettingsWindowController.style(well)
             return well
 
         case .slider(let min, let max):
@@ -140,7 +140,10 @@ final class GhosttyOptionControl: NSObject {
 
         let isSet = value != nil
         revert.isEnabled = isSet
-        revert.alphaValue = isSet ? 1 : 0.2
+        // Hidden, not dimmed. Twenty ghost buttons down the right-hand side
+        // read as a column of damage; a revert that appears only where there is
+        // something to revert also shows at a glance what the file sets.
+        revert.isHidden = !isSet
         // A key the file sets is the interesting one on the page; the rest are
         // Ghostty's defaults sitting quietly.
         label.textColor = isSet ? .labelColor : .secondaryLabelColor
@@ -170,7 +173,7 @@ final class GhosttyOptionControl: NSObject {
         case .slider:
             let number = Double(effective) ?? slider.minValue
             slider.doubleValue = number
-            sliderValue.stringValue = String(format: "%.2f", number)
+            sliderValue.stringValue = Self.trim(number)
         }
     }
 
@@ -198,8 +201,8 @@ final class GhosttyOptionControl: NSObject {
             onChange?(Self.hex(well.color))
 
         case .slider:
-            sliderValue.stringValue = String(format: "%.2f", slider.doubleValue)
-            onChange?(String(format: "%.2f", slider.doubleValue))
+            sliderValue.stringValue = Self.trim(slider.doubleValue)
+            onChange?(Self.trim(slider.doubleValue))
         }
     }
 
@@ -208,6 +211,17 @@ final class GhosttyOptionControl: NSObject {
     }
 
     // MARK: - Values
+
+    /// `1` rather than `1.00`, `0.7` rather than `0.70`. A config file is read
+    /// by people, and trailing zeros are noise Ghostty does not need.
+    static func trim(_ value: Double) -> String {
+        let text = String(format: "%.2f", value)
+        guard text.contains(".") else { return text }
+        var trimmed = text
+        while trimmed.hasSuffix("0") { trimmed.removeLast() }
+        if trimmed.hasSuffix(".") { trimmed.removeLast() }
+        return trimmed
+    }
 
     static func isTrue(_ value: String) -> Bool {
         ["true", "yes", "1", "on"].contains(value.lowercased())

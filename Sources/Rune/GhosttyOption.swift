@@ -85,27 +85,30 @@ enum GhosttyOptions {
                           default: "false",
                           note: "Spread the leftover pixels evenly instead of letting them "
                               + "collect on one side."),
-            GhosttyOption("unfocused-split-opacity", "Unfocused split opacity",
-                          .slider(min: 0.2, max: 1), default: "0.7"),
+            GhosttyOption("unfocused-split-opacity", "Unfocused split",
+                          .slider(min: 0.2, max: 1), default: "0.7",
+                          note: "How solid the panes you are not typing in look."),
         ]),
 
         ("Behaviour", [
-            GhosttyOption("mouse-hide-while-typing", "Hide the pointer while typing",
-                          .toggle, default: "false"),
+            GhosttyOption("mouse-hide-while-typing", "Hide pointer", .toggle,
+                          default: "false",
+                          note: "Takes the mouse pointer out of the way while you type."),
             GhosttyOption("copy-on-select", "Copy on select",
                           .choice(["true", "false", "clipboard"]), default: "true",
                           note: "“clipboard” puts the selection on the system clipboard "
                               + "rather than the selection buffer."),
-            GhosttyOption("confirm-close-surface", "Confirm before closing",
-                          .choice(["true", "false", "always"]), default: "true"),
+            GhosttyOption("confirm-close-surface", "Confirm close",
+                          .choice(["true", "false", "always"]), default: "true",
+                          note: "Ask before closing a terminal that still has something running."),
             GhosttyOption("shell-integration", "Shell integration",
                           .choice(["detect", "none", "bash", "elvish", "fish", "zsh"]),
                           default: "detect",
                           note: "How Rune learns your working directory and what is running "
                               + "— the ⌘K switcher is built on it."),
-            GhosttyOption("scrollback-limit", "Scrollback limit, bytes",
+            GhosttyOption("scrollback-limit", "Scrollback",
                           .number(min: 0, max: 1_000_000_000, integral: true),
-                          default: "50000000"),
+                          default: "50000000", note: "Bytes of history kept per terminal."),
         ]),
     ]
 
