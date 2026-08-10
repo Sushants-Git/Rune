@@ -17,9 +17,11 @@ final class GhosttyOptionControl: NSObject {
     /// nil means "take this key out of the file".
     var onChange: ((String?) -> Void)?
 
-    let label = NSTextField(labelWithString: "")
     private(set) var control: NSView!
     let revert = NSButton()
+    /// The row this option occupies. Built here so the control, its caption and
+    /// its revert button stay one thing.
+    private(set) var row: SettingsRow!
 
     /// Set while `show` is writing into the controls, so the actions they fire
     /// in response are not mistaken for the user having typed something.
@@ -28,10 +30,6 @@ final class GhosttyOptionControl: NSObject {
     init(option: GhosttyOption) {
         self.option = option
         super.init()
-
-        label.stringValue = option.title
-        label.font = .systemFont(ofSize: 12)
-        label.textColor = .labelColor
 
         control = makeControl()
 
@@ -48,6 +46,9 @@ final class GhosttyOptionControl: NSObject {
         revert.action = #selector(revertToDefault)
         revert.toolTip = "Remove this from the config file and use Ghostty's default"
         revert.setContentHuggingPriority(.required, for: .horizontal)
+
+        row = SettingsRow(
+            title: option.title, caption: option.note, control: control, accessory: revert)
     }
 
     // MARK: - Controls
@@ -146,7 +147,7 @@ final class GhosttyOptionControl: NSObject {
         revert.isHidden = !isSet
         // A key the file sets is the interesting one on the page; the rest are
         // Ghostty's defaults sitting quietly.
-        label.textColor = isSet ? .labelColor : .secondaryLabelColor
+        row.titleLabel.textColor = isSet ? .labelColor : .secondaryLabelColor
 
         let effective = value ?? option.default
         switch option.kind {

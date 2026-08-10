@@ -206,71 +206,52 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
-    // MARK: - Grid building
+    // MARK: - Sections
 
-    /// A grid with a right-aligned label column, so every control in a pane
-    /// starts at the same x no matter how long its label is.
-    private func makeGrid(columns: Int) -> NSGridView {
-        let grid = NSGridView(numberOfColumns: columns, rows: 0)
-        grid.rowSpacing = Metric.rowSpacing
-        grid.columnSpacing = Metric.columnSpacing
-        grid.column(at: 0).xPlacement = .trailing
-        // Fixed rather than sized to the longest label. Left to itself the
-        // column grows to fit "Padding, horizontal" and every control on the
-        // pane moves right with it, leaving a band of nothing down the left.
-        grid.column(at: 0).width = Metric.labelColumn
-        for index in 1..<columns { grid.column(at: index).xPlacement = .leading }
-        grid.translatesAutoresizingMaskIntoConstraints = false
-        return grid
-    }
+    /// A left-aligned heading over a card of rows.
+    ///
+    /// Sentence case, not shouted uppercase — a heading is a label for the
+    /// group under it, and there are five of them down a pane.
+    private func section(_ title: String, _ rows: [NSView]) -> NSView {
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: 11, weight: .semibold)
+        heading.textColor = .secondaryLabelColor
 
-    /// A section heading, spanning the whole grid with air above it.
-    private func addSection(_ title: String, to grid: NSGridView, first: Bool = false) {
-        let heading = NSTextField(labelWithString: title.uppercased())
-        heading.font = .systemFont(ofSize: 10, weight: .semibold)
-        heading.textColor = .tertiaryLabelColor
-        let row = grid.addRow(with: [heading])
-        row.mergeCells(in: NSRange(location: 0, length: grid.numberOfColumns))
-        // A merged cell inherits the placement of the column it starts in, and
-        // column 0 is trailing so every heading was flung to the right-hand
-        // edge of the window. Headings anchor the left margin.
-        row.cell(at: 0).xPlacement = .leading
-        // Space above the heading rather than below it, so a heading sits with
-        // the rows it introduces instead of floating between groups.
-        if !first { row.topPadding = Metric.sectionGap }
-    }
-
-    /// Explanatory text under a control, in the control's column so it lines up
-    /// with what it is explaining.
-    private func addCaption(_ text: String, to grid: NSGridView) {
-        let caption = NSTextField(wrappingLabelWithString: text)
-        caption.font = .systemFont(ofSize: 11)
-        caption.textColor = .secondaryLabelColor
-        caption.preferredMaxLayoutWidth = Metric.captionWidth
-        caption.translatesAutoresizingMaskIntoConstraints = false
-        caption.widthAnchor.constraint(
-            lessThanOrEqualToConstant: Metric.captionWidth).isActive = true
-
-        let row = grid.addRow(with: [NSGridCell.emptyContentView, caption])
-        if grid.numberOfColumns > 2 {
-            row.mergeCells(in: NSRange(location: 1, length: grid.numberOfColumns - 1))
+        let stack = NSStackView(views: [heading, SettingsCard(rows: rows)])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in stack.arrangedSubviews where view is SettingsCard {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        row.cell(at: 1).xPlacement = .leading
-        row.topPadding = -2
-        row.bottomPadding = 2
+        return stack
     }
 
-    private func scrolling(_ grid: NSGridView) -> NSScrollView {
+    /// The column of sections that makes up a pane.
+    private func column(_ sections: [NSView]) -> NSStackView {
+        let stack = NSStackView(views: sections)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for view in sections {
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    private func scrolling(_ content: NSView) -> NSScrollView {
         let document = NSView()
         document.translatesAutoresizingMaskIntoConstraints = false
-        document.addSubview(grid)
+        document.addSubview(content)
         NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: document.topAnchor),
-            grid.leadingAnchor.constraint(
+            content.topAnchor.constraint(equalTo: document.topAnchor),
+            content.leadingAnchor.constraint(
                 equalTo: document.leadingAnchor, constant: Metric.margin),
-            grid.trailingAnchor.constraint(
-                lessThanOrEqualTo: document.trailingAnchor, constant: -Metric.margin),
-            grid.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -16),
+            content.trailingAnchor.constraint(
+                equalTo: document.trailingAnchor, constant: -Metric.margin),
+            content.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -18),
         ])
 
         let scroll = NSScrollView()
@@ -292,15 +273,25 @@ final class SettingsWindowController: NSWindowController {
         return scroll
     }
 
-    /// A scrolling pane with something fixed beneath it.
-    private func pane(_ scroll: NSScrollView, footer: NSView) -> NSView {
-        let stack = NSStackView(views: [scroll, footer])
+    /// A scrolling pane, optionally with something fixed above and below it.
+    private func pane(
+        _ scroll: NSScrollView, footer: NSView? = nil, header: NSView? = nil
+    ) -> NSView {
+        let stack = NSStackView(views: [scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
+
+        for (view, index) in [(header, 0), (footer, stack.arrangedSubviews.count)] {
+            guard let view else { continue }
+            stack.insertArrangedSubview(view, at: index)
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            // Only the scroll view gives up height; the fixed furniture keeps
+            // whatever it needs.
+            view.setContentHuggingPriority(.required, for: .vertical)
+            view.setContentCompressionResistancePriority(.required, for: .vertical)
+        }
         scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        footer.setContentHuggingPriority(.required, for: .vertical)
-        footer.setContentCompressionResistancePriority(.required, for: .vertical)
         return stack
     }
 
@@ -320,25 +311,11 @@ final class SettingsWindowController: NSWindowController {
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
-        let grid = makeGrid(columns: 2)
-
-        addSection("Rune", to: grid, first: true)
-
         configure(accentWell, action: #selector(accentChanged))
-        grid.addRow(with: [label("Accent"), accentWell])
-        addCaption("Marks the active tab, the update pill and the switcher's focus ring.",
-                   to: grid)
-
         systemAccent.target = self
         systemAccent.action = #selector(systemAccentToggled)
-        systemAccent.font = .systemFont(ofSize: 12)
-        grid.addRow(with: [NSGridCell.emptyContentView, systemAccent])
-
+        systemAccent.title = ""
         configure(panelWell, action: #selector(panelChanged))
-        grid.addRow(with: [label("Switcher panel"), panelWell])
-        addCaption("The ⌘K panel's background. It stays dark on purpose — the window's "
-                   + "appearance follows your terminal theme, and a light one would take the "
-                   + "panel's text with it.", to: grid)
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -346,44 +323,63 @@ final class SettingsWindowController: NSWindowController {
         dimSlider.target = self
         dimSlider.action = #selector(dimChanged)
         dimSlider.translatesAutoresizingMaskIntoConstraints = false
-        dimSlider.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        dimSlider.widthAnchor.constraint(equalToConstant: 130).isActive = true
         dimLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         dimLabel.textColor = .secondaryLabelColor
+        dimLabel.alignment = .right
         dimLabel.translatesAutoresizingMaskIntoConstraints = false
-        dimLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
+        dimLabel.widthAnchor.constraint(equalToConstant: 36).isActive = true
         let dim = NSStackView(views: [dimSlider, dimLabel])
         dim.spacing = 8
-        grid.addRow(with: [label("Backdrop dim"), dim])
-        addCaption("How much of the terminal the switcher's backdrop carries away.", to: grid)
-
-        addSection("Terminal", to: grid)
-        let note = NSTextField(wrappingLabelWithString:
-            "Colours, font and everything else about the terminal itself come from your "
-            + "Ghostty config. Rune keeps no second copy, so there is only ever one file to "
-            + "edit — and the Ghostty tab edits it for you.")
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = .secondaryLabelColor
-        note.preferredMaxLayoutWidth = Metric.captionWidth
-        note.translatesAutoresizingMaskIntoConstraints = false
-        note.widthAnchor.constraint(lessThanOrEqualToConstant: Metric.captionWidth).isActive = true
-        grid.addRow(with: [NSGridCell.emptyContentView, note])
 
         let openConfig = NSButton(
             title: "Open Config File", target: self, action: #selector(openGhosttyConfig))
         openConfig.bezelStyle = .rounded
         openConfig.controlSize = .small
-        grid.addRow(with: [NSGridCell.emptyContentView, openConfig])
+
+        let content = column([
+            section("Rune", [
+                SettingsRow(
+                    title: "Accent",
+                    caption: "Marks the active tab, the update pill and the switcher's "
+                        + "focus ring.",
+                    control: accentWell),
+                SettingsRow(
+                    title: "Follow the system accent",
+                    caption: nil, control: systemAccent),
+                SettingsRow(
+                    title: "Switcher panel",
+                    caption: "The ⌘K panel's background. It stays dark on purpose — the "
+                        + "window's appearance follows your terminal theme, and a light one "
+                        + "would take the panel's text with it.",
+                    control: panelWell),
+                SettingsRow(
+                    title: "Backdrop dim",
+                    caption: "How much of the terminal the switcher's backdrop carries away.",
+                    control: dim),
+            ]),
+            section("Terminal", [
+                SettingsRow(
+                    title: "Ghostty config",
+                    caption: "Colours, font and everything else about the terminal itself "
+                        + "come from your Ghostty config. Rune keeps no second copy, so "
+                        + "there is only ever one file to edit — and the Ghostty tab edits "
+                        + "it for you.",
+                    control: openConfig),
+            ]),
+        ])
 
         syncAppearance()
 
         let holder = NSView()
-        holder.addSubview(grid)
+        holder.addSubview(content)
         NSLayoutConstraint.activate([
-            grid.topAnchor.constraint(equalTo: holder.topAnchor),
-            grid.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: Metric.margin),
-            grid.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
-            grid.trailingAnchor.constraint(
-                lessThanOrEqualTo: holder.trailingAnchor, constant: -Metric.margin),
+            content.topAnchor.constraint(equalTo: holder.topAnchor),
+            content.leadingAnchor.constraint(
+                equalTo: holder.leadingAnchor, constant: Metric.margin),
+            content.trailingAnchor.constraint(
+                equalTo: holder.trailingAnchor, constant: -Metric.margin),
+            content.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
         ])
         return holder
     }
@@ -469,17 +465,13 @@ final class SettingsWindowController: NSWindowController {
     private let conflictLabel = NSTextField(labelWithString: "")
 
     private func makeShortcutsPane() -> NSView {
-        let grid = makeGrid(columns: 2)
-        var first = true
-        for group in ShortcutAction.grouped {
-            addSection(group.name, to: grid, first: first)
-            first = false
-            for action in group.actions {
+        let sections = ShortcutAction.grouped.map { group in
+            section(group.name, group.actions.map { action in
                 let recorder = ShortcutRecorder(action: action)
                 recorder.onRecorded = { [weak self] chord in self?.bind(chord, to: action) }
                 recorders.append(recorder)
-                grid.addRow(with: [label(action.title), recorder])
-            }
+                return SettingsRow(title: action.title, caption: nil, control: recorder)
+            })
         }
 
         conflictLabel.font = .systemFont(ofSize: 11)
@@ -496,7 +488,7 @@ final class SettingsWindowController: NSWindowController {
         footer.spacing = 4
         footer.edgeInsets = NSEdgeInsets(
             top: 0, left: Metric.margin, bottom: 0, right: Metric.margin)
-        return pane(scrolling(grid), footer: footer)
+        return pane(scrolling(column(sections)), footer: footer)
     }
 
     /// Refuse rather than steal. Two items sharing a key equivalent is not an
@@ -536,19 +528,13 @@ final class SettingsWindowController: NSWindowController {
     private var flushWork: DispatchWorkItem?
 
     private func makeGhosttyPane() -> NSView {
-        // Three columns: label, control, revert.
-        let grid = makeGrid(columns: 3)
-        var first = true
-        for group in GhosttyOptions.groups {
-            addSection(group.name, to: grid, first: first)
-            first = false
-            for option in group.options {
+        let sections = GhosttyOptions.groups.map { group in
+            section(group.name, group.options.map { option in
                 let row = GhosttyOptionControl(option: option)
                 row.onChange = { [weak self] value in self?.edit(option.key, to: value) }
                 ghosttyControls.append(row)
-                grid.addRow(with: [row.label, row.control, row.revert])
-                if let note = option.note { addCaption(note, to: grid) }
-            }
+                return row.row
+            })
         }
 
         // The file goes at the top, not in a footer. This pane is a view onto
@@ -592,18 +578,8 @@ final class SettingsWindowController: NSWindowController {
         pathRow.widthAnchor.constraint(
             equalTo: header.widthAnchor, constant: -Metric.margin * 2).isActive = true
 
-        let scroll = scrolling(grid)
-        let stack = NSStackView(views: [header, scroll])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 12
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        header.setContentHuggingPriority(.required, for: .vertical)
-        header.setContentCompressionResistancePriority(.required, for: .vertical)
-
         reloadGhosttyRows()
-        return stack
+        return pane(scrolling(column(sections)), header: header)
     }
 
     /// Read the file and put every row back in step with it.
