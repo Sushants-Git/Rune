@@ -815,21 +815,56 @@ private final class Divider: NSView {
     }
 }
 
-/// The rounded, tinted square a row's symbol sits in.
+/// What a mark needs behind it.
+///
+/// Marks arrive from anywhere — a favicon, a launcher icon, an agent's own
+/// glyph — so there is no one treatment that suits them all. A launcher icon
+/// already paints its own background and wants none; a bare glyph does, and
+/// which one it wants depends on the glyph's own lightness.
+private enum MarkBacking {
+    /// Paints to its own edges. The mark *is* the tile.
+    case none
+    /// Dark ink on nothing: needs something bright behind it to read.
+    case light
+    /// Light ink on nothing: the panel's own tile is backing enough.
+    case neutral
+}
+
+/// The rounded square a row's mark sits in.
 private final class IconTile: NSView {
+    private static let side: CGFloat = 24
+
     init(image artwork: NSImage?, symbol: String) {
         super.init(frame: .zero)
 
         wantsLayer = true
         layer?.cornerRadius = 6
         layer?.cornerCurve = .continuous
+        // Clipped, so a mark that fills its tile takes the tile's corners
+        // instead of showing its own square ones inside a rounded box.
+        layer?.masksToBounds = true
 
         let image = NSImageView()
+        let markSide: CGFloat
+
         if let artwork {
-            // Real marks are drawn for light backgrounds — several are
-            // near-black — so they get a light tile of their own, the way an
-            // app icon sits in a launcher.
-            layer?.backgroundColor = NSColor.white.withAlphaComponent(0.92).cgColor
+            switch Self.backing(for: artwork) {
+            case .none:
+                // Edge to edge, the way an app icon sits in a launcher — no
+                // plate, because there is nothing for a plate to show through.
+                // The hairline is what a near-black mark needs so it doesn't
+                // read as a hole punched in a near-black panel, and it costs a
+                // pixel where the old white square cost the whole tile.
+                layer?.borderWidth = 1
+                layer?.borderColor = PaletteStyle.border.cgColor
+                markSide = Self.side
+            case .light:
+                layer?.backgroundColor = NSColor.white.withAlphaComponent(0.9).cgColor
+                markSide = 16
+            case .neutral:
+                layer?.backgroundColor = PaletteStyle.tile.cgColor
+                markSide = 16
+            }
             image.image = artwork
             image.imageScaling = .scaleProportionallyUpOrDown
         } else {
@@ -837,24 +872,89 @@ private final class IconTile: NSView {
             image.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             image.symbolConfiguration = .init(pointSize: 11, weight: .medium)
             image.contentTintColor = PaletteStyle.secondaryText
+            markSide = Self.side
         }
         image.translatesAutoresizingMaskIntoConstraints = false
         addSubview(image)
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 24),
-            heightAnchor.constraint(equalToConstant: 24),
+            widthAnchor.constraint(equalToConstant: Self.side),
+            heightAnchor.constraint(equalToConstant: Self.side),
             image.centerXAnchor.constraint(equalTo: centerXAnchor),
             image.centerYAnchor.constraint(equalTo: centerYAnchor),
-            image.widthAnchor.constraint(equalToConstant: artwork == nil ? 24 : 17),
-            image.heightAnchor.constraint(equalToConstant: artwork == nil ? 24 : 17),
+            image.widthAnchor.constraint(equalToConstant: markSide),
+            image.heightAnchor.constraint(equalToConstant: markSide),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    /// Ask the mark itself what it needs, rather than assuming.
+    ///
+    /// Two questions, one downsampled read: does it paint its own background,
+    /// and if not, is its ink dark enough to need something light behind it.
+    /// Cheap, and done once when the tile is built.
+    ///
+    /// The first question is asked of the mark's own bounds rather than the
+    /// file's. Plenty of icons ship with transparent padding baked in, and
+    /// testing the outer ring of the image just measures that padding — every
+    /// launcher icon came back "transparent" and got a plate it didn't need.
+    private static func backing(for artwork: NSImage) -> MarkBacking {
+        guard let mark = artwork.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return .light }
+
+        let side = 16
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let context = pixels.withUnsafeMutableBytes({ bytes in
+            CGContext(
+                data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        }) else { return .light }
+        context.draw(mark, in: CGRect(x: 0, y: 0, width: side, height: side))
+
+        func alpha(_ x: Int, _ y: Int) -> Double { Double(pixels[(y * side + x) * 4 + 3]) / 255 }
+
+        var minX = side, minY = side, maxX = -1, maxY = -1
+        var luminance = 0.0
+        var covered = 0.0
+        for y in 0..<side {
+            for x in 0..<side {
+                let a = alpha(x, y)
+                guard a > 0.1 else { continue }
+                minX = min(minX, x); maxX = max(maxX, x)
+                minY = min(minY, y); maxY = max(maxY, y)
+                // Premultiplied, so the alpha comes back out before the colour
+                // means anything — otherwise every soft edge reads as dark.
+                let i = (y * side + x) * 4
+                let r = Double(pixels[i]) / 255 / a
+                let g = Double(pixels[i + 1]) / 255 / a
+                let b = Double(pixels[i + 2]) / 255 / a
+                luminance += (0.2126 * r + 0.7152 * g + 0.0722 * b) * a
+                covered += a
+            }
+        }
+        guard covered > 0, maxX > minX, maxY > minY else { return .neutral }
+
+        var edgeOpaque = 0
+        var edgeTotal = 0
+        for y in minY...maxY {
+            for x in minX...maxX where x == minX || y == minY || x == maxX || y == maxY {
+                edgeTotal += 1
+                if alpha(x, y) > 0.8 { edgeOpaque += 1 }
+            }
+        }
+        if edgeTotal > 0, Double(edgeOpaque) / Double(edgeTotal) > 0.75 { return .none }
+
+        // Only genuinely near-black ink earns a light plate. A merely dark
+        // *colour* — a navy circle, a deep red glyph — reads perfectly well on
+        // the panel's own tile, and putting it on white was most of what made
+        // these look like logos trapped in boxes.
+        return luminance / covered < 0.25 ? .light : .neutral
     }
 }
 

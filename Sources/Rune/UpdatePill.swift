@@ -25,6 +25,28 @@ final class ChromeButton: NSButton {
         didSet { applyBackground() }
     }
 
+    /// Breathing room either side of the content, on top of what the cell asks
+    /// for.
+    ///
+    /// An `.inline` button sizes itself to its content almost exactly, which is
+    /// fine while the background is clear and wrong the moment it isn't: the
+    /// glyph ends up against the left edge of the tint and the last letter
+    /// against the right, so the fill reads as a box cropped around the words
+    /// rather than a pill they sit inside.
+    var horizontalPadding: CGFloat = 0 {
+        didSet {
+            guard horizontalPadding != oldValue else { return }
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        var size = super.intrinsicContentSize
+        guard size.width != NSView.noIntrinsicMetric else { return size }
+        size.width += horizontalPadding * 2
+        return size
+    }
+
     private var hovering = false
 
     override func updateTrackingAreas() {
@@ -121,6 +143,10 @@ final class UpdatePill: NSView {
         button.target = self
         button.action = #selector(clicked)
         button.font = .systemFont(ofSize: 11, weight: .medium)
+        // Enough that the tinted states read as a pill rather than as a
+        // highlight sitting directly on the text. The zoom button beside it
+        // keeps its fixed 24pt square, so it wants none of this.
+        button.horizontalPadding = 7
         button.translatesAutoresizingMaskIntoConstraints = false
         button.wantsLayer = true
         button.layer?.cornerRadius = Chrome.cornerRadius

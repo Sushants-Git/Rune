@@ -271,10 +271,16 @@ private final class TabChip: NSView {
     private let accent = NSView()
     private let separator = NSView()
     private let dot = NSView()
-    private var dotWidth: NSLayoutConstraint!
-    /// Closes up when there is no dot, so a quiet tab's title doesn't sit in a
-    /// gap where one used to be.
-    private var labelGap: NSLayoutConstraint!
+    /// The indicator's slot, kept whether or not there is a dot in it.
+    ///
+    /// It used to collapse, on the reasoning that a quiet tab shouldn't sit in
+    /// a gap where a dot used to be. But chips are flush neighbours, so what
+    /// that actually bought was titles starting at two different offsets
+    /// depending on state — a strip of mixed tabs came out ragged, and the eye
+    /// reads the zig-zag before it reads any of the names. A held slot costs
+    /// one empty gap; a collapsing one costs the whole row its alignment.
+    private static let dotSlot: CGFloat = 6
+    private static let dotGap: CGFloat = 6
 
     private var isActive = false
     private var hovering = false
@@ -342,9 +348,6 @@ private final class TabChip: NSView {
         closeButton.isHidden = true
         addSubview(closeButton)
 
-        dotWidth = dot.widthAnchor.constraint(equalToConstant: 0)
-        labelGap = label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 0)
-
         NSLayoutConstraint.activate([
             widthAnchor.constraint(greaterThanOrEqualToConstant: 84),
             widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
@@ -362,9 +365,10 @@ private final class TabChip: NSView {
             dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
             dot.heightAnchor.constraint(equalToConstant: 6),
-            dotWidth,
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSlot),
 
-            labelGap,
+            label.leadingAnchor.constraint(
+                equalTo: dot.trailingAnchor, constant: Self.dotGap),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             closeButton.leadingAnchor.constraint(
@@ -406,8 +410,6 @@ private final class TabChip: NSView {
             if let color = status.activity.color {
                 dot.isHidden = false
                 dot.layer?.backgroundColor = color.cgColor
-                dotWidth.constant = 6
-                labelGap.constant = 6
                 if status.activity.pulses {
                     Pulse.apply(to: dot.layer)
                 } else {
@@ -416,8 +418,6 @@ private final class TabChip: NSView {
             } else {
                 dot.isHidden = true
                 Pulse.remove(from: dot.layer)
-                dotWidth.constant = 0
-                labelGap.constant = 0
             }
         }
 
