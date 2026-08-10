@@ -1,6 +1,7 @@
 import Cocoa
 
-/// The settings window: colours on one pane, key bindings on the other.
+/// The settings window: Rune's colours, Rune's key bindings, and Ghostty's
+/// config file.
 ///
 /// One window, kept alive for the life of the app. Reopening it should land you
 /// where you left off rather than resetting to the first pane, and the controls
@@ -11,12 +12,14 @@ final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private let tabs = NSSegmentedControl(
-        labels: ["Appearance", "Shortcuts"], trackingMode: .selectOne, target: nil, action: nil)
+        labels: ["Appearance", "Shortcuts", "Ghostty"], trackingMode: .selectOne,
+        target: nil, action: nil)
     private let panes = NSView()
     private let resetButton = NSButton()
 
     private var appearance: NSView!
     private var shortcuts: NSView!
+    private var ghostty: NSView!
 
     private init() {
         let window = NSWindow(
@@ -64,7 +67,8 @@ final class SettingsWindowController: NSWindowController {
 
         appearance = makeAppearancePane()
         shortcuts = makeShortcutsPane()
-        for pane in [appearance!, shortcuts!] {
+        ghostty = makeGhosttyPane()
+        for pane in [appearance!, shortcuts!, ghostty!] {
             pane.translatesAutoresizingMaskIntoConstraints = false
             panes.addSubview(pane)
             NSLayoutConstraint.activate([
@@ -79,6 +83,7 @@ final class SettingsWindowController: NSWindowController {
         // does want every pixel it can get.
         appearance.bottomAnchor.constraint(lessThanOrEqualTo: panes.bottomAnchor).isActive = true
         shortcuts.bottomAnchor.constraint(equalTo: panes.bottomAnchor).isActive = true
+        ghostty.bottomAnchor.constraint(equalTo: panes.bottomAnchor).isActive = true
 
         NSLayoutConstraint.activate([
             tabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
@@ -101,9 +106,11 @@ final class SettingsWindowController: NSWindowController {
     private func select(_ index: Int) {
         appearance.isHidden = index != 0
         shortcuts.isHidden = index != 1
+        ghostty.isHidden = index != 2
         // Named for what it will do, so it cannot be mistaken for a button that
-        // throws away both panes at once.
-        resetButton.title = index == 0 ? "Reset Appearance" : "Reset Shortcuts"
+        // throws away every pane at once.
+        resetButton.title = ["Reset Appearance", "Reset Shortcuts", "Reset Ghostty Settings"][index]
+        if index == 2 { reloadGhosttyRows() }
         resize(to: index)
     }
 
@@ -112,7 +119,7 @@ final class SettingsWindowController: NSWindowController {
     /// windows on macOS resize between tabs, so this one does too.
     private func resize(to index: Int) {
         guard let window else { return }
-        let pane = index == 0 ? appearance! : shortcuts!
+        let pane = [appearance!, shortcuts!, ghostty!][index]
         pane.layoutSubtreeIfNeeded()
         // 16 above the tabs, the tabs, 16 below, the pane, 12, the button, 16.
         let height = index == 0
@@ -130,12 +137,15 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func resetPane() {
-        if tabs.selectedSegment == 0 {
+        switch tabs.selectedSegment {
+        case 0:
             Settings.shared.resetAppearance()
             syncAppearance()
-        } else {
+        case 1:
             Settings.shared.resetShortcuts()
             recorders.forEach { $0.refresh() }
+        default:
+            resetGhostty()
         }
     }
 
@@ -194,7 +204,8 @@ final class SettingsWindowController: NSWindowController {
         let terminalNote = NSTextField(wrappingLabelWithString:
             "Terminal colours — the palette, the background, the font — come from your "
             + "Ghostty config, which Rune reads on launch. Rune does not keep a second copy "
-            + "of them, so there is only ever one file to edit.")
+            + "of them, so there is only ever one file to edit. The Ghostty tab edits it "
+            + "for you.")
         terminalNote.font = .systemFont(ofSize: 11)
         terminalNote.textColor = .secondaryLabelColor
         terminalNote.preferredMaxLayoutWidth = 460
@@ -266,18 +277,208 @@ final class SettingsWindowController: NSWindowController {
         dimLabel.stringValue = "\(Int(Settings.shared.backdropDim * 100))%"
     }
 
-    /// Ghostty reads several paths; this opens the one it would use first,
+    /// Ghostty reads several paths; this opens the one it actually uses,
     /// creating it if it isn't there — `open` on a missing file does nothing at
     /// all, which reads as a broken button.
     @objc private func openGhosttyConfig() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let path = home.appendingPathComponent(".config/ghostty/config")
-        if !FileManager.default.fileExists(atPath: path.path) {
+        let url = GhosttyConfigFile.location
+        if !FileManager.default.fileExists(atPath: url.path) {
             try? FileManager.default.createDirectory(
-                at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? Data().write(to: path)
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data().write(to: url)
         }
-        NSWorkspace.shared.open(path)
+        NSWorkspace.shared.open(url)
+    }
+
+
+    // MARK: - Ghostty
+
+    private var ghosttyRows: [GhosttyOptionRow] = []
+    private let configPathLabel = NSTextField(labelWithString: "")
+    private let configWarning = NSTextField(labelWithString: "")
+
+    /// Edits waiting to be written, keyed by config key. A `nil` value means
+    /// "take the key out".
+    ///
+    /// Coalesced rather than written per keystroke: dragging an opacity slider
+    /// fires continuously, and each write is a file replace plus a full
+    /// libghostty config rebuild pushed to every surface.
+    private var pendingEdits: [String: String?] = [:]
+    private var flushWork: DispatchWorkItem?
+
+    private func makeGhosttyPane() -> NSView {
+        let list = NSStackView()
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 6
+        list.edgeInsets = NSEdgeInsets(top: 4, left: 20, bottom: 12, right: 20)
+
+        for group in GhosttyOptions.groups {
+            let heading = NSTextField(labelWithString: group.name.uppercased())
+            heading.font = .systemFont(ofSize: 10, weight: .semibold)
+            heading.textColor = .tertiaryLabelColor
+            let spacer = NSView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            spacer.heightAnchor.constraint(equalToConstant: 8).isActive = true
+            list.addArrangedSubview(spacer)
+            list.addArrangedSubview(heading)
+
+            for option in group.options {
+                let row = GhosttyOptionRow(option: option)
+                row.onChange = { [weak self] value in self?.edit(option.key, to: value) }
+                ghosttyRows.append(row)
+                list.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -40).isActive = true
+
+                if let note = option.note {
+                    let caption = NSTextField(wrappingLabelWithString: note)
+                    caption.font = .systemFont(ofSize: 10)
+                    caption.textColor = .secondaryLabelColor
+                    caption.preferredMaxLayoutWidth = 440
+                    list.addArrangedSubview(caption)
+                }
+            }
+        }
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.documentView = list
+        list.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            list.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            list.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        configPathLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        configPathLabel.textColor = .secondaryLabelColor
+        configPathLabel.lineBreakMode = .byTruncatingMiddle
+
+        configWarning.font = .systemFont(ofSize: 11)
+        configWarning.textColor = .systemOrange
+        configWarning.maximumNumberOfLines = 3
+
+        let open = NSButton(
+            title: "Open in Editor", target: self, action: #selector(openGhosttyConfig))
+        open.bezelStyle = .rounded
+        let reveal = NSButton(
+            title: "Reveal in Finder", target: self, action: #selector(revealGhosttyConfig))
+        reveal.bezelStyle = .rounded
+        let buttons = NSStackView(views: [open, reveal])
+        buttons.spacing = 8
+
+        let footer = NSStackView(views: [configPathLabel, configWarning, buttons])
+        footer.orientation = .vertical
+        footer.alignment = .leading
+        footer.spacing = 6
+        for view in [configPathLabel, configWarning, footer] {
+            view.setContentHuggingPriority(.required, for: .vertical)
+            view.setContentCompressionResistancePriority(.required, for: .vertical)
+        }
+
+        let stack = NSStackView(views: [scroll, footer])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        configPathLabel.translatesAutoresizingMaskIntoConstraints = false
+        configPathLabel.widthAnchor.constraint(
+            equalTo: stack.widthAnchor, constant: -40).isActive = true
+
+        reloadGhosttyRows()
+        return stack
+    }
+
+    /// Read the file and put every row back in step with it.
+    ///
+    /// Called whenever the pane is shown, not only after an edit: the file is a
+    /// file, and someone may well have opened it in an editor since.
+    private func reloadGhosttyRows() {
+        let file = GhosttyConfigFile()
+        for row in ghosttyRows { row.show(file.value(for: row.option.key)) }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        configPathLabel.stringValue = file.url.path.replacingOccurrences(
+            of: home, with: "~")
+
+        var warnings: [String] = []
+        if GhosttyConfigFile.hasMultipleFiles {
+            warnings.append(
+                "More than one Ghostty config file exists. Ghostty loads them all and the "
+                + "last one wins, which is the one shown above.")
+        }
+        warnings.append(contentsOf: NSApp.ghosttyApp?.configDiagnostics() ?? [])
+        configWarning.stringValue = warnings.joined(separator: "\n")
+        configWarning.isHidden = warnings.isEmpty
+    }
+
+    private func edit(_ key: String, to value: String?) {
+        pendingEdits[key] = value
+        flushWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.flushEdits() }
+        }
+        flushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func flushEdits() {
+        guard !pendingEdits.isEmpty else { return }
+        var file = GhosttyConfigFile()
+        for (key, value) in pendingEdits { file.set(key, to: value) }
+        pendingEdits = [:]
+
+        do {
+            try file.save()
+        } catch {
+            configWarning.isHidden = false
+            configWarning.stringValue = "Could not write \(file.url.path): \(error.localizedDescription)"
+            return
+        }
+        NSApp.ghosttyApp?.reloadConfig()
+        reloadGhosttyRows()
+    }
+
+    /// Remove every key this pane manages, and nothing else.
+    ///
+    /// Behind a confirmation because it is the one reset in this window that
+    /// edits a file the user wrote by hand — and it cannot know which of those
+    /// lines they typed themselves.
+    private func resetGhostty() {
+        let file = GhosttyConfigFile()
+        let present = GhosttyOptions.all.map(\.key).filter { file.value(for: $0) != nil }
+        guard !present.isEmpty else { NSSound.beep(); return }
+
+        let alert = NSAlert()
+        alert.messageText = "Remove \(present.count) setting\(present.count == 1 ? "" : "s") from your Ghostty config?"
+        alert.informativeText =
+            "This deletes these lines from \(configPathLabel.stringValue):\n\n"
+            + present.joined(separator: ", ")
+            + "\n\nEverything else in the file — comments, keys Rune does not show — is left "
+            + "alone, and the original was copied to a .rune-backup file the first time Rune "
+            + "wrote to it."
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        for key in present { pendingEdits[key] = String?.none }
+        flushEdits()
+    }
+
+    @objc private func revealGhosttyConfig() {
+        let url = GhosttyConfigFile.location
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data().write(to: url)
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     // MARK: - Shortcuts

@@ -3,7 +3,7 @@ import GhosttyKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
-    private var ghostty: GhosttyApp?
+    private(set) var ghostty: GhosttyApp?
     private var controllers: [TerminalController] = []
     private var tabKeyMonitor: Any?
 
@@ -507,4 +507,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         menu.addItem(item)
         return item
     }
+}
+
+/// The one libghostty instance, reachable from anywhere that needs to ask it
+/// something — the settings window in particular, which is not on the window
+/// controller's path to it.
+extension NSApplication {
+    @MainActor var ghosttyApp: GhosttyApp? { (delegate as? AppDelegate)?.ghostty }
 }

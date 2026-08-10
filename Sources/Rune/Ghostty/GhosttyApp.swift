@@ -89,6 +89,55 @@ final class GhosttyApp {
         ghostty_app_set_focus(app, NSApp.isActive)
     }
 
+    /// Posted after the config file has been re-read and pushed to libghostty.
+    /// Chrome painted from the terminal's colours has to catch up.
+    static let configReloaded = Notification.Name("RuneGhosttyConfigReloaded")
+
+    /// Re-read the config files and hand the result to libghostty.
+    ///
+    /// A fresh `ghostty_config_t` rather than a mutation of the live one: there
+    /// is no C API for unsetting a key, so the only way to see a key that was
+    /// *deleted* from the file is to build the config again from nothing.
+    ///
+    /// The old config is freed last. `ghostty_app_update_config` and its
+    /// surface counterpart copy what they need, but freeing first would mean a
+    /// window where the app holds a pointer to memory that is already gone.
+    @discardableResult
+    func reloadConfig() -> Bool {
+        guard let app else { return false }
+        guard let next = ghostty_config_new() else { return false }
+        ghostty_config_load_default_files(next)
+        ghostty_config_load_recursive_files(next)
+        ghostty_config_finalize(next)
+        logConfigDiagnostics(next)
+
+        ghostty_app_update_config(app, next)
+        for view in surfaces.values {
+            guard let surface = view.surface else { continue }
+            ghostty_surface_update_config(surface, next)
+        }
+
+        let previous = config
+        config = next
+        if let previous { ghostty_config_free(previous) }
+
+        NotificationCenter.default.post(name: Self.configReloaded, object: nil)
+        return true
+    }
+
+    /// Whether the last reload turned up anything Ghostty could not parse, and
+    /// what it said. Shown in the settings window — a config error that only
+    /// reaches the system log is a config error nobody sees.
+    func configDiagnostics() -> [String] {
+        guard let config else { return [] }
+        let count = ghostty_config_diagnostics_count(config)
+        return (0..<count).compactMap { index in
+            guard let message = ghostty_config_get_diagnostic(config, index).message
+            else { return nil }
+            return String(cString: message)
+        }
+    }
+
     /// Release libghostty. Called on app termination — these frees must happen
     /// on the main thread, so this can't live in `deinit`.
     func shutdown() {

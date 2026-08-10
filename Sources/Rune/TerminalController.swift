@@ -215,6 +215,18 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         window.contentView = container
 
         super.init(window: window)
+
+        // A reloaded config can change the terminal's colours without any
+        // surface reporting a change, and `syncChrome` short-circuits when the
+        // colour it computes matches the one it last painted. Clearing that
+        // memory first is what makes the repaint actually happen.
+        NotificationCenter.default.addObserver(
+            forName: GhosttyApp.configReloaded, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.invalidateChromeColor()
+                    self?.syncChromeNow([.title, .colors, .tabBar, .palette])
+                }
+            }
         window.delegate = self
         window.controller = self
 
