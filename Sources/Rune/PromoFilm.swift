@@ -251,12 +251,15 @@ enum PromoFilm {
                 content.cacheDisplay(in: content.bounds, to: rep)
                 times.append(Date().timeIntervalSince(started))
                 let capture = Capture(rep: rep, index: frame)
+                // Named here rather than on the encoder queue: `output` belongs
+                // to the main actor, and the frame it goes with is already known.
+                let destination = output.appendingPathComponent(
+                    String(format: "%04d.png", frame))
                 frame += 1
                 inFlight += 1
                 encoder.async {
                     if let png = capture.rep.representation(using: .png, properties: [:]) {
-                        try? png.write(to: output.appendingPathComponent(
-                            String(format: "%04d.png", capture.index)))
+                        try? png.write(to: destination)
                     }
                     DispatchQueue.main.async { MainActor.assumeIsolated { inFlight -= 1 } }
                 }

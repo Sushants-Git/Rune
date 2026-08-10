@@ -40,8 +40,13 @@ enum CLI {
         var size = UInt32(PATH_MAX)
         var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
         guard _NSGetExecutablePath(&buffer, &size) == 0 else { return .main }
+        // `size` is only written on failure, so find the end of the path
+        // ourselves: the buffer is PATH_MAX of NUL with the path laid at the
+        // front, and decoding all of it would carry the padding into the URL.
+        let path = String(
+            decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         // …/Rune.app/Contents/MacOS/Rune → …/Rune.app
-        let app = URL(fileURLWithPath: String(cString: buffer))
+        let app = URL(fileURLWithPath: path)
             .resolvingSymlinksInPath()
             .deletingLastPathComponent()   // MacOS
             .deletingLastPathComponent()   // Contents
@@ -133,7 +138,10 @@ enum CLI {
         configuration.activates = true
 
         let done = DispatchSemaphore(value: 0)
-        var failure: Error?
+        // The semaphore is the synchronisation the compiler can't see: nothing
+        // reads `failure` until `done.wait()` returns, and only the completion
+        // handler writes it, once.
+        nonisolated(unsafe) var failure: Error?
         NSWorkspace.shared.openApplication(
             at: bundle.bundleURL, configuration: configuration
         ) { _, error in

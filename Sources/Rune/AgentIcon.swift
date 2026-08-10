@@ -135,12 +135,18 @@ enum ProcessArguments {
         while index < size, buffer[index] != 0 { index += 1 }
         while index < size, buffer[index] == 0 { index += 1 }
 
+        // No terminator to append or trim: the loop below only ever collects
+        // non-NUL bytes, so what it hands over is already just the argument.
+        func string(_ bytes: [CChar]) -> String {
+            String(decoding: bytes.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }
+
         var arguments: [String] = []
         var current: [CChar] = []
         while index < size, arguments.count < Int(argc) {
             if buffer[index] == 0 {
                 if !current.isEmpty {
-                    arguments.append(String(cString: current + [0]))
+                    arguments.append(string(current))
                     current = []
                 }
             } else {
@@ -149,7 +155,7 @@ enum ProcessArguments {
             index += 1
         }
         if !current.isEmpty, arguments.count < Int(argc) {
-            arguments.append(String(cString: current + [0]))
+            arguments.append(string(current))
         }
         return arguments
     }

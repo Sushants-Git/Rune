@@ -432,17 +432,26 @@ private func runeReadClipboard(
 ) -> Bool {
     guard let userdata else { return false }
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-    guard let surface = view.surface else { return false }
+    // libghostty's request token: opaque to us, never read or written through
+    // here, and handed straight back to the call that completes the request.
+    // Carrying it onto the main actor is safe in a way the compiler can't see.
+    nonisolated(unsafe) let state = state
+    // Answered inline rather than dispatched: libghostty wants the clipboard
+    // handed back before this returns, and it asks on the thread driving the
+    // surface — the main one. Same bargain as runeAction below.
+    return MainActor.assumeIsolated {
+        guard let surface = view.surface else { return false }
 
-    let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_STANDARD
-        ? .general
-        : .init(name: .find)
-    let str = pasteboard.string(forType: .string) ?? ""
+        let pasteboard: NSPasteboard = location == GHOSTTY_CLIPBOARD_STANDARD
+            ? .general
+            : .init(name: .find)
+        let str = pasteboard.string(forType: .string) ?? ""
 
-    str.withCString { ptr in
-        ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+        str.withCString { ptr in
+            ghostty_surface_complete_clipboard_request(surface, ptr, state, false)
+        }
+        return true
     }
-    return true
 }
 
 private func runeConfirmReadClipboard(
@@ -454,8 +463,13 @@ private func runeConfirmReadClipboard(
     // Rune trusts the clipboard; a confirmation UI can come later.
     guard let userdata, let string else { return }
     let view = Unmanaged<GhosttySurfaceView>.fromOpaque(userdata).takeUnretainedValue()
-    guard let surface = view.surface else { return }
-    ghostty_surface_complete_clipboard_request(surface, string, state, true)
+    // Both belong to libghostty and outlive this call; see runeReadClipboard.
+    nonisolated(unsafe) let token = state
+    nonisolated(unsafe) let text = string
+    MainActor.assumeIsolated {
+        guard let surface = view.surface else { return }
+        ghostty_surface_complete_clipboard_request(surface, text, token, true)
+    }
 }
 
 private func runeWriteClipboard(
