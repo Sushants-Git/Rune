@@ -1,22 +1,25 @@
 import Cocoa
 
-/// One line of the Ghostty pane: a label, a control, and a way back to the
-/// default.
+/// The controls for one Ghostty setting: a label, something to change it with,
+/// and a way back to the default.
 ///
-/// The control shows what the config file says. When the file says nothing it
-/// shows Ghostty's default, but *as a default* — greyed placeholder text, an
-/// unlit revert button — because a settings window that renders "unset" and
-/// "set to the same value" identically is a settings window that cannot tell
-/// you what your config actually contains.
+/// Not a view. The three pieces are handed to an `NSGridView` separately so
+/// that every label lines up in one column and every control in the next —
+/// which is the whole difference between a settings pane and a pile of widgets.
+///
+/// A control shows what the config *file* says. When the file says nothing it
+/// shows Ghostty's default as placeholder text with an unlit revert button,
+/// because a pane that renders "unset" and "set to the same value" identically
+/// cannot tell you what your config contains.
 @MainActor
-final class GhosttyOptionRow: NSStackView {
+final class GhosttyOptionControl: NSObject {
     let option: GhosttyOption
     /// nil means "take this key out of the file".
     var onChange: ((String?) -> Void)?
 
-    private var control: NSView!
-    private let revert = NSButton()
-    private let valueLabel = NSTextField(labelWithString: "")
+    let label = NSTextField(labelWithString: "")
+    private(set) var control: NSView!
+    let revert = NSButton()
 
     /// Set while `show` is writing into the controls, so the actions they fire
     /// in response are not mistaken for the user having typed something.
@@ -24,40 +27,25 @@ final class GhosttyOptionRow: NSStackView {
 
     init(option: GhosttyOption) {
         self.option = option
-        super.init(frame: .zero)
+        super.init()
 
-        orientation = .horizontal
-        alignment = .centerY
-        spacing = 8
-        translatesAutoresizingMaskIntoConstraints = false
-
-        let label = NSTextField(labelWithString: option.title)
+        label.stringValue = option.title
         label.font = .systemFont(ofSize: 12)
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        addArrangedSubview(label)
+        label.textColor = .labelColor
 
         control = makeControl()
-        addArrangedSubview(control)
 
         // A glyph rather than a word: it repeats down the whole pane, and
-        // twenty buttons saying "Default" would read as the loudest thing on
-        // screen instead of the quietest.
+        // twenty buttons saying "Default" would be the loudest thing on screen
+        // instead of the quietest.
         revert.title = "\u{21BA}"
-        revert.bezelStyle = .rounded
-        revert.font = .systemFont(ofSize: 11)
+        revert.bezelStyle = .accessoryBarAction
+        revert.controlSize = .small
+        revert.font = .systemFont(ofSize: 10)
         revert.target = self
         revert.action = #selector(revertToDefault)
         revert.toolTip = "Remove this from the config file and use Ghostty's default"
-        revert.translatesAutoresizingMaskIntoConstraints = false
-        revert.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        addArrangedSubview(revert)
-
-        return
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) is not supported")
+        revert.setContentHuggingPriority(.required, for: .horizontal)
     }
 
     // MARK: - Controls
@@ -67,20 +55,22 @@ final class GhosttyOptionRow: NSStackView {
     private let popUp = NSPopUpButton()
     private let well = NSColorWell()
     private let slider = NSSlider()
+    private let sliderValue = NSTextField(labelWithString: "")
 
     private func makeControl() -> NSView {
         switch option.kind {
         case .text(let placeholder):
             text.placeholderString = placeholder
-            return configuredText(width: 190)
+            return configuredText(width: 200)
 
         case .number:
             text.placeholderString = option.default
-            return configuredText(width: 90)
+            return configuredText(width: 84)
 
         case .toggle:
             toggle.target = self
             toggle.action = #selector(changed)
+            toggle.setContentHuggingPriority(.required, for: .horizontal)
             return toggle
 
         case .choice(let values):
@@ -90,35 +80,46 @@ final class GhosttyOptionRow: NSStackView {
             popUp.addItems(withTitles: values.map { $0.isEmpty ? "Default" : $0 })
             popUp.target = self
             popUp.action = #selector(changed)
+            popUp.controlSize = .small
+            popUp.font = .systemFont(ofSize: 12)
             popUp.translatesAutoresizingMaskIntoConstraints = false
-            popUp.widthAnchor.constraint(equalToConstant: 130).isActive = true
+            popUp.widthAnchor.constraint(equalToConstant: 140).isActive = true
             return popUp
 
         case .color:
             well.target = self
             well.action = #selector(changed)
             well.translatesAutoresizingMaskIntoConstraints = false
-            well.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            well.heightAnchor.constraint(equalToConstant: 24).isActive = true
+            well.widthAnchor.constraint(equalToConstant: 48).isActive = true
+            well.heightAnchor.constraint(equalToConstant: 22).isActive = true
             return well
 
         case .slider(let min, let max):
             slider.minValue = min
             slider.maxValue = max
+            slider.controlSize = .small
             slider.target = self
             slider.action = #selector(changed)
             slider.translatesAutoresizingMaskIntoConstraints = false
-            slider.widthAnchor.constraint(equalToConstant: 120).isActive = true
-            valueLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-            valueLabel.textColor = .secondaryLabelColor
-            let stack = NSStackView(views: [slider, valueLabel])
-            stack.spacing = 6
+            slider.widthAnchor.constraint(equalToConstant: 140).isActive = true
+
+            sliderValue.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+            sliderValue.textColor = .secondaryLabelColor
+            sliderValue.alignment = .right
+            sliderValue.translatesAutoresizingMaskIntoConstraints = false
+            // Fixed, so the row does not twitch as the number changes width.
+            sliderValue.widthAnchor.constraint(equalToConstant: 34).isActive = true
+
+            let stack = NSStackView(views: [slider, sliderValue])
+            stack.spacing = 8
+            stack.alignment = .centerY
             return stack
         }
     }
 
     private func configuredText(width: CGFloat) -> NSView {
         text.font = .systemFont(ofSize: 12)
+        text.controlSize = .small
         text.target = self
         text.action = #selector(changed)
         // Commit when focus leaves as well as on Return — nobody presses Return
@@ -137,39 +138,40 @@ final class GhosttyOptionRow: NSStackView {
         loading = true
         defer { loading = false }
 
-        revert.isEnabled = value != nil
-        revert.alphaValue = value != nil ? 1 : 0.25
+        let isSet = value != nil
+        revert.isEnabled = isSet
+        revert.alphaValue = isSet ? 1 : 0.2
+        // A key the file sets is the interesting one on the page; the rest are
+        // Ghostty's defaults sitting quietly.
+        label.textColor = isSet ? .labelColor : .secondaryLabelColor
 
         let effective = value ?? option.default
         switch option.kind {
         case .text, .number:
             text.stringValue = value ?? ""
-            text.placeholderString = option.default.isEmpty
-                ? Self.placeholder(for: option) : option.default
+            if option.default.isEmpty {
+                if case .text(let placeholder) = option.kind { text.placeholderString = placeholder }
+            } else {
+                text.placeholderString = option.default
+            }
 
         case .toggle:
             toggle.state = Self.isTrue(effective) ? .on : .off
 
         case .choice(let values):
-            let index = values.firstIndex(of: effective) ?? 0
-            popUp.selectItem(at: index)
+            popUp.selectItem(at: values.firstIndex(of: effective) ?? 0)
 
         case .color:
             well.color = Self.color(from: effective) ?? .black
             // An unset colour has no colour to show; dimming the well says so
             // without inventing one.
-            well.alphaValue = value == nil ? 0.45 : 1
+            well.alphaValue = isSet ? 1 : 0.4
 
         case .slider:
             let number = Double(effective) ?? slider.minValue
             slider.doubleValue = number
-            valueLabel.stringValue = String(format: "%.2f", number)
+            sliderValue.stringValue = String(format: "%.2f", number)
         }
-    }
-
-    private static func placeholder(for option: GhosttyOption) -> String {
-        if case .text(let placeholder) = option.kind { return placeholder }
-        return ""
     }
 
     // MARK: - Editing
@@ -196,7 +198,7 @@ final class GhosttyOptionRow: NSStackView {
             onChange?(Self.hex(well.color))
 
         case .slider:
-            valueLabel.stringValue = String(format: "%.2f", slider.doubleValue)
+            sliderValue.stringValue = String(format: "%.2f", slider.doubleValue)
             onChange?(String(format: "%.2f", slider.doubleValue))
         }
     }
@@ -234,7 +236,7 @@ final class GhosttyOptionRow: NSStackView {
     }
 }
 
-extension GhosttyOptionRow: NSTextFieldDelegate {
+extension GhosttyOptionControl: NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         changed()
     }

@@ -3,27 +3,60 @@ import Cocoa
 /// The settings window: Rune's colours, Rune's key bindings, and Ghostty's
 /// config file.
 ///
-/// One window, kept alive for the life of the app. Reopening it should land you
-/// where you left off rather than resetting to the first pane, and the controls
-/// bind straight to `Settings` — there is no apply button and nothing to
-/// discard, so every change is visible in the terminal behind it immediately.
+/// Every pane is an `NSGridView`, and that is most of why it reads as a
+/// settings window rather than a pile of controls. Built as rows of stack
+/// views, each row packs its control immediately after its own label, so the
+/// controls land wherever the label happens to end — down the Ghostty pane the
+/// revert buttons sat at x = 266, 154, 98, 269. A grid gives every label one
+/// right-aligned column and every control the next, and the alignment falls out
+/// of the geometry instead of out of guessed constants.
+///
+/// One window, kept alive for the life of the app, and the controls bind
+/// straight to their stores — no apply button and nothing to discard.
 @MainActor
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
+    private enum Pane: Int, CaseIterable {
+        case appearance, shortcuts, ghostty
+
+        var title: String {
+            switch self {
+            case .appearance: "Appearance"
+            case .shortcuts: "Shortcuts"
+            case .ghostty: "Ghostty"
+            }
+        }
+
+        var reset: String {
+            switch self {
+            case .appearance: "Reset Appearance"
+            case .shortcuts: "Reset Shortcuts"
+            case .ghostty: "Reset Ghostty Settings"
+            }
+        }
+    }
+
     private let tabs = NSSegmentedControl(
-        labels: ["Appearance", "Shortcuts", "Ghostty"], trackingMode: .selectOne,
-        target: nil, action: nil)
+        labels: Pane.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     private let panes = NSView()
     private let resetButton = NSButton()
+    private var views: [Pane: NSView] = [:]
 
-    private var appearance: NSView!
-    private var shortcuts: NSView!
-    private var ghostty: NSView!
+    /// Metrics shared by all three panes, so nothing drifts.
+    private enum Metric {
+        static let width: CGFloat = 560
+        static let margin: CGFloat = 24
+        static let rowSpacing: CGFloat = 10
+        static let columnSpacing: CGFloat = 12
+        /// Gap above a section heading — enough to group what follows it.
+        static let sectionGap: CGFloat = 18
+        static let captionWidth: CGFloat = 320
+    }
 
     private init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
+            contentRect: NSRect(x: 0, y: 0, width: Metric.width, height: 640),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered, defer: false)
         window.title = "Rune Settings"
@@ -31,7 +64,7 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
 
         build()
-        select(0)
+        select(.appearance)
     }
 
     required init?(coder: NSCoder) {
@@ -40,7 +73,7 @@ final class SettingsWindowController: NSWindowController {
 
     func show() {
         NSApp.activate(ignoringOtherApps: true)
-        window?.center()
+        if window?.isVisible != true { window?.center() }
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
@@ -56,6 +89,14 @@ final class SettingsWindowController: NSWindowController {
         tabs.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(tabs)
 
+        // Hairlines above and below the content. They do the work a settings
+        // window's structure otherwise leaves to guesswork: the tabs belong to
+        // the window, the footer belongs to the window, the middle is the pane.
+        let topRule = rule()
+        let bottomRule = rule()
+        content.addSubview(topRule)
+        content.addSubview(bottomRule)
+
         panes.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(panes)
 
@@ -65,70 +106,85 @@ final class SettingsWindowController: NSWindowController {
         resetButton.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(resetButton)
 
-        appearance = makeAppearancePane()
-        shortcuts = makeShortcutsPane()
-        ghostty = makeGhosttyPane()
-        for pane in [appearance!, shortcuts!, ghostty!] {
-            pane.translatesAutoresizingMaskIntoConstraints = false
-            panes.addSubview(pane)
+        views[.appearance] = makeAppearancePane()
+        views[.shortcuts] = makeShortcutsPane()
+        views[.ghostty] = makeGhosttyPane()
+        for pane in Pane.allCases {
+            guard let view = views[pane] else { continue }
+            view.translatesAutoresizingMaskIntoConstraints = false
+            panes.addSubview(view)
             NSLayoutConstraint.activate([
-                pane.topAnchor.constraint(equalTo: panes.topAnchor),
-                pane.leadingAnchor.constraint(equalTo: panes.leadingAnchor),
-                pane.trailingAnchor.constraint(equalTo: panes.trailingAnchor),
+                view.topAnchor.constraint(equalTo: panes.topAnchor),
+                view.leadingAnchor.constraint(equalTo: panes.leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: panes.trailingAnchor),
+                // Appearance is short and stops where it stops; the other two
+                // own scroll views and want every pixel.
+                pane == .appearance
+                    ? view.bottomAnchor.constraint(lessThanOrEqualTo: panes.bottomAnchor)
+                    : view.bottomAnchor.constraint(equalTo: panes.bottomAnchor),
             ])
         }
-        // Appearance is a short list and stops where it stops; pinning its
-        // bottom too made the stack fill the window and space its rows out
-        // across half a screen of nothing. Shortcuts owns a scroll view, which
-        // does want every pixel it can get.
-        appearance.bottomAnchor.constraint(lessThanOrEqualTo: panes.bottomAnchor).isActive = true
-        shortcuts.bottomAnchor.constraint(equalTo: panes.bottomAnchor).isActive = true
-        ghostty.bottomAnchor.constraint(equalTo: panes.bottomAnchor).isActive = true
 
         NSLayoutConstraint.activate([
-            tabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
+            tabs.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             tabs.centerXAnchor.constraint(equalTo: content.centerXAnchor),
 
-            panes.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 16),
+            topRule.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: 18),
+            topRule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            topRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+
+            panes.topAnchor.constraint(equalTo: topRule.bottomAnchor, constant: 20),
             panes.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             panes.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            panes.bottomAnchor.constraint(equalTo: resetButton.topAnchor, constant: -12),
+            panes.bottomAnchor.constraint(equalTo: bottomRule.topAnchor, constant: -16),
 
-            resetButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
-            resetButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16),
+            bottomRule.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            bottomRule.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            bottomRule.bottomAnchor.constraint(equalTo: resetButton.topAnchor, constant: -14),
+
+            resetButton.leadingAnchor.constraint(
+                equalTo: content.leadingAnchor, constant: Metric.margin),
+            resetButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
         ])
     }
 
-    @objc private func tabChanged() {
-        select(tabs.selectedSegment)
+    private func rule() -> NSView {
+        let line = NSBox()
+        line.boxType = .separator
+        line.translatesAutoresizingMaskIntoConstraints = false
+        return line
     }
 
-    private func select(_ index: Int) {
-        appearance.isHidden = index != 0
-        shortcuts.isHidden = index != 1
-        ghostty.isHidden = index != 2
+    @objc private func tabChanged() {
+        guard let pane = Pane(rawValue: tabs.selectedSegment) else { return }
+        select(pane)
+    }
+
+    private func select(_ pane: Pane) {
+        for candidate in Pane.allCases { views[candidate]?.isHidden = candidate != pane }
+        tabs.selectedSegment = pane.rawValue
         // Named for what it will do, so it cannot be mistaken for a button that
         // throws away every pane at once.
-        resetButton.title = ["Reset Appearance", "Reset Shortcuts", "Reset Ghostty Settings"][index]
-        if index == 2 { reloadGhosttyRows() }
-        resize(to: index)
+        resetButton.title = pane.reset
+        // The file is a file; someone may have edited it since this was last on
+        // screen.
+        if pane == .ghostty { reloadGhosttyRows() }
+        resize(to: pane)
     }
 
-    /// Appearance is a short pane and shortcuts is a long one; a window sized
-    /// for the longer leaves the shorter sitting in a field of nothing. Settings
-    /// windows on macOS resize between tabs, so this one does too.
-    private func resize(to index: Int) {
-        guard let window else { return }
-        let pane = [appearance!, shortcuts!, ghostty!][index]
-        pane.layoutSubtreeIfNeeded()
-        // 16 above the tabs, the tabs, 16 below, the pane, 12, the button, 16.
-        let height = index == 0
-            ? 16 + tabs.fittingSize.height + 16 + pane.fittingSize.height
-                + 12 + resetButton.fittingSize.height + 16
-            : 640
+    /// Appearance is a short pane and the others are long; a window sized for
+    /// the longest leaves the shortest in a field of nothing. Settings windows
+    /// on macOS resize between tabs, so this one does too.
+    private func resize(to pane: Pane) {
+        guard let window, let view = views[pane] else { return }
+        view.layoutSubtreeIfNeeded()
+        let chrome = 18 + tabs.fittingSize.height + 18 + 1 + 20
+            + 16 + 1 + 14 + resetButton.fittingSize.height + 18
+        let height: CGFloat = pane == .appearance ? chrome + view.fittingSize.height : 640
+
         var frame = window.frame
         let size = window.frameRect(forContentRect: NSRect(
-            x: 0, y: 0, width: 520, height: height)).size
+            x: 0, y: 0, width: Metric.width, height: height)).size
         // Grow downward from the title bar rather than from the bottom edge, so
         // the window does not appear to jump when the pane changes.
         frame.origin.y += frame.height - size.height
@@ -137,16 +193,110 @@ final class SettingsWindowController: NSWindowController {
     }
 
     @objc private func resetPane() {
-        switch tabs.selectedSegment {
-        case 0:
+        switch Pane(rawValue: tabs.selectedSegment) ?? .appearance {
+        case .appearance:
             Settings.shared.resetAppearance()
             syncAppearance()
-        case 1:
+        case .shortcuts:
             Settings.shared.resetShortcuts()
             recorders.forEach { $0.refresh() }
-        default:
+        case .ghostty:
             resetGhostty()
         }
+    }
+
+    // MARK: - Grid building
+
+    /// A grid with a right-aligned label column, so every control in a pane
+    /// starts at the same x no matter how long its label is.
+    private func makeGrid(columns: Int) -> NSGridView {
+        let grid = NSGridView(numberOfColumns: columns, rows: 0)
+        grid.rowSpacing = Metric.rowSpacing
+        grid.columnSpacing = Metric.columnSpacing
+        grid.column(at: 0).xPlacement = .trailing
+        for index in 1..<columns { grid.column(at: index).xPlacement = .leading }
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        return grid
+    }
+
+    /// A section heading, spanning the whole grid with air above it.
+    private func addSection(_ title: String, to grid: NSGridView, first: Bool = false) {
+        let heading = NSTextField(labelWithString: title.uppercased())
+        heading.font = .systemFont(ofSize: 10, weight: .semibold)
+        heading.textColor = .tertiaryLabelColor
+        let row = grid.addRow(with: [heading])
+        row.mergeCells(in: NSRange(location: 0, length: grid.numberOfColumns))
+        // Space above the heading rather than below it, so a heading sits with
+        // the rows it introduces instead of floating between groups.
+        if !first { row.topPadding = Metric.sectionGap }
+    }
+
+    /// Explanatory text under a control, in the control's column so it lines up
+    /// with what it is explaining.
+    private func addCaption(_ text: String, to grid: NSGridView) {
+        let caption = NSTextField(wrappingLabelWithString: text)
+        caption.font = .systemFont(ofSize: 11)
+        caption.textColor = .secondaryLabelColor
+        caption.preferredMaxLayoutWidth = Metric.captionWidth
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        caption.widthAnchor.constraint(
+            lessThanOrEqualToConstant: Metric.captionWidth).isActive = true
+
+        let row = grid.addRow(with: [NSGridCell.emptyContentView, caption])
+        if grid.numberOfColumns > 2 {
+            row.mergeCells(in: NSRange(location: 1, length: grid.numberOfColumns - 1))
+        }
+        row.topPadding = -4
+    }
+
+    private func scrolling(_ grid: NSGridView) -> NSScrollView {
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: document.topAnchor),
+            grid.leadingAnchor.constraint(
+                equalTo: document.leadingAnchor, constant: Metric.margin),
+            grid.trailingAnchor.constraint(
+                lessThanOrEqualTo: document.trailingAnchor, constant: -Metric.margin),
+            grid.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -16),
+        ])
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.documentView = document
+        NSLayoutConstraint.activate([
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+        // The scroll view is the one thing that should give up height — it has
+        // a scroller for exactly that. At default priorities it claims its whole
+        // content, runs off the bottom of the window, and draws the tail of the
+        // list over whatever is beneath it.
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        return scroll
+    }
+
+    /// A scrolling pane with something fixed beneath it.
+    private func pane(_ scroll: NSScrollView, footer: NSView) -> NSView {
+        let stack = NSStackView(views: [scroll, footer])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        footer.setContentHuggingPriority(.required, for: .vertical)
+        footer.setContentCompressionResistancePriority(.required, for: .vertical)
+        return stack
+    }
+
+    private func label(_ text: String) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: 12)
+        return field
     }
 
     // MARK: - Appearance
@@ -155,101 +305,91 @@ final class SettingsWindowController: NSWindowController {
     private let panelWell = NSColorWell()
     private let dimSlider = NSSlider()
     private let dimLabel = NSTextField(labelWithString: "")
-    private let systemAccent = NSButton(checkboxWithTitle: "Use the system accent colour", target: nil, action: nil)
+    private let systemAccent = NSButton(
+        checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 18
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 20, bottom: 4, right: 20)
+        let grid = makeGrid(columns: 2)
 
-        accentWell.target = self
-        accentWell.action = #selector(accentChanged)
+        addSection("Rune", to: grid, first: true)
+
+        configure(accentWell, action: #selector(accentChanged))
+        grid.addRow(with: [label("Accent"), accentWell])
+        addCaption("Marks the active tab, the update pill and the switcher's focus ring.",
+                   to: grid)
+
         systemAccent.target = self
         systemAccent.action = #selector(systemAccentToggled)
-        stack.addArrangedSubview(
-            row("Accent", accentWell,
-                note: "Marks the active tab, the update pill and the switcher's focus ring."))
-        stack.addArrangedSubview(indented(systemAccent))
+        systemAccent.font = .systemFont(ofSize: 12)
+        grid.addRow(with: [NSGridCell.emptyContentView, systemAccent])
 
-        panelWell.target = self
-        panelWell.action = #selector(panelChanged)
-        stack.addArrangedSubview(
-            row("Switcher panel", panelWell,
-                note: "The ⌘K panel's background. It stays dark on purpose — the window's "
-                    + "appearance follows your terminal theme, and a light one would take "
-                    + "the panel's text with it."))
+        configure(panelWell, action: #selector(panelChanged))
+        grid.addRow(with: [label("Switcher panel"), panelWell])
+        addCaption("The ⌘K panel's background. It stays dark on purpose — the window's "
+                   + "appearance follows your terminal theme, and a light one would take the "
+                   + "panel's text with it.", to: grid)
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
+        dimSlider.controlSize = .small
         dimSlider.target = self
         dimSlider.action = #selector(dimChanged)
         dimSlider.translatesAutoresizingMaskIntoConstraints = false
-        dimSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        dimSlider.widthAnchor.constraint(equalToConstant: 140).isActive = true
         dimLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         dimLabel.textColor = .secondaryLabelColor
+        dimLabel.translatesAutoresizingMaskIntoConstraints = false
+        dimLabel.widthAnchor.constraint(equalToConstant: 38).isActive = true
         let dim = NSStackView(views: [dimSlider, dimLabel])
         dim.spacing = 8
-        stack.addArrangedSubview(
-            row("Backdrop dim", dim,
-                note: "How much of the terminal the switcher's backdrop carries away."))
+        grid.addRow(with: [label("Backdrop dim"), dim])
+        addCaption("How much of the terminal the switcher's backdrop carries away.", to: grid)
 
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(separator)
-        separator.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-
-        let terminalNote = NSTextField(wrappingLabelWithString:
-            "Terminal colours — the palette, the background, the font — come from your "
-            + "Ghostty config, which Rune reads on launch. Rune does not keep a second copy "
-            + "of them, so there is only ever one file to edit. The Ghostty tab edits it "
-            + "for you.")
-        terminalNote.font = .systemFont(ofSize: 11)
-        terminalNote.textColor = .secondaryLabelColor
-        terminalNote.preferredMaxLayoutWidth = 460
-        stack.addArrangedSubview(terminalNote)
+        addSection("Terminal", to: grid)
+        let note = NSTextField(wrappingLabelWithString:
+            "Colours, font and everything else about the terminal itself come from your "
+            + "Ghostty config. Rune keeps no second copy, so there is only ever one file to "
+            + "edit — and the Ghostty tab edits it for you.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.preferredMaxLayoutWidth = Metric.captionWidth
+        note.translatesAutoresizingMaskIntoConstraints = false
+        note.widthAnchor.constraint(lessThanOrEqualToConstant: Metric.captionWidth).isActive = true
+        grid.addRow(with: [NSGridCell.emptyContentView, note])
 
         let openConfig = NSButton(
-            title: "Open Ghostty Config", target: self, action: #selector(openGhosttyConfig))
+            title: "Open Config File", target: self, action: #selector(openGhosttyConfig))
         openConfig.bezelStyle = .rounded
-        stack.addArrangedSubview(openConfig)
+        openConfig.controlSize = .small
+        grid.addRow(with: [NSGridCell.emptyContentView, openConfig])
 
         syncAppearance()
-        return stack
+
+        let holder = NSView()
+        holder.addSubview(grid)
+        NSLayoutConstraint.activate([
+            grid.topAnchor.constraint(equalTo: holder.topAnchor),
+            grid.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: Metric.margin),
+            grid.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+            grid.trailingAnchor.constraint(
+                lessThanOrEqualTo: holder.trailingAnchor, constant: -Metric.margin),
+        ])
+        return holder
     }
 
-    private func row(_ title: String, _ control: NSView, note: String) -> NSView {
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 13, weight: .medium)
-
-        let caption = NSTextField(wrappingLabelWithString: note)
-        caption.font = .systemFont(ofSize: 11)
-        caption.textColor = .secondaryLabelColor
-        caption.preferredMaxLayoutWidth = 460
-
-        let head = NSStackView(views: [label, control])
-        head.spacing = 12
-        head.alignment = .centerY
-
-        let stack = NSStackView(views: [head, caption])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 4
-        return stack
-    }
-
-    private func indented(_ view: NSView) -> NSView {
-        let stack = NSStackView(views: [view])
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 2, bottom: 0, right: 0)
-        return stack
+    private func configure(_ well: NSColorWell, action: Selector) {
+        well.target = self
+        well.action = action
+        well.translatesAutoresizingMaskIntoConstraints = false
+        well.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        well.heightAnchor.constraint(equalToConstant: 22).isActive = true
     }
 
     private func syncAppearance() {
         let settings = Settings.shared
         accentWell.color = settings.effectiveAccent
         accentWell.isEnabled = settings.accent != nil
+        accentWell.alphaValue = settings.accent != nil ? 1 : 0.4
         systemAccent.state = settings.accent == nil ? .on : .off
         panelWell.color = settings.panelBackground
         dimSlider.doubleValue = Double(settings.backdropDim)
@@ -282,20 +422,85 @@ final class SettingsWindowController: NSWindowController {
     /// all, which reads as a broken button.
     @objc private func openGhosttyConfig() {
         let url = GhosttyConfigFile.location
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? Data().write(to: url)
-        }
+        ensureExists(url)
         NSWorkspace.shared.open(url)
     }
 
+    @objc private func revealGhosttyConfig() {
+        let url = GhosttyConfigFile.location
+        ensureExists(url)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    private func ensureExists(_ url: URL) {
+        guard !FileManager.default.fileExists(atPath: url.path) else { return }
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data().write(to: url)
+    }
+
+    // MARK: - Shortcuts
+
+    private var recorders: [ShortcutRecorder] = []
+    private let conflictLabel = NSTextField(labelWithString: "")
+
+    private func makeShortcutsPane() -> NSView {
+        let grid = makeGrid(columns: 2)
+        var first = true
+        for group in ShortcutAction.grouped {
+            addSection(group.name, to: grid, first: first)
+            first = false
+            for action in group.actions {
+                let recorder = ShortcutRecorder(action: action)
+                recorder.onRecorded = { [weak self] chord in self?.bind(chord, to: action) }
+                recorders.append(recorder)
+                grid.addRow(with: [label(action.title), recorder])
+            }
+        }
+
+        conflictLabel.font = .systemFont(ofSize: 11)
+        conflictLabel.textColor = .systemRed
+
+        let hint = NSTextField(labelWithString:
+            "Click a shortcut and press the new keys. Escape cancels, Delete restores the default.")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+
+        let footer = NSStackView(views: [hint, conflictLabel])
+        footer.orientation = .vertical
+        footer.alignment = .leading
+        footer.spacing = 4
+        footer.edgeInsets = NSEdgeInsets(
+            top: 0, left: Metric.margin, bottom: 0, right: Metric.margin)
+        return pane(scrolling(grid), footer: footer)
+    }
+
+    /// Refuse rather than steal. Two items sharing a key equivalent is not an
+    /// error AppKit reports — it picks one and the other quietly stops working,
+    /// which is a far worse thing to discover later.
+    private func bind(_ chord: KeyChord?, to action: ShortcutAction) {
+        defer { recorders.forEach { $0.refresh() } }
+
+        guard let chord else {
+            Settings.shared.setChord(nil, for: action)
+            conflictLabel.stringValue = ""
+            return
+        }
+        if let other = Settings.shared.conflict(with: chord, ignoring: action) {
+            conflictLabel.stringValue = "\(chord.display) is already \(other.title)."
+            NSSound.beep()
+            return
+        }
+        conflictLabel.stringValue = ""
+        Settings.shared.setChord(chord, for: action)
+    }
 
     // MARK: - Ghostty
 
-    private var ghosttyRows: [GhosttyOptionRow] = []
+    private var ghosttyControls: [GhosttyOptionControl] = []
     private let configPathLabel = NSTextField(labelWithString: "")
-    private let configWarning = NSTextField(labelWithString: "")
+    private let configWarning = NSTextField(wrappingLabelWithString: "")
+    private let configSummary = NSTextField(labelWithString: "")
 
     /// Edits waiting to be written, keyed by config key. A `nil` value means
     /// "take the key out".
@@ -307,104 +512,93 @@ final class SettingsWindowController: NSWindowController {
     private var flushWork: DispatchWorkItem?
 
     private func makeGhosttyPane() -> NSView {
-        let list = NSStackView()
-        list.orientation = .vertical
-        list.alignment = .leading
-        list.spacing = 6
-        list.edgeInsets = NSEdgeInsets(top: 4, left: 20, bottom: 12, right: 20)
-
+        // Three columns: label, control, revert.
+        let grid = makeGrid(columns: 3)
+        var first = true
         for group in GhosttyOptions.groups {
-            let heading = NSTextField(labelWithString: group.name.uppercased())
-            heading.font = .systemFont(ofSize: 10, weight: .semibold)
-            heading.textColor = .tertiaryLabelColor
-            let spacer = NSView()
-            spacer.translatesAutoresizingMaskIntoConstraints = false
-            spacer.heightAnchor.constraint(equalToConstant: 8).isActive = true
-            list.addArrangedSubview(spacer)
-            list.addArrangedSubview(heading)
-
+            addSection(group.name, to: grid, first: first)
+            first = false
             for option in group.options {
-                let row = GhosttyOptionRow(option: option)
+                let row = GhosttyOptionControl(option: option)
                 row.onChange = { [weak self] value in self?.edit(option.key, to: value) }
-                ghosttyRows.append(row)
-                list.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -40).isActive = true
-
-                if let note = option.note {
-                    let caption = NSTextField(wrappingLabelWithString: note)
-                    caption.font = .systemFont(ofSize: 10)
-                    caption.textColor = .secondaryLabelColor
-                    caption.preferredMaxLayoutWidth = 440
-                    list.addArrangedSubview(caption)
-                }
+                ghosttyControls.append(row)
+                grid.addRow(with: [row.label, row.control, row.revert])
+                if let note = option.note { addCaption(note, to: grid) }
             }
         }
 
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.documentView = list
-        list.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            list.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            list.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-
-        configPathLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        // The file goes at the top, not in a footer. This pane is a view onto
+        // one file and nothing else, and the first question anyone asks of it
+        // is "which file, and is it mine?" — burying the answer under a
+        // scrolling list is how a pane full of correct values still reads as
+        // though it has not loaded anything.
+        configPathLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         configPathLabel.textColor = .secondaryLabelColor
         configPathLabel.lineBreakMode = .byTruncatingMiddle
 
+        configSummary.font = .systemFont(ofSize: 11)
+        configSummary.textColor = .tertiaryLabelColor
+
         configWarning.font = .systemFont(ofSize: 11)
         configWarning.textColor = .systemOrange
-        configWarning.maximumNumberOfLines = 3
+        configWarning.preferredMaxLayoutWidth = Metric.width - Metric.margin * 2
 
         let open = NSButton(
             title: "Open in Editor", target: self, action: #selector(openGhosttyConfig))
-        open.bezelStyle = .rounded
         let reveal = NSButton(
             title: "Reveal in Finder", target: self, action: #selector(revealGhosttyConfig))
-        reveal.bezelStyle = .rounded
-        let buttons = NSStackView(views: [open, reveal])
-        buttons.spacing = 8
-
-        let footer = NSStackView(views: [configPathLabel, configWarning, buttons])
-        footer.orientation = .vertical
-        footer.alignment = .leading
-        footer.spacing = 6
-        for view in [configPathLabel, configWarning, footer] {
-            view.setContentHuggingPriority(.required, for: .vertical)
-            view.setContentCompressionResistancePriority(.required, for: .vertical)
+        for button in [open, reveal] {
+            button.bezelStyle = .rounded
+            button.controlSize = .small
         }
 
-        let stack = NSStackView(views: [scroll, footer])
+        let pathRow = NSStackView(views: [configPathLabel, NSView(), open, reveal])
+        pathRow.spacing = 8
+        pathRow.alignment = .centerY
+        configPathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let header = NSStackView(views: [pathRow, configSummary, configWarning])
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 4
+        header.edgeInsets = NSEdgeInsets(
+            top: 0, left: Metric.margin, bottom: 0, right: Metric.margin)
+        header.translatesAutoresizingMaskIntoConstraints = false
+        pathRow.translatesAutoresizingMaskIntoConstraints = false
+        pathRow.widthAnchor.constraint(
+            equalTo: header.widthAnchor, constant: -Metric.margin * 2).isActive = true
+
+        let scroll = scrolling(grid)
+        let stack = NSStackView(views: [header, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-        configPathLabel.translatesAutoresizingMaskIntoConstraints = false
-        configPathLabel.widthAnchor.constraint(
-            equalTo: stack.widthAnchor, constant: -40).isActive = true
+        stack.spacing = 12
+        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        header.setContentHuggingPriority(.required, for: .vertical)
+        header.setContentCompressionResistancePriority(.required, for: .vertical)
 
         reloadGhosttyRows()
         return stack
     }
 
     /// Read the file and put every row back in step with it.
-    ///
-    /// Called whenever the pane is shown, not only after an edit: the file is a
-    /// file, and someone may well have opened it in an editor since.
     private func reloadGhosttyRows() {
         let file = GhosttyConfigFile()
-        for row in ghosttyRows { row.show(file.value(for: row.option.key)) }
+        for row in ghosttyControls { row.show(file.value(for: row.option.key)) }
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        configPathLabel.stringValue = file.url.path.replacingOccurrences(
-            of: home, with: "~")
+        configPathLabel.stringValue = file.url.path.replacingOccurrences(of: home, with: "~")
+
+        // Say how many of these settings the file actually sets. Most of a
+        // fresh config is Ghostty's defaults, and a page of greyed-out rows is
+        // indistinguishable from a page that failed to load one.
+        let set = GhosttyOptions.all.filter { file.value(for: $0.key) != nil }.count
+        let exists = FileManager.default.fileExists(atPath: file.url.path)
+        configSummary.stringValue = !exists
+            ? "This file does not exist yet — changing anything here will create it."
+            : "\(set) of \(GhosttyOptions.all.count) shown below are set in this file; "
+                + "the rest are Ghostty's defaults."
 
         var warnings: [String] = []
         if GhosttyConfigFile.hasMultipleFiles {
@@ -437,7 +631,8 @@ final class SettingsWindowController: NSWindowController {
             try file.save()
         } catch {
             configWarning.isHidden = false
-            configWarning.stringValue = "Could not write \(file.url.path): \(error.localizedDescription)"
+            configWarning.stringValue =
+                "Could not write \(file.url.path): \(error.localizedDescription)"
             return
         }
         NSApp.ghosttyApp?.reloadConfig()
@@ -455,7 +650,8 @@ final class SettingsWindowController: NSWindowController {
         guard !present.isEmpty else { NSSound.beep(); return }
 
         let alert = NSAlert()
-        alert.messageText = "Remove \(present.count) setting\(present.count == 1 ? "" : "s") from your Ghostty config?"
+        alert.messageText =
+            "Remove \(present.count) setting\(present.count == 1 ? "" : "s") from your Ghostty config?"
         alert.informativeText =
             "This deletes these lines from \(configPathLabel.stringValue):\n\n"
             + present.joined(separator: ", ")
@@ -470,116 +666,6 @@ final class SettingsWindowController: NSWindowController {
         for key in present { pendingEdits[key] = String?.none }
         flushEdits()
     }
-
-    @objc private func revealGhosttyConfig() {
-        let url = GhosttyConfigFile.location
-        if !FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? Data().write(to: url)
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-
-    // MARK: - Shortcuts
-
-    private var recorders: [ShortcutRecorder] = []
-    private let conflictLabel = NSTextField(labelWithString: "")
-
-    private func makeShortcutsPane() -> NSView {
-        let list = NSStackView()
-        list.orientation = .vertical
-        list.alignment = .leading
-        list.spacing = 6
-        list.edgeInsets = NSEdgeInsets(top: 4, left: 20, bottom: 12, right: 20)
-
-        for group in ShortcutAction.grouped {
-            let heading = NSTextField(labelWithString: group.name.uppercased())
-            heading.font = .systemFont(ofSize: 10, weight: .semibold)
-            heading.textColor = .tertiaryLabelColor
-            let spacer = NSView()
-            spacer.translatesAutoresizingMaskIntoConstraints = false
-            spacer.heightAnchor.constraint(equalToConstant: 8).isActive = true
-            list.addArrangedSubview(spacer)
-            list.addArrangedSubview(heading)
-
-            for action in group.actions {
-                let recorder = ShortcutRecorder(action: action)
-                recorder.onRecorded = { [weak self] chord in self?.bind(chord, to: action) }
-                recorders.append(recorder)
-
-                let label = NSTextField(labelWithString: action.title)
-                label.font = .systemFont(ofSize: 12)
-                label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-                let row = NSStackView(views: [label, recorder])
-                row.alignment = .centerY
-                row.distribution = .fill
-                row.translatesAutoresizingMaskIntoConstraints = false
-                list.addArrangedSubview(row)
-                row.widthAnchor.constraint(equalTo: list.widthAnchor, constant: -40).isActive = true
-            }
-        }
-
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.documentView = list
-        list.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            list.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            list.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            list.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
-
-        conflictLabel.font = .systemFont(ofSize: 11)
-        conflictLabel.textColor = .systemRed
-
-        let hint = NSTextField(labelWithString:
-            "Click a shortcut and press the new keys. Escape cancels, Delete restores the default.")
-        hint.font = .systemFont(ofSize: 11)
-        hint.textColor = .secondaryLabelColor
-
-        let stack = NSStackView(views: [scroll, hint, conflictLabel])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        scroll.translatesAutoresizingMaskIntoConstraints = false
-        scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-
-        // The scroll view is the one thing here that should give up height —
-        // it has a scroller for exactly that. Left at the default priorities it
-        // claimed its whole content instead, ran off the bottom of the window,
-        // and drew the tail of the list straight over the hint text.
-        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
-        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        for label in [hint, conflictLabel] {
-            label.setContentHuggingPriority(.required, for: .vertical)
-            label.setContentCompressionResistancePriority(.required, for: .vertical)
-        }
-        return stack
-    }
-
-    /// Refuse rather than steal. Two items sharing a key equivalent is not an
-    /// error AppKit reports — it picks one and the other quietly stops working,
-    /// which is a far worse thing to discover later.
-    private func bind(_ chord: KeyChord?, to action: ShortcutAction) {
-        defer { recorders.forEach { $0.refresh() } }
-
-        guard let chord else {
-            Settings.shared.setChord(nil, for: action)
-            conflictLabel.stringValue = ""
-            return
-        }
-        if let other = Settings.shared.conflict(with: chord, ignoring: action) {
-            conflictLabel.stringValue = "\(chord.display) is already \(other.title)."
-            NSSound.beep()
-            return
-        }
-        conflictLabel.stringValue = ""
-        Settings.shared.setChord(chord, for: action)
-    }
 }
 
 /// The click-then-type control for one binding.
@@ -589,7 +675,7 @@ final class SettingsWindowController: NSWindowController {
 /// so pressing ⌘T to bind it would open a tab and the recorder would never hear
 /// the key at all.
 @MainActor
-private final class ShortcutRecorder: NSButton {
+final class ShortcutRecorder: NSButton {
     /// Not `action` — `NSButton` already has one, and shadowing it puts the
     /// selector this button fires out of reach.
     private let binding: ShortcutAction
@@ -603,12 +689,13 @@ private final class ShortcutRecorder: NSButton {
         super.init(frame: .zero)
 
         bezelStyle = .rounded
+        controlSize = .small
         target = self
         self.action = #selector(beginRecording)
         font = .systemFont(ofSize: 12)
         alignment = .center
         translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
+        widthAnchor.constraint(equalToConstant: 132).isActive = true
         setContentHuggingPriority(.required, for: .horizontal)
         refresh()
     }
@@ -619,7 +706,7 @@ private final class ShortcutRecorder: NSButton {
 
     func refresh() {
         title = recording ? "Type a shortcut…" : Settings.shared.chord(for: binding).display
-        contentTintColor = recording ? .controlAccentColor : nil
+        contentTintColor = recording ? Settings.shared.effectiveAccent : nil
     }
 
     @objc private func beginRecording() {
