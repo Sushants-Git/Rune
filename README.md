@@ -50,9 +50,16 @@ first, which is the order you reach for them in:
 - `⌘T` — **Tabs**, a strip *inside* the title bar, costing no vertical space
 - `⌘D` `⌘⇧D` — **Splits**, panes side by side in one tab
 
-**`⌘K` is the switcher**, and the reason the rest of it holds together. Arrows
-preview the workspace behind the panel, `⏎` keeps it, `⎋` puts you back. `⌘R`
-renames a row in place, `⌘P` pins it to the top, `⌘W` closes it.
+**`⌘K` is the switcher**, and the reason the rest of it holds together. Every
+row is a workspace, and everything you do to one is a chord away:
+
+- `↑` `↓` — move through the list, previewing each workspace behind the panel
+- `⏎` — keep the one you landed on
+- `⎋` — put back whatever you were looking at
+- `⌘R` — rename a row, in place
+- `⌘P` — pin it to the top, and pinned rows stay in the order you pinned them
+- `⌘W` — close it, and every tab and split in it
+- `⌘1`–`⌘9` — jump straight to a row by position, without opening `⌘K` at all
 
 **Every row says what its agent is doing.** `working` counts up while it runs,
 `your turn` means it stopped — at its prompt or on a question, which for triage
