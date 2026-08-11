@@ -80,7 +80,7 @@ final class SwitcherPalette: NSView {
     /// ⌘R: the row was renamed in place. An empty name means "go back to the
     /// automatic one".
     var onRename: ((Int, String) -> Void)?
-    /// ⌘C: close the row's workspace outright. The switcher stays open — the
+    /// ⌘W: close the row's workspace outright. The switcher stays open — the
     /// point of closing from here is clearing out several at once, and a dialog
     /// that dismissed itself after each one would make that four ⌘Ks.
     var onCloseItem: ((Int) -> Void)?
@@ -380,8 +380,8 @@ final class SwitcherPalette: NSView {
         for (keys, label) in [
             (["⌘R"], "Rename"),
             (["⌘P"], "Pin"),
-            (["⌘C"], "Close"),
-            // "Dismiss" rather than "Close", now that ⌘C closes a workspace and
+            (["⌘W"], "Close"),
+            // "Dismiss" rather than "Close", now that ⌘W closes a workspace and
             // esc closes the panel. Two rows both labelled Close would be a
             // riddle in the one place that exists to answer them.
             (["esc"], "Dismiss"),
@@ -498,19 +498,21 @@ final class SwitcherPalette: NSView {
         onCancel()
     }
 
-    /// ⌘C: close the highlighted row's workspace.
+    /// ⌘W: close the highlighted row's workspace.
     ///
-    /// Refused mid-rename, where ⌘C is the ordinary copy the field editor
-    /// expects and closing the row being edited would be a startling answer to
-    /// it. The host reloads the list, which is what moves the selection onto
-    /// whatever takes the closed row's place.
+    /// ⌘W because that is the key that closes things on a Mac — it was ⌘C,
+    /// which is Copy everywhere else and had to be learned here on its own.
+    ///
+    /// Refused mid-rename: closing the row being edited would be a startling
+    /// answer to a half-typed name. The host reloads the list, which is what
+    /// moves the selection onto whatever takes the closed row's place.
     func closeSelected() {
         guard !isRenaming, let index = selectedItemIndex else { return }
         onCloseItem?(index)
     }
 
     /// ⌘P: pin the highlighted row to the top, or unpin it. Refused mid-rename
-    /// for the same reason ⌘C is — the field editor's keystrokes are its own.
+    /// for the same reason ⌘W is — the field editor's keystrokes are its own.
     func togglePinOnSelected() {
         guard !isRenaming, let index = selectedItemIndex else { return }
         onTogglePin?(index)

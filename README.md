@@ -45,7 +45,7 @@ Updates…`.
 
 **`⌘K` is the switcher.** Arrows preview the workspace behind the panel, `⏎`
 keeps it, `⎋` puts you back. `⌘R` renames a row in place, `⌘P` pins it to the
-top, `⌘C` closes it.
+top, `⌘W` closes it.
 
 **Drag the panel anywhere it isn't covering what you're reading.** Grab it by
 the search strip along its top, the way you would a title bar. Nothing snaps —
@@ -89,7 +89,7 @@ printf '\033]9;Build finished\007'
 | `⌘⇧[` `⌘⇧]` | previous / next tab |
 | `⌘1`–`⌘9` | workspace by position |
 | `⌥1`–`⌥9` | tab by position |
-| `⌘R` `⌘P` `⌘C` | in `⌘K`: rename, pin, close |
+| `⌘R` `⌘P` `⌘W` | in `⌘K`: rename, pin, close |
 
 Scrollback, selection, mouse reporting and colours are libghostty, and it reads
 the `~/.config/ghostty/config` you already have.

@@ -99,13 +99,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     /// as ordinary input — see `DigitShortcut` for why neither the menu nor
     /// `performKeyEquivalent` can do this.
     ///
-    /// ⌘C is the Edit menu's Copy, and a menu key equivalent is matched before
-    /// the responder chain ever runs, so a handler on the window or the palette
-    /// would never see it. Intercepting here is also what keeps the override
-    /// honest: it applies only while the ⌘K switcher is up and not renaming, so
-    /// copying out of a terminal — the thing a terminal must never lose — is
-    /// untouched everywhere else. ⌘P rides along for the same reason: a
-    /// terminal may want it, and the switcher's claim on it is temporary.
+    /// ⌘W is the View menu's Close Terminal, and a menu key equivalent is
+    /// matched before the responder chain ever runs, so a handler on the window
+    /// or the palette would never see it. Intercepting here is also what keeps
+    /// the override honest: it applies only while the ⌘K switcher is up, so ⌘W
+    /// closes a terminal everywhere else exactly as it always did. ⌘P rides
+    /// along for the same reason: a terminal may want it, and the switcher's
+    /// claim on it is temporary.
     private func installTabShortcuts() {
         tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
@@ -118,16 +118,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
                 return nil
             }
 
-            // ⌘C and ⌘P only mean anything with the switcher up and no rename
-            // in progress; everywhere else they stay Copy and whatever the
-            // terminal wants them to be.
+            // ⌘W and ⌘P only mean anything with the switcher up; everywhere
+            // else they stay Close Terminal and whatever the terminal wants.
             if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-               controller.isSwitcherVisible, !controller.isRenaming {
+               controller.isSwitcherVisible {
                 switch event.charactersIgnoringModifiers?.lowercased() {
-                case "c":
-                    controller.closeSwitcherSelection()
+                case "w":
+                    // Swallowed even mid-rename, where it does nothing. Letting
+                    // it through would hand ⌘W back to the menu and close the
+                    // terminal behind the panel — which is a long way from what
+                    // anyone typing a name into a row is asking for.
+                    if !controller.isRenaming { controller.closeSwitcherSelection() }
                     return nil
                 case "p":
+                    guard !controller.isRenaming else { break }
                     controller.togglePinOnSwitcherSelection()
                     return nil
                 default:

@@ -210,7 +210,7 @@ words; hovering one spells it out.
 | `⌘K` | Switch to workspace… |
 | `⌘R` | Rename the workspace, in place in `⌘K` |
 | `⌘P` | Pin the highlighted workspace to the top of `⌘K` (see below) |
-| `⌘C` | Close the highlighted workspace, in `⌘K` (see below) |
+| `⌘W` | Close the highlighted workspace, in `⌘K` (see below) |
 | `⌘T` | New tab in this workspace |
 | `⌘N` | New workspace |
 | `⌘⇧N` | New window |
@@ -241,18 +241,31 @@ The list `⌘K` shows is also what `⌘1`–`⌘9` address, so the number you pr
 always the position you can see, pinned or not. Pins live for as long as the
 window does; they aren't written to disk.
 
-`⌘C` means copy everywhere except one place: with `⌘K` open it closes the
-highlighted workspace and every tab and split in it. The panel stays up, since
-the reason to close from a list is usually that there are several to clear, and
-a dialog that dismissed itself after each one would make that four `⌘K`s.
-Closing the last workspace closes the window, exactly as `⌘W` on the last
+`⌘W` closes the focused terminal everywhere except one place: with `⌘K` open it
+closes the highlighted workspace and every tab and split in it. The panel stays
+up, since the reason to close from a list is usually that there are several to
+clear, and a dialog that dismissed itself after each one would make that four
+`⌘K`s. Closing the last workspace closes the window, exactly as `⌘W` on the last
 terminal does.
 
-The override is scoped to the switcher being open and not mid-rename, so copying
-out of a terminal — which a terminal may never lose — is untouched. It has to be
-caught in a local event monitor rather than a menu item or `performKeyEquivalent`:
-a menu key equivalent is matched before the responder chain runs, so Copy would
-otherwise always win.
+This was `⌘C` until 0.13.7, which was a worse answer to the same question: `⌘W`
+is the key that closes things on a Mac, and a list of workspaces is not the one
+place that should ask you to learn Copy as a close key. Closing a row from a
+list you are looking at is the same gesture as closing the thing you are in.
+
+The override is scoped to the switcher being open, so `⌘W` closes a terminal
+everywhere else exactly as it always did. Mid-rename it is swallowed and does
+nothing: letting it fall through would hand it back to the menu and close the
+terminal behind the panel, which is nobody's intent while typing a name. It has
+to be caught in a local event monitor rather than a menu item or
+`performKeyEquivalent` — a menu key equivalent is matched before the responder
+chain runs, so Close Terminal would otherwise always win.
+
+Whatever you close, the highlight lands on a neighbour rather than on the top of
+the list: the row that slid up into the closed one's place, or the one above it
+when you closed the last row. `reload` anchors on the selected row's index, and
+a closed row's index no longer resolves to anything, so without the clamp it
+fell through to zero and threw you back to the first workspace every time.
 
 Everything else — scrollback, selection, mouse reporting, colors — is
 libghostty, and it reads your existing `~/.config/ghostty/config`.

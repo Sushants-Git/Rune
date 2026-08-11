@@ -864,7 +864,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         overlay?.palette.cancel()
     }
 
-    /// ⌘C in the switcher: close the highlighted workspace, stay open.
+    /// ⌘W in the switcher: close the highlighted workspace, stay open.
     func closeSwitcherSelection() {
         overlay?.palette.closeSelected()
     }
