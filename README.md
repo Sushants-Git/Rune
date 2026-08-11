@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" width="112" alt="">
+
 # Rune
 
 **The terminal for humans who run agents.**
