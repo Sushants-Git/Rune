@@ -18,7 +18,7 @@ hard part — VT parsing, pty, font shaping, Metal rendering. Rune is the shell
 around it: workspaces, tabs, splits, and a switcher that says what each terminal
 is doing.
 
-macOS 13+ · Apple Silicon and Intel · [latest release](https://github.com/Sushants-Git/Rune/releases/latest)
+macOS 13+ · Apple Silicon and Intel · [rune.sushant.tech](https://rune.sushant.tech) · [latest release](https://github.com/Sushants-Git/Rune/releases/latest)
 
 ---
 
@@ -60,9 +60,10 @@ the search strip along its top, the way you would a title bar. Nothing snaps —
 it goes exactly where you drop it, and a guide brightens when you've lined up
 with one. Where you leave it is where it opens next time.
 
-**Every row says what its agent is doing** — `working`, `your turn`, or nothing
-at all. Read from what each agent publishes about itself, never from scraping
-the screen:
+**Every row says what its agent is doing.** `working` counts up while it runs,
+`your turn` means it stopped — at its prompt or on a question, which for triage
+is the same instruction. Read from what each agent publishes about itself, never
+from scraping the screen:
 
 | | |
 | --- | --- |
@@ -70,8 +71,9 @@ the screen:
 | Codex | the progress spinner it animates in the terminal title |
 | opencode | a plugin — run `rune install-opencode-hook` |
 
-An agent Rune can't read gets its icon and no indicator. A guess shown as fact
-is worse than silence.
+Nothing at all means a plain shell, or an agent Rune can't read: it gets its
+icon and no indicator. A guess shown as fact is worse than silence, and there is
+no "a command is running" — knowing that needs shell integration, not a guess.
 
 **Rows without an agent still get a face.** vim, tmux, docker, psql, k9s and
 twenty more are recognised by their process, and anything unrecognised falls
@@ -87,17 +89,29 @@ printf '\033]9;Build finished\007'
 
 | | |
 | --- | --- |
+Ordered by how often you reach for it, not by which part of the app it belongs
+to. Only what Rune adds — copy, paste and font size behave as they do in every
+other terminal.
+
+| | |
+| --- | --- |
 | `⌘K` | switch workspace |
-| `⌘T` / `⌘N` / `⌘⇧N` | new tab / workspace / window |
+| `⌘N` | new workspace |
+| `⌘W` | close the terminal, or the `⌘K` row |
+| `⌘P` | pin a workspace to the top of `⌘K` |
+| `⌘1`–`⌘9` | workspace by position |
+| `⌘R` | rename a workspace, in place |
+| `⌥1`–`⌥9` | tab by position |
+| `↑` `↓` | move through `⌘K`, previewing each one |
+| `⌘T` | new tab |
 | `⌘D` / `⌘⇧D` | split right / down |
+| `⌘F` | find in the scrollback |
+| `⌘G` / `⌘⇧G` | next / previous match |
 | `⌘⌥←↑↓→` | focus the pane that way |
+| `⌘⇧[` / `⌘⇧]` | previous / next tab |
 | `⌘⇧↵` | zoom a pane, or put it back |
 | `⌘⌥=` | equalize splits |
-| `⌘W` / `⌘⇧W` | close terminal / window |
-| `⌘⇧[` `⌘⇧]` | previous / next tab |
-| `⌘1`–`⌘9` | workspace by position |
-| `⌥1`–`⌥9` | tab by position |
-| `⌘R` `⌘P` `⌘W` | in `⌘K`: rename, pin, close |
+| `⌘⇧N` / `⌘⇧W` | new / close window |
 
 Scrollback, selection, mouse reporting and colours are libghostty, and it reads
 the `~/.config/ghostty/config` you already have.
@@ -115,6 +129,12 @@ rune update                update in place
 rune install-opencode-hook teach opencode to report what it's doing
 rune --version
 ```
+
+`install-opencode-hook` does two things, because opencode needs both: it writes
+the plugin to `~/.config/opencode/plugin/rune.js` and names it in the `plugin`
+list in `~/.config/opencode/opencode.json`. That file is edited rather than
+replaced — your providers and MCP servers stay where they are. Restart any
+running opencode session for it to load.
 
 ## Build
 
