@@ -31,7 +31,7 @@ updates itself after that.
 ## What it does
 
 <div align="center">
-<img src="docs/images/palette.png" width="561" alt="The ⌘K switcher: three workspaces, one working with a clock, one idle, one waiting on you, with the ⌘R rename, ⌘P pin and ⌘W close hints along the bottom">
+<img src="docs/images/switcher-panel.png" width="561" alt="The ⌘K switcher: three workspaces, one working with a clock, one idle, one waiting on you, with the ⌘R rename, ⌘P pin and ⌘W close hints along the bottom">
 </div>
 
 - `⌘K` opens the switcher.
