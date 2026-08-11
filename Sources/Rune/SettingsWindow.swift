@@ -358,6 +358,8 @@ final class SettingsWindowController: NSWindowController {
     private let dimLabel = NSTextField(labelWithString: "")
     private let systemAccent = NSButton(
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
+    private let lightIconTiles = NSButton(
+        checkboxWithTitle: "", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
         accentWell.onChange = { [weak self] color in
@@ -368,6 +370,9 @@ final class SettingsWindowController: NSWindowController {
         systemAccent.action = #selector(systemAccentToggled)
         systemAccent.title = ""
         panelWell.onChange = { color in Settings.shared.panelBackground = color }
+        lightIconTiles.target = self
+        lightIconTiles.action = #selector(lightIconTilesToggled)
+        lightIconTiles.title = ""
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -409,6 +414,13 @@ final class SettingsWindowController: NSWindowController {
                     title: "Backdrop dim",
                     caption: "How much of the terminal the switcher's backdrop carries away.",
                     control: dim),
+                SettingsRow(
+                    title: "Light icon tiles",
+                    caption: "What sits behind an agent's mark in ⌘K. Brand marks are drawn "
+                        + "for paper, so most of them read better on a light tile than on "
+                        + "the panel. Icons that ship their own background — Codex's white "
+                        + "card, opencode's black square — keep it either way.",
+                    control: lightIconTiles),
             ]),
             section("Terminal", [
                 SettingsRow(
@@ -464,6 +476,11 @@ final class SettingsWindowController: NSWindowController {
         panelWell.color = settings.panelBackground
         dimSlider.doubleValue = Double(settings.backdropDim)
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
+        lightIconTiles.state = settings.lightIconTiles ? .on : .off
+    }
+
+    @objc private func lightIconTilesToggled() {
+        Settings.shared.lightIconTiles = lightIconTiles.state == .on
     }
 
     @objc private func systemAccentToggled() {

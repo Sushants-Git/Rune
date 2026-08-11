@@ -52,6 +52,11 @@ enum PaletteStyle {
     static let tertiaryText = NSColor(white: 1, alpha: 0.34)
 
     static let tile = NSColor(white: 1, alpha: 0.07)
+    /// What goes behind a mark that doesn't paint its own background.
+    /// Settable in Settings ▸ Appearance; see `Settings.lightIconTiles`.
+    @MainActor static var markPlate: NSColor {
+        Settings.shared.lightIconTiles ? NSColor.white.withAlphaComponent(0.9) : tile
+    }
     static let chip = NSColor(white: 1, alpha: 0.07)
     static let chipEmphasised = NSColor(white: 1, alpha: 0.14)
 }
@@ -839,21 +844,6 @@ private final class Divider: NSView {
     }
 }
 
-/// What a mark needs behind it.
-///
-/// Marks arrive from anywhere — a favicon, a launcher icon, an agent's own
-/// glyph — so there is no one treatment that suits them all. A launcher icon
-/// already paints its own background and wants none; a bare glyph does, and
-/// which one it wants depends on the glyph's own lightness.
-private enum MarkBacking {
-    /// Paints to its own edges. The mark *is* the tile.
-    case none
-    /// Dark ink on nothing: needs something bright behind it to read.
-    case light
-    /// Light ink on nothing: the panel's own tile is backing enough.
-    case neutral
-}
-
 /// The rounded square a row's mark sits in.
 private final class IconTile: NSView {
     private static let side: CGFloat = 24
@@ -872,21 +862,17 @@ private final class IconTile: NSView {
         let markSide: CGFloat
 
         if let artwork {
-            switch Self.backing(for: artwork) {
-            case .none:
+            if Self.paintsItsOwnBackground(artwork) {
                 // Edge to edge, the way an app icon sits in a launcher — no
                 // plate, because there is nothing for a plate to show through.
                 // The hairline is what a near-black mark needs so it doesn't
                 // read as a hole punched in a near-black panel, and it costs a
-                // pixel where the old white square cost the whole tile.
+                // pixel where a plate would cost the whole tile.
                 layer?.borderWidth = 1
                 layer?.borderColor = PaletteStyle.border.cgColor
                 markSide = Self.side
-            case .light:
-                layer?.backgroundColor = NSColor.white.withAlphaComponent(0.9).cgColor
-                markSide = 16
-            case .neutral:
-                layer?.backgroundColor = PaletteStyle.tile.cgColor
+            } else {
+                layer?.backgroundColor = PaletteStyle.markPlate.cgColor
                 markSide = 16
             }
             image.image = artwork
@@ -917,19 +903,24 @@ private final class IconTile: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    /// Ask the mark itself what it needs, rather than assuming.
+    /// Whether the mark paints to its own edges — a launcher icon rather than a
+    /// glyph on nothing. One downsampled read, done once when the tile is built.
     ///
-    /// Two questions, one downsampled read: does it paint its own background,
-    /// and if not, is its ink dark enough to need something light behind it.
-    /// Cheap, and done once when the tile is built.
+    /// Asked of the mark's own bounds rather than the file's. Plenty of icons
+    /// ship with transparent padding baked in, and testing the outer ring of
+    /// the image just measures that padding — every launcher icon came back
+    /// "transparent" and got a plate it didn't need.
     ///
-    /// The first question is asked of the mark's own bounds rather than the
-    /// file's. Plenty of icons ship with transparent padding baked in, and
-    /// testing the outer ring of the image just measures that padding — every
-    /// launcher icon came back "transparent" and got a plate it didn't need.
-    private static func backing(for artwork: NSImage) -> MarkBacking {
+    /// This used to ask a second question — whether the ink was dark enough to
+    /// need something light behind it — and answer it from the mark's average
+    /// luminance. That is what put Claude's salmon glyph on the panel's black
+    /// tile: mid-toned ink reads as "light enough", which is true of the ink
+    /// and false of the mark, whose cut-out holes then fill in with the panel.
+    /// Where a bare glyph sits is a matter of taste, not of arithmetic, so it
+    /// is a setting now. See `PaletteStyle.markPlate`.
+    private static func paintsItsOwnBackground(_ artwork: NSImage) -> Bool {
         guard let mark = artwork.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else { return .light }
+        else { return false }
 
         let side = 16
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
@@ -938,31 +929,19 @@ private final class IconTile: NSView {
                 data: bytes.baseAddress, width: side, height: side, bitsPerComponent: 8,
                 bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        }) else { return .light }
+        }) else { return false }
         context.draw(mark, in: CGRect(x: 0, y: 0, width: side, height: side))
 
         func alpha(_ x: Int, _ y: Int) -> Double { Double(pixels[(y * side + x) * 4 + 3]) / 255 }
 
         var minX = side, minY = side, maxX = -1, maxY = -1
-        var luminance = 0.0
-        var covered = 0.0
         for y in 0..<side {
-            for x in 0..<side {
-                let a = alpha(x, y)
-                guard a > 0.1 else { continue }
+            for x in 0..<side where alpha(x, y) > 0.1 {
                 minX = min(minX, x); maxX = max(maxX, x)
                 minY = min(minY, y); maxY = max(maxY, y)
-                // Premultiplied, so the alpha comes back out before the colour
-                // means anything — otherwise every soft edge reads as dark.
-                let i = (y * side + x) * 4
-                let r = Double(pixels[i]) / 255 / a
-                let g = Double(pixels[i + 1]) / 255 / a
-                let b = Double(pixels[i + 2]) / 255 / a
-                luminance += (0.2126 * r + 0.7152 * g + 0.0722 * b) * a
-                covered += a
             }
         }
-        guard covered > 0, maxX > minX, maxY > minY else { return .neutral }
+        guard maxX > minX, maxY > minY else { return false }
 
         var edgeOpaque = 0
         var edgeTotal = 0
@@ -972,13 +951,7 @@ private final class IconTile: NSView {
                 if alpha(x, y) > 0.8 { edgeOpaque += 1 }
             }
         }
-        if edgeTotal > 0, Double(edgeOpaque) / Double(edgeTotal) > 0.75 { return .none }
-
-        // Only genuinely near-black ink earns a light plate. A merely dark
-        // *colour* — a navy circle, a deep red glyph — reads perfectly well on
-        // the panel's own tile, and putting it on white was most of what made
-        // these look like logos trapped in boxes.
-        return luminance / covered < 0.25 ? .light : .neutral
+        return edgeTotal > 0 && Double(edgeOpaque) / Double(edgeTotal) > 0.75
     }
 }
 

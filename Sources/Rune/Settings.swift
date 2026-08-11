@@ -64,13 +64,36 @@ final class Settings {
         }
     }
 
+    /// What sits behind a ⌘K row's mark when the mark doesn't paint its own
+    /// background.
+    ///
+    /// Light by default, because these are brand marks and brand marks are
+    /// drawn to sit on paper — Claude's is a mid-salmon glyph with holes cut
+    /// out of it, and on a near-black tile the holes fill in with the panel and
+    /// the whole thing reads as a smudge. It is also the only way the row is
+    /// consistent: an icon that ships its own white card, like Codex's, is
+    /// already a white square, and a bare glyph beside it on black looks like a
+    /// different kind of thing rather than the same kind drawn differently.
+    var lightIconTiles: Bool {
+        get {
+            guard defaults.object(forKey: Keys.lightIconTiles) != nil
+            else { return Defaults.lightIconTiles }
+            return defaults.bool(forKey: Keys.lightIconTiles)
+        }
+        set {
+            defaults.set(newValue, forKey: Keys.lightIconTiles)
+            notify(.appearance)
+        }
+    }
+
     enum Defaults {
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
+        static let lightIconTiles = true
     }
 
     func resetAppearance() {
-        for key in [Keys.accent, Keys.panelBackground, Keys.backdropDim] {
+        for key in [Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles] {
             defaults.removeObject(forKey: key)
         }
         notify(.appearance)
@@ -137,6 +160,7 @@ final class Settings {
         static let accent = "RuneAccentColor"
         static let panelBackground = "RunePanelBackground"
         static let backdropDim = "RuneBackdropDim"
+        static let lightIconTiles = "RuneLightIconTiles"
         static let shortcuts = "RuneShortcuts"
     }
 
