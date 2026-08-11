@@ -5,6 +5,9 @@
 Four agents running, four terminals that look identical. Rune keeps them apart
 and tells you which one is waiting on you.
 
+<img src="docs/images/switcher.png" width="900"
+     alt="Rune's ⌘K switcher over a terminal, listing five workspaces — one working, one waiting on you, one running a command — each with its agent's mark">
+
 Built on [libghostty](https://github.com/ghostty-org/ghostty), which does the
 hard part — VT parsing, pty, font shaping, Metal rendering. Rune is the shell
 around it: workspaces, tabs, splits, and a switcher that says what each terminal
