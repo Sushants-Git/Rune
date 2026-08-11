@@ -13,10 +13,9 @@ and tells you which one is waiting on you.
 
 </div>
 
-Built on [libghostty](https://github.com/ghostty-org/ghostty), which does the
-hard part — VT parsing, pty, font shaping, Metal rendering. Rune is the shell
-around it: workspaces, tabs, splits, and a switcher that says what each terminal
-is doing.
+A shell around [libghostty](https://github.com/ghostty-org/ghostty), which does
+the hard part. Rune adds workspaces, tabs, splits and a switcher that knows what
+each terminal is doing. Your `~/.config/ghostty/config` carries over untouched.
 
 macOS 13+ · Apple Silicon and Intel · [rune.sushant.tech](https://rune.sushant.tech) · [latest release](https://github.com/Sushants-Git/Rune/releases/latest)
 
@@ -24,78 +23,52 @@ macOS 13+ · Apple Silicon and Intel · [rune.sushant.tech](https://rune.sushant
 
 ## Install
 
-Download the disk image from
-[Releases](https://github.com/Sushants-Git/Rune/releases/latest) and drag Rune
-into `/Applications`.
-
-Rune is signed ad-hoc rather than with a paid Developer ID, so macOS quarantines
-the download and calls it damaged. It isn't. Clear the flag once:
+Download the dmg from [Releases](https://github.com/Sushants-Git/Rune/releases/latest)
+and drag Rune into `/Applications`. It's ad-hoc signed, so macOS will call it
+damaged. It isn't — clear the flag once:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Rune.app
 ```
 
-Or open it, dismiss the warning, and use **System Settings → Privacy & Security
-→ Open Anyway**.
-
-After that Rune updates itself — on launch, hourly, and from `Check for
-Updates…`.
+Or open it and use **System Settings → Privacy & Security → Open Anyway**. It
+updates itself after that.
 
 ## What it does
 
-**Three places to put a terminal**, so no list grows past reading it. Largest
-first, which is the order you reach for them in:
+Three places to put a terminal:
 
-- `⌘N` — **Workspaces**, whole sets of tabs, reachable only from `⌘K`
-- `⌘T` — **Tabs**, a strip *inside* the title bar, costing no vertical space
-- `⌘D` `⌘⇧D` — **Splits**, panes side by side in one tab
+- `⌘N` — **workspaces**, whole sets of tabs, reached from `⌘K`
+- `⌘T` — **tabs**, a strip inside the title bar, costing no vertical space
+- `⌘D` `⌘⇧D` — **splits**, panes side by side in one tab
 
-**`⌘K` is the switcher**, and the reason the rest of it holds together. Every
-row is a workspace, and everything you do to one is a chord away:
+`⌘K` lists every workspace. Arrows preview each one behind the panel, `⏎` keeps
+it, `⎋` puts you back — and on the highlighted row, `⌘R` renames, `⌘P` pins,
+`⌘W` closes. `⌘1`–`⌘9` jump straight to one without opening the list.
 
-- `↑` `↓` — move through the list, previewing each workspace behind the panel
-- `⏎` — keep the one you landed on
-- `⎋` — put back whatever you were looking at
-- `⌘R` — rename a row, in place
-- `⌘P` — pin it to the top, and pinned rows stay in the order you pinned them
-- `⌘W` — close it, and every tab and split in it
-- `⌘1`–`⌘9` — jump straight to a row by position, without opening `⌘K` at all
+Every row says what its agent is doing: `working` with a clock, `your turn` when
+it stops, nothing when there's nothing worth saying. Read from what each agent
+publishes, never off the screen.
 
-**Every row says what its agent is doing.** `working` counts up while it runs,
-`your turn` means it stopped — at its prompt or on a question, which for triage
-is the same instruction. Read from what each agent publishes about itself, never
-from scraping the screen:
-
-| Agent | Where its state is read from |
+| Agent | Read from |
 | --- | --- |
-| Claude Code | `~/.claude/sessions/<pid>.json`, keyed by process id |
-| Codex | the progress spinner it animates in the terminal title |
-| opencode | a plugin — run `rune install-opencode-hook` |
+| Claude Code | `~/.claude/sessions/<pid>.json`, keyed by pid |
+| Codex | the spinner it animates in the terminal title |
+| opencode | a plugin — `rune install-opencode-hook` |
 
-Nothing at all means a plain shell, or an agent Rune can't read: it gets its
-icon and no indicator. A guess shown as fact is worse than silence, and there is
-no "a command is running" — knowing that needs shell integration, not a guess.
-
-**Rows without an agent still get a face.** vim, tmux, docker, psql, k9s and
-twenty more are recognised by their process, and anything unrecognised falls
-back to the icon the project itself ships — a favicon, a launcher icon.
-
-Anything with a hook can push its own words onto a row:
+Rows without an agent get their program's icon — vim, tmux, docker, psql, k9s
+and twenty more — or whatever the project itself ships. Anything can push its
+own words onto a row:
 
 ```sh
 printf '\033]9;Build finished\007'
 ```
 
-**Drag the panel anywhere it isn't covering what you're reading.** Grab it by
-the search strip along its top, the way you would a title bar. Nothing snaps —
-it goes exactly where you drop it, and a guide brightens when you've lined up
-with one. Where you leave it is where it opens next time.
+Drag the panel by its search strip and it stays where you drop it.
 
 ## Keys
 
-Ordered by how often you reach for it, not by which part of the app it belongs
-to. Only what Rune adds — copy, paste and font size behave as they do in every
-other terminal.
+Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 
 | Chord | What it does |
 | --- | --- |
@@ -106,7 +79,6 @@ other terminal.
 | `⌘1`–`⌘9` | workspace by position |
 | `⌘R` | rename a workspace, in place |
 | `⌥1`–`⌥9` | tab by position |
-| `↑` `↓` | move through `⌘K`, previewing each one |
 | `⌘T` | new tab |
 | `⌘D` / `⌘⇧D` | split right / down |
 | `⌘F` | find in the scrollback |
@@ -117,8 +89,7 @@ other terminal.
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
 
-Scrollback, selection, mouse reporting and colours are libghostty, and it reads
-the `~/.config/ghostty/config` you already have.
+Rebind any of them in **Settings → Shortcuts**.
 
 ## The `rune` command
 
@@ -134,11 +105,9 @@ rune install-opencode-hook teach opencode to report what it's doing
 rune --version
 ```
 
-`install-opencode-hook` does two things, because opencode needs both: it writes
-the plugin to `~/.config/opencode/plugin/rune.js` and names it in the `plugin`
-list in `~/.config/opencode/opencode.json`. That file is edited rather than
-replaced — your providers and MCP servers stay where they are. Restart any
-running opencode session for it to load.
+`install-opencode-hook` writes `~/.config/opencode/plugin/rune.js` and adds it
+to the `plugin` list in `opencode.json`, editing that file rather than replacing
+it. Restart any running opencode session to pick it up.
 
 ## Build
 
@@ -152,24 +121,15 @@ git clone https://github.com/Sushants-Git/Rune.git && cd Rune
 ```
 
 If it stops on `cannot execute tool 'metal'`, run
-`xcodebuild -downloadComponent MetalToolchain` and go again.
+`xcodebuild -downloadComponent MetalToolchain` and try again. Releases are cut
+by pushing a tag: `git tag v0.13.9 && git push origin v0.13.9`.
 
-Releases are cut by pushing a tag:
-
-```sh
-git tag v0.13.9 && git push origin v0.13.9
-```
-
-## More
-
-[**Design notes**](docs/design-notes.md) — why it's built this way, and the
-things that cost real debugging time: reading agent state without touching the
-render lock, why there's no "a command is running" indicator, the dmg and icon
-pipelines, and what the updater has been wrong about.
+[**Design notes**](docs/design-notes.md) cover why it's built this way, and the
+parts that cost real debugging time.
 
 ## Credit
 
-The input handling in `GhosttySurfaceView` and `GhosttyInput` is adapted from
-Ghostty's own macOS embedding layer (MIT, Mitchell Hashimoto and Ghostty
-contributors). Getting key translation, dead keys and IME composition right is
-subtle, and their implementation is the reference.
+Key translation, dead keys and IME composition in `GhosttySurfaceView` and
+`GhosttyInput` are adapted from Ghostty's own macOS embedding layer (MIT,
+Mitchell Hashimoto and Ghostty contributors), which is the reference for getting
+that right.
