@@ -116,12 +116,9 @@ final class SwitcherPalette: NSView {
     private let scrim = NSView()
 
     /// Covers the search strip so the top of the panel can be grabbed, the way
-    /// a title bar can. It deliberately implements nothing: an `NSView` that
-    /// does not override `mouseDown` passes the event up the responder chain,
-    /// which lands it on the overlay — the same path the panel's inert
-    /// background already took. Its only job is to stand in front of the text
-    /// field, which would otherwise swallow the click to place a cursor.
-    private let grip = NSView()
+    /// a title bar can. It stands in front of the text field, which would
+    /// otherwise swallow the click to place a cursor.
+    private let grip = PanelGrip()
 
     /// Real glass where the system has it, vibrancy where it doesn't.
     ///
@@ -804,6 +801,31 @@ private final class PaletteRowView: NSTableRowView {
 }
 
 // MARK: - Small pieces
+
+/// The strip across the top of the panel that drags it.
+///
+/// This used to be an inert `NSView`, on the reasoning that a view overriding
+/// nothing passes `mouseDown` up the responder chain and the overlay would pick
+/// it up at the top. That is true of most of the strip and not of the part over
+/// the search field's own rectangle, where the event stops somewhere before it
+/// arrives — so the padding around the field dragged the panel and the field
+/// itself did nothing, which is the part of the strip a pointer is most likely
+/// to be on and the part that looks most like a title bar.
+///
+/// The same view is hit either way; only the outcome differed, and only by
+/// where in that view the click was. Forwarding to the overlay on purpose
+/// rather than relying on where an unhandled event drifts settles it.
+@MainActor
+final class PanelGrip: NSView {
+    private var overlay: SwitcherOverlay? {
+        sequence(first: self as NSView, next: { $0.superview })
+            .lazy.compactMap { $0 as? SwitcherOverlay }.first
+    }
+
+    override func mouseDown(with event: NSEvent) { overlay?.mouseDown(with: event) }
+    override func mouseDragged(with event: NSEvent) { overlay?.mouseDragged(with: event) }
+    override func mouseUp(with event: NSEvent) { overlay?.mouseUp(with: event) }
+}
 
 /// A hairline that reads as a seam rather than as a system separator.
 private final class Divider: NSView {
