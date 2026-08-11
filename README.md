@@ -43,20 +43,16 @@ Updates…`.
 
 ## What it does
 
-**Three places to put a terminal**, so no list grows past reading it.
+**Three places to put a terminal**, so no list grows past reading it. Largest
+first, which is the order you reach for them in:
 
-- `⌘D` `⌘⇧D` — **Splits**, panes side by side in one tab
-- `⌘T` — **Tabs**, a strip *inside* the title bar, costing no vertical space
 - `⌘N` — **Workspaces**, whole sets of tabs, reachable only from `⌘K`
+- `⌘T` — **Tabs**, a strip *inside* the title bar, costing no vertical space
+- `⌘D` `⌘⇧D` — **Splits**, panes side by side in one tab
 
-**`⌘K` is the switcher.** Arrows preview the workspace behind the panel, `⏎`
-keeps it, `⎋` puts you back. `⌘R` renames a row in place, `⌘P` pins it to the
-top, `⌘W` closes it.
-
-**Drag the panel anywhere it isn't covering what you're reading.** Grab it by
-the search strip along its top, the way you would a title bar. Nothing snaps —
-it goes exactly where you drop it, and a guide brightens when you've lined up
-with one. Where you leave it is where it opens next time.
+**`⌘K` is the switcher**, and the reason the rest of it holds together. Arrows
+preview the workspace behind the panel, `⏎` keeps it, `⎋` puts you back. `⌘R`
+renames a row in place, `⌘P` pins it to the top, `⌘W` closes it.
 
 **Every row says what its agent is doing.** `working` counts up while it runs,
 `your turn` means it stopped — at its prompt or on a question, which for triage
@@ -82,6 +78,11 @@ Anything with a hook can push its own words onto a row:
 ```sh
 printf '\033]9;Build finished\007'
 ```
+
+**Drag the panel anywhere it isn't covering what you're reading.** Grab it by
+the search strip along its top, the way you would a title bar. Nothing snaps —
+it goes exactly where you drop it, and a guide brightens when you've lined up
+with one. Where you leave it is where it opens next time.
 
 ## Keys
 
