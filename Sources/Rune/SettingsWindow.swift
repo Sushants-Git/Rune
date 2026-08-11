@@ -35,11 +35,19 @@ final class SettingsWindowController: NSWindowController {
             case .ghostty: "Reset Ghostty Settings"
             }
         }
+
+        var icon: SettingsIcon {
+            switch self {
+            case .appearance: .appearance
+            case .shortcuts: .shortcuts
+            case .ghostty: .ghostty
+            }
+        }
     }
 
     private let tabs = NSSegmentedControl(
         labels: Pane.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-    private let panes = NSView()
+    private let panes = FocusReleasingView()
     private let resetButton = NSButton()
     private var views: [Pane: NSView] = [:]
 
@@ -77,6 +85,18 @@ final class SettingsWindowController: NSWindowController {
         if window?.isVisible != true { window?.center() }
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        clearFocus()
+    }
+
+    /// Open with nothing focused, and land on every pane the same way.
+    ///
+    /// Left alone, a window becoming key hands first responder to its first
+    /// text field and selects the whole of it — so the Ghostty pane opened with
+    /// the font family highlighted, one keystroke away from being replaced, in
+    /// a window nobody opened in order to type. A settings pane is somewhere
+    /// you look before it is somewhere you type.
+    private func clearFocus() {
+        window?.makeFirstResponder(nil)
     }
 
     // MARK: - Chrome
@@ -87,6 +107,14 @@ final class SettingsWindowController: NSWindowController {
         tabs.target = self
         tabs.action = #selector(tabChanged)
         tabs.selectedSegment = 0
+        // Icon above the word rather than beside it. Three tabs read as one
+        // row of destinations either way, but a leading image pushes the
+        // labels apart until the strip is wider than the window needs.
+        tabs.segmentDistribution = .fit
+        for pane in Pane.allCases {
+            tabs.setImage(pane.icon.image, forSegment: pane.rawValue)
+            tabs.setImageScaling(.scaleProportionallyDown, forSegment: pane.rawValue)
+        }
         tabs.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(tabs)
 
@@ -172,6 +200,8 @@ final class SettingsWindowController: NSWindowController {
         if pane == .ghostty { reloadGhosttyRows() }
         resize(to: pane)
         scrollToTop(views[pane])
+        // Arriving at a pane is not the same as asking to edit something on it.
+        clearFocus()
     }
 
     /// Open a pane at its beginning. Flipping the document gets the initial
@@ -322,19 +352,22 @@ final class SettingsWindowController: NSWindowController {
 
     // MARK: - Appearance
 
-    private let accentWell = NSColorWell()
-    private let panelWell = NSColorWell()
+    private let accentWell = ColorField()
+    private let panelWell = ColorField()
     private let dimSlider = NSSlider()
     private let dimLabel = NSTextField(labelWithString: "")
     private let systemAccent = NSButton(
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
-        configure(accentWell, action: #selector(accentChanged))
+        accentWell.onChange = { [weak self] color in
+            Settings.shared.accent = color
+            self?.syncAppearance()
+        }
         systemAccent.target = self
         systemAccent.action = #selector(systemAccentToggled)
         systemAccent.title = ""
-        configure(panelWell, action: #selector(panelChanged))
+        panelWell.onChange = { color in Settings.shared.panelBackground = color }
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -403,12 +436,6 @@ final class SettingsWindowController: NSWindowController {
         return holder
     }
 
-    private func configure(_ well: NSColorWell, action: Selector) {
-        well.target = self
-        well.action = action
-        Self.style(well)
-    }
-
     /// The standard well, and no border of Rune's own.
     ///
     /// `.minimal` draws the colour as a *circle*, so the rounded-rectangle
@@ -439,20 +466,11 @@ final class SettingsWindowController: NSWindowController {
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
     }
 
-    @objc private func accentChanged() {
-        Settings.shared.accent = accentWell.color
-        syncAppearance()
-    }
-
     @objc private func systemAccentToggled() {
         // Unticking has to leave a colour behind, or the well would go on
         // showing the system accent while claiming to be an override.
         Settings.shared.accent = systemAccent.state == .on ? nil : accentWell.color
         syncAppearance()
-    }
-
-    @objc private func panelChanged() {
-        Settings.shared.panelBackground = panelWell.color
     }
 
     @objc private func dimChanged() {

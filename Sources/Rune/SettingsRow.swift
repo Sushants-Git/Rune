@@ -117,8 +117,11 @@ final class SettingsCard: NSView {
         for (index, row) in rows.enumerated() {
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            // A hairline between rows, inset to the text so it reads as a
-            // separator inside the card rather than as the card's own edge.
+            // A hairline between rows, run the full width of the card. Inset to
+            // the text it stopped short of both edges, which left every rule
+            // looking like it had failed to finish rather than like a deliberate
+            // indent — the card's own rounded corners already say where the
+            // group stops, so the separator has nothing to prove.
             guard index < rows.count - 1 else { continue }
             let divider = NSView()
             divider.wantsLayer = true
@@ -127,8 +130,7 @@ final class SettingsCard: NSView {
             stack.addArrangedSubview(divider)
             NSLayoutConstraint.activate([
                 divider.heightAnchor.constraint(equalToConstant: 1),
-                divider.leadingAnchor.constraint(
-                    equalTo: stack.leadingAnchor, constant: SettingsRow.horizontalPadding),
+                divider.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
                 divider.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
             ])
         }
@@ -161,15 +163,36 @@ final class SettingsCard: NSView {
     private func applyColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-            // Quiet. A card's edge only has to say where the group stops — at
-            // full strength, five of them stacked down a pane draw more
-            // attention than anything written inside them.
-            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
+            // Lighter still than the quiet edge this started as. On a dark pane
+            // a grey outline round a dark fill is the brightest thing in the
+            // group, so the card reads as a raised plate — which is backwards,
+            // because the fill is already doing the work of saying where the
+            // group is. The border is only here to keep that fill from bleeding
+            // into a background of nearly its own colour.
+            layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.18).cgColor
             for divider in dividers {
                 divider.layer?.backgroundColor = NSColor.separatorColor
-                    .withAlphaComponent(0.28).cgColor
+                    .withAlphaComponent(0.22).cgColor
             }
         }
+    }
+}
+
+/// A view that takes focus away from whatever has it when you click the space
+/// around the controls.
+///
+/// The other half of not focusing a text field on arrival: once you *have*
+/// clicked into one there is otherwise no way out of it but Tab, because a
+/// settings pane is all inert background and none of it wants first responder.
+/// Clicking off a field is how every other window on the Mac ends an edit.
+@MainActor
+final class FocusReleasingView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        // Reaches here only when nothing nearer the click wanted it: AppKit
+        // walks up from the deepest view, and rows, cards and labels all
+        // decline. A click on a control never gets this far.
+        window?.makeFirstResponder(nil)
+        super.mouseDown(with: event)
     }
 }
 
