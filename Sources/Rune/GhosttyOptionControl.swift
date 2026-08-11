@@ -56,7 +56,7 @@ final class GhosttyOptionControl: NSObject {
     private let text = NSTextField()
     private let toggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let popUp = NSPopUpButton()
-    private let well = NSColorWell()
+    private let colorField = ColorField()
     private let slider = NSSlider()
     private let sliderValue = NSTextField(labelWithString: "")
 
@@ -90,10 +90,11 @@ final class GhosttyOptionControl: NSObject {
             return popUp
 
         case .color:
-            well.target = self
-            well.action = #selector(changed)
-            SettingsWindowController.style(well)
-            return well
+            colorField.onChange = { [weak self] color in
+                guard let self, !self.loading else { return }
+                self.onChange?(ColorField.hex(color))
+            }
+            return colorField
 
         case .slider(let min, let max):
             slider.minValue = min
@@ -166,10 +167,13 @@ final class GhosttyOptionControl: NSObject {
             popUp.selectItem(at: values.firstIndex(of: effective) ?? 0)
 
         case .color:
-            well.color = Self.color(from: effective) ?? .black
-            // An unset colour has no colour to show; dimming the well says so
-            // without inventing one.
-            well.alphaValue = isSet ? 1 : 0.4
+            // The raw string, not a parsed colour: Ghostty takes names as well
+            // as hex, and the field says so rather than rounding `red` down to
+            // the black the well falls back to.
+            colorField.show(effective)
+            // An unset colour has no colour to show; dimming says so without
+            // inventing one.
+            colorField.alphaValue = isSet ? 1 : 0.4
 
         case .slider:
             let number = Double(effective) ?? slider.minValue
@@ -199,7 +203,9 @@ final class GhosttyOptionControl: NSObject {
             onChange?(picked.isEmpty ? nil : picked)
 
         case .color:
-            onChange?(Self.hex(well.color))
+            // Handled by the field's own callback, which knows whether the
+            // colour came from the well or from someone typing a hex.
+            break
 
         case .slider:
             sliderValue.stringValue = Self.trim(slider.doubleValue)
@@ -228,27 +234,6 @@ final class GhosttyOptionControl: NSObject {
         ["true", "yes", "1", "on"].contains(value.lowercased())
     }
 
-    /// Ghostty writes colours as `#rrggbb`, and also accepts them bare and by
-    /// name. Only hex round-trips through a colour well, so a named colour is
-    /// left alone until someone actually picks a new one.
-    static func color(from value: String) -> NSColor? {
-        var hex = value.trimmingCharacters(in: .whitespaces)
-        if hex.hasPrefix("#") { hex.removeFirst() }
-        guard hex.count == 6, let number = UInt32(hex, radix: 16) else { return nil }
-        return NSColor(
-            srgbRed: Double((number >> 16) & 0xFF) / 255,
-            green: Double((number >> 8) & 0xFF) / 255,
-            blue: Double(number & 0xFF) / 255,
-            alpha: 1)
-    }
-
-    static func hex(_ color: NSColor) -> String {
-        guard let srgb = color.usingColorSpace(.sRGB) else { return "#000000" }
-        return String(format: "#%02x%02x%02x",
-                      Int(srgb.redComponent * 255 + 0.5),
-                      Int(srgb.greenComponent * 255 + 0.5),
-                      Int(srgb.blueComponent * 255 + 0.5))
-    }
 }
 
 extension GhosttyOptionControl: NSTextFieldDelegate {
