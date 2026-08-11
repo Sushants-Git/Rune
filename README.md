@@ -45,11 +45,9 @@ Updates…`.
 
 **Three places to put a terminal**, so no list grows past reading it.
 
-| | | |
-| --- | --- | --- |
-| `⌘D` `⌘⇧D` | **Splits** | panes side by side in one tab |
-| `⌘T` | **Tabs** | a strip *inside* the title bar, costing no vertical space |
-| `⌘N` | **Workspaces** | whole sets of tabs, reachable only from `⌘K` |
+- `⌘D` `⌘⇧D` — **Splits**, panes side by side in one tab
+- `⌘T` — **Tabs**, a strip *inside* the title bar, costing no vertical space
+- `⌘N` — **Workspaces**, whole sets of tabs, reachable only from `⌘K`
 
 **`⌘K` is the switcher.** Arrows preview the workspace behind the panel, `⏎`
 keeps it, `⎋` puts you back. `⌘R` renames a row in place, `⌘P` pins it to the
@@ -65,7 +63,7 @@ with one. Where you leave it is where it opens next time.
 is the same instruction. Read from what each agent publishes about itself, never
 from scraping the screen:
 
-| | |
+| Agent | Where its state is read from |
 | --- | --- |
 | Claude Code | `~/.claude/sessions/<pid>.json`, keyed by process id |
 | Codex | the progress spinner it animates in the terminal title |
@@ -87,13 +85,11 @@ printf '\033]9;Build finished\007'
 
 ## Keys
 
-| | |
-| --- | --- |
 Ordered by how often you reach for it, not by which part of the app it belongs
 to. Only what Rune adds — copy, paste and font size behave as they do in every
 other terminal.
 
-| | |
+| Chord | What it does |
 | --- | --- |
 | `⌘K` | switch workspace |
 | `⌘N` | new workspace |
