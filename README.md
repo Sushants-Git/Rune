@@ -1,4 +1,6 @@
-<img src="docs/images/icon.png" width="112" alt="">
+<div align="center">
+
+<img src="docs/images/icon.png" width="96" alt="">
 
 # Rune
 
@@ -7,8 +9,9 @@
 Four agents running, four terminals that look identical. Rune keeps them apart
 and tells you which one is waiting on you.
 
-<img src="docs/images/switcher.png" width="900"
-     alt="Rune's ⌘K switcher over a terminal, listing five workspaces — one working, one waiting on you, one running a command — each with its agent's mark">
+<img src="docs/images/switcher.png" width="900" alt="Rune's ⌘K switcher over a terminal, listing five workspaces — one working, one waiting on you, one running a command — each with its agent's mark">
+
+</div>
 
 Built on [libghostty](https://github.com/ghostty-org/ghostty), which does the
 hard part — VT parsing, pty, font shaping, Metal rendering. Rune is the shell
