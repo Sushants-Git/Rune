@@ -365,6 +365,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
 
+    @objc private func showDiffAction(_ sender: Any?) { keyController?.showDiff() }
+
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
     }
@@ -470,6 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // is always there and does nothing until you enable it, and the action
         // itself is what checks the setting.
         bind(.toggleTodos, to: tabsMenu, #selector(toggleTodosAction(_:)))
+        bind(.showDiff, to: tabsMenu, #selector(showDiffAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
         bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))

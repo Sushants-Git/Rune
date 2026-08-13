@@ -884,6 +884,11 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         present(TodoPalette(onDismiss: { [weak self] in self?.closeSwitcher() }))
     }
 
+    /// ⌘E: the uncommitted changes where the focused terminal is standing.
+    func showDiff() {
+        DiffWindowController.shared.show(directory: activeSurface?.pwd)
+    }
+
     /// ⌘W with the todo list up: delete the highlighted one.
     func deleteTodoSelection() {
         (overlay?.panel as? TodoPalette)?.deleteSelected()
@@ -939,6 +944,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// isn't up it opens first — the name lives in that list, so that's where
     /// you should be looking while you change it.
     func renameWorkspace() {
+        // ⌘R renames the row you are looking at, whichever list that is. With
+        // the todo list up it would otherwise reach a switcher that isn't on
+        // screen and do nothing at all.
+        if let todos = overlay?.panel as? TodoPalette {
+            todos.beginRename()
+            return
+        }
         if overlay == nil { showSwitcher() }
         overlay?.palette?.beginRename()
     }

@@ -70,12 +70,17 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
 | `⌘J` | todo list, once you switch it on |
+| `⌘E` | uncommitted changes, as a diff |
 
 Rebind any of them in **Settings → Shortcuts**. The todo list is off by default:
 turn it on in **Settings → Appearance** and `⌘J` opens a list of what you have
-to do in the same panel, as a tree. In the list `a` adds, `A` adds a sub-task,
-`c` copies and `⏎` ticks off. Your `~/.config/ghostty/config` carries over
-untouched.
+to do in the same panel, as a tree. In the list `a` adds, `o` adds a sub-task,
+`⌘R` renames in place as it does in `⌘K`, `c` copies, `d` deletes and `space`
+ticks off.
+
+`⌘E` shows what is uncommitted where the focused terminal is standing, staged
+and unstaged together, with `n` and `p` moving by hunk. Your
+`~/.config/ghostty/config` carries over untouched.
 
 ## The `rune` command
 
