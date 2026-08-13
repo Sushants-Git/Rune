@@ -432,8 +432,9 @@ final class SettingsWindowController: NSWindowController {
                     title: "Enable the todo list",
                     caption: "Adds ⌘J, which opens a list of what you have to do in the "
                         + "same panel ⌘K uses. Off by default; with it off the key does "
-                        + "nothing. In the list: a adds, A adds a sub-task under the "
-                        + "highlighted one, c copies it, ⏎ ticks it off, ⌫ deletes.",
+                        + "nothing. In the list: a adds, o adds a sub-task under the "
+                        + "highlighted one, ⌘R renames it in place as it does in ⌘K, "
+                        + "c copies, d deletes, space ticks off.",
                     control: todosEnabled),
             ]),
             section("Terminal", [

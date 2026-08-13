@@ -9,9 +9,18 @@ import Cocoa
 ///
 /// Unlike `⌘K` it is not a search field with a list under it. `⌘K` exists to
 /// filter, so the keyboard belongs in the field; this exists to *read* and act
-/// on what you find, so the list holds the keyboard and single keys do things:
-/// `a` adds, `A` adds underneath, `c` copies, `⏎` ticks off. Typing only starts
-/// when you ask for it, and stops as soon as the line is in.
+/// on what you find, so the list holds the keyboard and single keys do things.
+///
+/// The keys are mnemonics rather than chords: `a` add, `o` open one under this,
+/// `c` copy, `d` delete, space to tick off. `⇧A` used to be the sub-task key,
+/// which is not a thing anyone guesses — `o` is the one every modal editor
+/// already uses for "open a line below", and being lowercase it sits with the
+/// rest instead of asking for a shift.
+///
+/// Renaming is the exception, and deliberately: `⌘R` and `e` both start it, and
+/// it happens *in the row*, exactly as ⌘R does in the switcher. A list where
+/// the same key renames the thing you are looking at, whichever list it is, is
+/// one fewer thing to remember than two lists with two answers.
 @MainActor
 final class TodoPalette: NSView, OverlayPanel {
     /// What the panel is doing: reading the list, or taking a line for it.
@@ -30,14 +39,24 @@ final class TodoPalette: NSView, OverlayPanel {
     /// after a trip to another app, and handing it to the list mid-sentence
     /// would eat the sentence.
     var focusView: NSView {
-        if case .adding = mode { return field }
-        return self
+        // A rename owns the row's own field, and it has to win: the panel is
+        // in list mode throughout, so asking the mode alone would hand the
+        // keyboard back to the list halfway through a word.
+        if let editing = editingField { return editing }
+        if case .list = mode { return self }
+        return field
     }
 
     private let store = TodoStore.shared
     private var rows: [TodoStore.Row] = []
     private var selection = 0
     private var mode: Mode = .list { didSet { applyMode() } }
+
+    /// The task being renamed in place, and the field doing it. Mirrors ⌘K,
+    /// where the name turns into a field where it already sits rather than
+    /// into a box somewhere else on the panel.
+    private var editingID: UUID?
+    private weak var editingField: NSTextField?
 
     private let panel = NSView()
     private let title = NSTextField(labelWithString: "Todo")
@@ -255,24 +274,33 @@ final class TodoPalette: NSView, OverlayPanel {
             title.isHidden = false
             count.isHidden = false
             setHints([
-                ("a", "Add"), ("A", "Sub-task"), ("c", "Copy"),
-                ("⏎", "Done"), ("⌫", "Delete"), ("esc", "Dismiss"),
+                ("a", "Add"), ("o", "Sub-task"), ("⌘R", "Rename"),
+                ("c", "Copy"), ("d", "Delete"), ("space", "Done"),
             ])
             window?.makeFirstResponder(self)
+
         case .adding(let parent):
             let under = parent.flatMap { id in store.items.first { $0.id == id }?.text }
-            field.placeholderAttributedString = NSAttributedString(
-                string: under.map { "New task under \($0)" } ?? "New task",
-                attributes: [
-                    .foregroundColor: PaletteStyle.tertiaryText,
-                    .font: NSFont.systemFont(ofSize: 13),
-                ])
-            field.isHidden = false
-            title.isHidden = true
-            count.isHidden = true
-            setHints([("⏎", "Save"), ("esc", "Cancel")])
-            window?.makeFirstResponder(field)
+            prompt(under.map { "New task under \($0)" } ?? "New task", text: "")
+
         }
+    }
+
+    /// Put the field where the title was, carrying whatever it starts with.
+    private func prompt(_ placeholder: String, text: String) {
+        field.placeholderAttributedString = NSAttributedString(
+            string: placeholder,
+            attributes: [
+                .foregroundColor: PaletteStyle.tertiaryText,
+                .font: NSFont.systemFont(ofSize: 13),
+            ])
+        field.stringValue = text
+        field.isHidden = false
+        title.isHidden = true
+        count.isHidden = true
+        setHints([("⏎", "Save"), ("esc", "Cancel")])
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectedRange = NSRange(location: text.count, length: 0)
     }
 
     // MARK: - List
@@ -326,22 +354,69 @@ final class TodoPalette: NSView, OverlayPanel {
         refresh()
     }
 
+    /// ⌘R, and `e`. The row becomes a field where it sits.
+    func beginRename() {
+        guard case .list = mode, let row = selected else { return }
+        editingID = row.item.id
+        tableView.reloadData()
+        syncSelection()
+        // The field only exists once the table has actually built the row;
+        // `reloadData` does not promise that by the time it returns.
+        tableView.layoutSubtreeIfNeeded()
+        guard let cell = tableView.view(atColumn: 0, row: selection, makeIfNecessary: true),
+              let found = Self.editableField(in: cell)
+        else {
+            editingID = nil
+            return
+        }
+        found.delegate = self
+        editingField = found
+        window?.makeFirstResponder(found)
+        found.currentEditor()?.selectAll(nil)
+        setHints([("⏎", "Save"), ("esc", "Cancel")])
+    }
+
+    private static func editableField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable { return field }
+        for subview in view.subviews {
+            if let field = editableField(in: subview) { return field }
+        }
+        return nil
+    }
+
+    private func commitRename() {
+        guard let id = editingID, let found = editingField else { return }
+        store.rename(id, to: found.stringValue)
+        endRename()
+    }
+
+    private func endRename() {
+        editingID = nil
+        editingField = nil
+        refresh()
+        applyMode()
+    }
+
     private func copySelected() {
         guard let row = selected, let text = store.copyText(for: row.item.id) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func commitAdd() {
-        guard case .adding(let parent) = mode else { return }
+    private func commitField() {
         let typed = field.stringValue
-        store.add(typed, parent: parent)
-        refresh()
-        // Land on what was just added, so the next thing you do lands on it.
-        if let index = rows.lastIndex(where: {
-            $0.item.text == typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        }) {
-            selection = index
+        switch mode {
+        case .list:
+            return
+        case .adding(let parent):
+            store.add(typed, parent: parent)
+            refresh()
+            // Land on what was just added, so the next thing you do lands on it.
+            if let index = rows.lastIndex(where: {
+                $0.item.text == typed.trimmingCharacters(in: .whitespacesAndNewlines)
+            }) {
+                selection = index
+            }
         }
         mode = .list
         syncSelection()
@@ -362,19 +437,25 @@ final class TodoPalette: NSView, OverlayPanel {
         switch event.keyCode {
         case 126: move(by: -1); return          // ↑
         case 125: move(by: 1); return           // ↓
-        case 36: toggleSelected(); return       // ⏎
+        case 36: toggleSelected(); return       // ⏎, the same as space
         case 51, 117: deleteSelected(); return  // ⌫, ⌦
         case 53: cancel(); return               // esc
         default: break
         }
 
         switch event.charactersIgnoringModifiers {
+        case " ": toggleSelected()
         case "a": mode = .adding(under: nil)
-        case "A": mode = .adding(under: selected.map { $0.item.parent ?? $0.item.id })
+        // "open one under this". On a sub-task it opens a sibling, because the
+        // store attaches it to that one's parent.
+        case "o": mode = .adding(under: selected.map { $0.item.parent ?? $0.item.id })
+        case "e": beginRename()
         case "c": copySelected()
+        case "d": deleteSelected()
         case "j": move(by: 1)
         case "k": move(by: -1)
-        case " ": toggleSelected()
+        case "g": selection = 0; syncSelection()
+        case "G": selection = max(rows.count - 1, 0); syncSelection()
         default: super.keyDown(with: event)
         }
     }
@@ -409,7 +490,7 @@ extension TodoPalette: NSTableViewDataSource, NSTableViewDelegate {
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
     ) -> NSView? {
         guard let entry = rows[safe: row] else { return nil }
-        return TodoRow(entry)
+        return TodoRow(entry, editing: entry.item.id == editingID)
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -423,12 +504,15 @@ extension TodoPalette: NSTextFieldDelegate {
     func control(
         _ control: NSControl, textView: NSTextView, doCommandBy selector: Selector
     ) -> Bool {
+        // Two fields share this: the header, which is adding, and a row's own,
+        // which is renaming. Which one sent it decides what Return means.
+        let renaming = control !== field
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
-            commitAdd()
+            if renaming { commitRename() } else { commitField() }
             return true
         case #selector(NSResponder.cancelOperation(_:)):
-            mode = .list
+            if renaming { endRename() } else { mode = .list }
             return true
         default:
             return false
@@ -438,7 +522,7 @@ extension TodoPalette: NSTextFieldDelegate {
 
 /// One task: its branch, a box, and the text.
 private final class TodoRow: NSView {
-    init(_ entry: TodoStore.Row) {
+    init(_ entry: TodoStore.Row, editing: Bool = false) {
         super.init(frame: .zero)
         let item = entry.item
 
@@ -452,7 +536,15 @@ private final class TodoRow: NSView {
         let box = TodoBox(done: item.done)
         addSubview(box)
 
-        let label = NSTextField(labelWithString: item.text)
+        let label = editing ? NSTextField(string: item.text) : NSTextField(labelWithString: item.text)
+        if editing {
+            // Bare, so the row does not jump or grow a box around itself the
+            // moment it becomes editable. The caret is the only difference.
+            label.isEditable = true
+            label.isBordered = false
+            label.drawsBackground = false
+            label.focusRingType = .none
+        }
         label.font = .systemFont(ofSize: 13, weight: entry.depth == 0 ? .medium : .regular)
         label.textColor = item.done ? PaletteStyle.tertiaryText : PaletteStyle.primaryText
         label.usesSingleLineMode = true
@@ -461,7 +553,7 @@ private final class TodoRow: NSView {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
-        if item.done {
+        if item.done, !editing {
             // Through the attributed string, which carries its own line
             // breaking: assigning one throws `lineBreakMode` away, and a
             // struck-through row was the only one that wrapped.
@@ -527,17 +619,34 @@ private final class TodoBranch: NSView {
     override func draw(_ dirtyRect: NSRect) {
         guard visible else { return }
         PaletteStyle.tertiaryText.setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 1
         // Half-pixel offsets, or a 1pt line lands between two device pixels and
         // comes out as a soft two-pixel smear.
         let x = 0.5
         let middle = (bounds.height / 2).rounded() + 0.5
-        path.move(to: NSPoint(x: x, y: 0))
-        path.line(to: NSPoint(x: x, y: continues ? bounds.height : middle))
-        path.move(to: NSPoint(x: x, y: middle))
-        path.line(to: NSPoint(x: bounds.width, y: middle))
-        path.stroke()
+        let radius: CGFloat = 6
+
+        // The elbow, with the corner rounded off. Both control points sit on
+        // the corner itself, which is the cheap way to a quarter-round that
+        // meets each straight exactly tangent — no kink where they join.
+        let elbow = NSBezierPath()
+        elbow.lineWidth = 1
+        elbow.lineCapStyle = .round
+        elbow.move(to: NSPoint(x: x, y: 0))
+        elbow.line(to: NSPoint(x: x, y: middle - radius))
+        elbow.curve(
+            to: NSPoint(x: x + radius, y: middle),
+            controlPoint1: NSPoint(x: x, y: middle),
+            controlPoint2: NSPoint(x: x, y: middle))
+        elbow.line(to: NSPoint(x: bounds.width, y: middle))
+        elbow.stroke()
+
+        // The trunk carries on past this row only when another child follows.
+        guard continues else { return }
+        let trunk = NSBezierPath()
+        trunk.lineWidth = 1
+        trunk.move(to: NSPoint(x: x, y: middle - radius))
+        trunk.line(to: NSPoint(x: x, y: bounds.height))
+        trunk.stroke()
     }
 }
 
