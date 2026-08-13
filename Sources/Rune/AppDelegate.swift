@@ -118,10 +118,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
                 return nil
             }
 
-            // ⌘W and ⌘P only mean anything with the switcher up; everywhere
-            // else they stay Close Terminal and whatever the terminal wants.
+            // ⌘W and ⌘P only mean anything with a panel up; everywhere else
+            // they stay Close Terminal and whatever the terminal wants.
             if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                controller.isSwitcherVisible {
+                // The todo list borrows the same panel, so ⌘W has to be told
+                // which list it is closing a row out of. ⌘P means nothing there
+                // and is swallowed rather than reaching the terminal behind.
+                if controller.isTodosVisible {
+                    switch event.charactersIgnoringModifiers?.lowercased() {
+                    case "w":
+                        controller.deleteTodoSelection()
+                        return nil
+                    case "p":
+                        return nil
+                    default:
+                        break
+                    }
+                    return event
+                }
                 switch event.charactersIgnoringModifiers?.lowercased() {
                 case "w":
                     // Swallowed even mid-rename, where it does nothing. Letting
@@ -348,6 +363,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func checkForUpdatesAction(_ sender: Any?) { Updater.shared.checkNow() }
     @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
+    @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
+
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
     }
@@ -448,6 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         let tabsMenu = NSMenu(title: "Workspaces")
         bind(.switchWorkspace, to: tabsMenu, #selector(switchWorkspaceAction(_:)))
         bind(.renameWorkspace, to: tabsMenu, #selector(renameWorkspaceAction(_:)))
+        // Bound whether or not the list is switched on. A menu item that
+        // appears and disappears from under the pointer is worse than one that
+        // is always there and does nothing until you enable it, and the action
+        // itself is what checks the setting.
+        bind(.toggleTodos, to: tabsMenu, #selector(toggleTodosAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
         bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))

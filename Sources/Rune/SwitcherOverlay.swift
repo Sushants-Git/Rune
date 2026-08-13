@@ -14,9 +14,28 @@ import Cocoa
 /// Nothing snaps. The panel goes exactly where it is dropped; a guide only
 /// brightens to say you have lined up with it, and stays dashed while it does,
 /// so it reads as a hint rather than a thing that has grabbed you.
+/// Something the overlay can float: the ⌘K switcher, or the todo list.
+///
+/// Both are the same panel showing a different list, so they share the backdrop,
+/// the dragging and the remembered position rather than each growing its own.
+@MainActor
+protocol OverlayPanel where Self: NSView {
+    /// What takes the keyboard when the panel opens.
+    var focusField: NSTextField { get }
+    /// Escape, or a click on the backdrop.
+    func cancel()
+}
+
 @MainActor
 final class SwitcherOverlay: NSView {
-    let palette: SwitcherPalette
+    let panel: NSView
+
+    /// The switcher, when the panel is one. Nil while the todo list is up,
+    /// which is what keeps ⌘W and ⌘P from acting on workspaces that aren't on
+    /// screen.
+    var palette: SwitcherPalette? { panel as? SwitcherPalette }
+
+    private let onPanelCancel: () -> Void
 
     /// Where the panel sits, as a fraction of the room it has to move in.
     /// (0, 0) is top-left, (1, 1) bottom-right, (0.5, 0) the default.
@@ -57,8 +76,9 @@ final class SwitcherOverlay: NSView {
         }
     }
 
-    init(palette: SwitcherPalette) {
-        self.palette = palette
+    init(panel: some OverlayPanel) {
+        self.panel = panel
+        self.onPanelCancel = { [weak panel] in panel?.cancel() }
         self.anchor = Self.saved
         super.init(frame: .zero)
 
@@ -69,10 +89,10 @@ final class SwitcherOverlay: NSView {
         layer?.backgroundColor = NSColor.black
             .withAlphaComponent(Settings.shared.backdropDim).cgColor
 
-        palette.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(palette)
-        horizontal = palette.centerXAnchor.constraint(equalTo: centerXAnchor)
-        vertical = palette.topAnchor.constraint(equalTo: topAnchor)
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(panel)
+        horizontal = panel.centerXAnchor.constraint(equalTo: centerXAnchor)
+        vertical = panel.topAnchor.constraint(equalTo: topAnchor)
         NSLayoutConstraint.activate([horizontal, vertical])
         applyAnchor()
     }
@@ -97,24 +117,24 @@ final class SwitcherOverlay: NSView {
 
     /// The panel's size, without needing it to have been laid out yet.
     ///
-    /// Not `palette.frame`. On the first layout pass the palette has no frame,
-    /// so a `travel` derived from it is zero — and an anchor multiplied by zero
-    /// is the default position. That is the whole reason a dragged panel came
-    /// back centred: the saved value was read correctly and then multiplied
-    /// away. The width is a constant, and `fittingSize` gives the height
-    /// without waiting for anyone.
+    /// Not `panel.frame`. On the first layout pass the panel has no frame, so a
+    /// `travel` derived from it is zero — and an anchor multiplied by zero is
+    /// the default position. That is the whole reason a dragged panel came back
+    /// centred: the saved value was read correctly and then multiplied away.
+    /// The width is a constant, and `fittingSize` gives the height without
+    /// waiting for anyone.
     private var panelSize: CGSize {
         CGSize(
             width: SwitcherPalette.width,
-            height: palette.frame.height > 0 ? palette.frame.height : palette.fittingSize.height)
+            height: panel.frame.height > 0 ? panel.frame.height : panel.fittingSize.height)
     }
 
     /// How far the panel may travel on each axis before it hits the margins.
     private var travel: CGSize {
-        let panel = panelSize
+        let size = panelSize
         return CGSize(
-            width: max(0, bounds.width - panel.width - Self.margin * 2),
-            height: max(0, bounds.height - panel.height - Self.margin * 2))
+            width: max(0, bounds.width - size.width - Self.margin * 2),
+            height: max(0, bounds.height - size.height - Self.margin * 2))
     }
 
     /// Two verticals, at the thirds.
@@ -141,8 +161,8 @@ final class SwitcherOverlay: NSView {
     // without either having to know about the other.
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        guard palette.frame.contains(point) else {
-            palette.cancel()
+        guard panel.frame.contains(point) else {
+            onPanelCancel()
             return
         }
         dragOrigin = point

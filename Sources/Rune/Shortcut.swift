@@ -98,6 +98,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
     case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
     case zoomSplit, equalizeSplits
     case switchWorkspace, renameWorkspace, nextTab, previousTab
+    case toggleTodos
     case find, findNext, findPrevious
 
     var title: String {
@@ -120,6 +121,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .zoomSplit: "Zoom Split"
         case .equalizeSplits: "Equalize Splits"
         case .switchWorkspace: "Switch to Workspace…"
+        case .toggleTodos: "Todo List"
         case .renameWorkspace: "Rename Workspace…"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
@@ -137,7 +139,8 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .increaseFont, .decreaseFont, .resetFont, .toggleFullScreen: "View"
         case .splitRight, .splitDown, .focusSplitLeft, .focusSplitRight,
              .focusSplitUp, .focusSplitDown, .zoomSplit, .equalizeSplits: "Splits"
-        case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab: "Workspaces"
+        case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .toggleTodos:
+            "Workspaces"
         case .find, .findNext, .findPrevious: "Find"
         }
     }
@@ -162,6 +165,10 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .zoomSplit: KeyChord("\r", [.command, .shift])
         case .equalizeSplits: KeyChord("=", [.command, .option])
         case .switchWorkspace: KeyChord("k")
+        // ⌘J is free in a terminal: nothing in Rune claimed it and libghostty
+        // does not bind it, so the list can have a key of its own rather than
+        // a chord nobody can reach.
+        case .toggleTodos: KeyChord("j")
         case .renameWorkspace: KeyChord("r")
         case .nextTab: KeyChord("]", [.command, .shift])
         case .previousTab: KeyChord("[", [.command, .shift])

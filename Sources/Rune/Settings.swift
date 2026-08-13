@@ -86,6 +86,20 @@ final class Settings {
         }
     }
 
+    /// Whether `⌘J` opens a todo list in the switcher's panel.
+    ///
+    /// Off by default, and the only feature in Rune that is. A terminal that
+    /// grew a task manager nobody asked for would be a worse terminal; this is
+    /// here for people who want one and invisible to everyone else, down to the
+    /// key doing nothing until it is switched on.
+    var todosEnabled: Bool {
+        get { defaults.bool(forKey: Keys.todosEnabled) }
+        set {
+            defaults.set(newValue, forKey: Keys.todosEnabled)
+            notify(.appearance)
+        }
+    }
+
     enum Defaults {
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
@@ -161,6 +175,7 @@ final class Settings {
         static let panelBackground = "RunePanelBackground"
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
+        static let todosEnabled = "RuneTodosEnabled"
         static let shortcuts = "RuneShortcuts"
     }
 

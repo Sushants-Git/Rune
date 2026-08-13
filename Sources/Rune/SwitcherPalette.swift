@@ -68,8 +68,9 @@ enum PaletteStyle {
 /// (the host swaps the workspace in behind the overlay), Enter keeps it, and
 /// Escape puts you back where you started.
 @MainActor
-final class SwitcherPalette: NSView {
+final class SwitcherPalette: NSView, OverlayPanel {
     let searchField = NSTextField()
+    var focusField: NSTextField { searchField }
 
     /// Pulled fresh rather than snapshotted: a workspace can close while the
     /// switcher is open, and selecting it would resurrect a dead surface.
@@ -130,7 +131,7 @@ final class SwitcherPalette: NSView {
     /// `NSGlassEffectView` is macOS 26 and later; Rune runs on 13. The fallback
     /// is the same idea one generation earlier, and because the scrim carries
     /// the contrast either way, the two look closer than they otherwise would.
-    private static func makeBackdrop(cornerRadius: CGFloat) -> NSView {
+    static func makeBackdrop(cornerRadius: CGFloat) -> NSView {
         if #available(macOS 26, *) {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
@@ -152,8 +153,8 @@ final class SwitcherPalette: NSView {
     }
     /// Rows are inset from the panel edge so the selection pill has somewhere
     /// to sit without touching the sides.
-    fileprivate static let rowInset: CGFloat = 6
-    fileprivate static let contentInset: CGFloat = 14
+    static let rowInset: CGFloat = 6
+    static let contentInset: CGFloat = 14
 
     init(
         items: @escaping () -> [PaletteItem],
@@ -792,7 +793,7 @@ private final class PaletteRow: NSView {
 /// edge-to-edge bar AppKit draws by default. Neutral rather than accent-tinted:
 /// the list is scanned constantly, and a saturated bar under every keypress is
 /// tiring.
-private final class PaletteRowView: NSTableRowView {
+final class PaletteRowView: NSTableRowView {
     override var isEmphasized: Bool {
         get { false }
         set { _ = newValue }
@@ -833,7 +834,7 @@ final class PanelGrip: NSView {
 }
 
 /// A hairline that reads as a seam rather than as a system separator.
-private final class Divider: NSView {
+final class Divider: NSView {
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: 1)
     }
@@ -994,7 +995,7 @@ private final class Chip: NSView {
 }
 
 /// A key drawn as a key, for the footer hints.
-private final class Keycap: NSView {
+final class Keycap: NSView {
     init(_ text: String) {
         super.init(frame: .zero)
 

@@ -303,7 +303,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // Not the palette while a row is being renamed: reloading rebuilds the
         // table and would tear the field editor out from under the cursor.
         var work: ChromeWork = [.tabBar]
-        if overlay?.palette.isRenaming != true { work.insert(.palette) }
+        if overlay?.palette?.isRenaming != true { work.insert(.palette) }
         scheduleChromeSync(work)
     }
 
@@ -325,8 +325,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         if work.contains(.title) { syncWindowTitle() }
         if work.contains(.colors) { syncChrome() }
         if work.contains(.tabBar) { syncTabBar() }
-        if work.contains(.palette), overlay?.palette.isRenaming != true {
-            overlay?.palette.reload()
+        if work.contains(.palette), overlay?.palette?.isRenaming != true {
+            overlay?.palette?.reload()
         }
     }
 
@@ -423,7 +423,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tab.applyInactiveWash(inactivePaneWash)
         focus(view)
         syncTabBar()
-        overlay?.palette.reload()
+        overlay?.palette?.reload()
     }
 
     // MARK: - Closing
@@ -448,7 +448,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         }
 
         syncTabBar()
-        overlay?.palette.reload()
+        overlay?.palette?.reload()
     }
 
     /// Close a whole tab — every split in it.
@@ -461,7 +461,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         }
         closeTab(tab, in: workspace)
         syncTabBar()
-        overlay?.palette.reload()
+        overlay?.palette?.reload()
     }
 
     private func closeTab(_ tab: Tab, in workspace: Workspace) {
@@ -819,7 +819,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             // The row just moved. Follow it, so pinning leaves you on the thing
             // you pinned rather than on whatever slid into its old position.
             let destination = self.orderedWorkspaces.firstIndex { $0 === workspace }
-            self.overlay?.palette.reload(selecting: destination)
+            self.overlay?.palette?.reload(selecting: destination)
         }
 
         palette.onCloseItem = { [weak self] index in
@@ -841,7 +841,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             let remaining = self.orderedWorkspaces.count
             guard remaining > 0 else { return }
             // Closing the last one takes the window, and the overlay with it.
-            self.overlay?.palette.reload(selecting: min(index, remaining - 1), preview: true)
+            self.overlay?.palette?.reload(selecting: min(index, remaining - 1), preview: true)
         }
 
         palette.onRename = { [weak self] index, name in
@@ -851,27 +851,56 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             self.syncWindowTitle()
         }
 
-        let overlay = SwitcherOverlay(palette: palette)
+        present(palette)
+    }
+
+    /// Float a panel on the backdrop, taking whatever was already there down.
+    private func present(_ panel: some OverlayPanel) {
+        let overlay = SwitcherOverlay(panel: panel)
         overlay.frame = container.bounds
         overlay.autoresizingMask = [.width, .height]
         container.addSubview(overlay, positioned: .above, relativeTo: nil)
         self.overlay = overlay
-        window?.makeFirstResponder(palette.searchField)
+        window?.makeFirstResponder(panel.focusField)
+    }
+
+    // MARK: - Todos
+
+    var isTodosVisible: Bool { overlay?.panel is TodoPalette }
+
+    /// ⌘J, when it's switched on in Settings.
+    ///
+    /// Opening it takes the switcher down if that was up, because they share
+    /// the one panel — and because they are two answers to the same question at
+    /// different scopes, so wanting both at once is not a state worth having.
+    func toggleTodos() {
+        guard Settings.shared.todosEnabled else { return }
+        if isTodosVisible {
+            closeSwitcher()
+            return
+        }
+        if isSwitcherVisible { dismissSwitcher() }
+        present(TodoPalette(onDismiss: { [weak self] in self?.closeSwitcher() }))
+    }
+
+    /// ⌘W with the todo list up: delete the highlighted one.
+    func deleteTodoSelection() {
+        (overlay?.panel as? TodoPalette)?.deleteSelected()
     }
 
     /// Close the switcher without selecting, returning to where it was opened.
     func dismissSwitcher() {
-        overlay?.palette.cancel()
+        overlay?.palette?.cancel()
     }
 
     /// ⌘W in the switcher: close the highlighted workspace, stay open.
     func closeSwitcherSelection() {
-        overlay?.palette.closeSelected()
+        overlay?.palette?.closeSelected()
     }
 
     /// ⌘P in the switcher: pin the highlighted workspace to the top, or unpin.
     func togglePinOnSwitcherSelection() {
-        overlay?.palette.togglePinOnSelected()
+        overlay?.palette?.togglePinOnSelected()
     }
 
     /// Put the switcher away because something else is about to take over the
@@ -903,18 +932,18 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Renaming
 
-    var isRenaming: Bool { overlay?.palette.isRenaming ?? false }
+    var isRenaming: Bool { overlay?.palette?.isRenaming ?? false }
 
     /// ⌘R names a workspace, editing the ⌘K row in place. If the switcher
     /// isn't up it opens first — the name lives in that list, so that's where
     /// you should be looking while you change it.
     func renameWorkspace() {
         if overlay == nil { showSwitcher() }
-        overlay?.palette.beginRename()
+        overlay?.palette?.beginRename()
     }
 
     func cancelRename() {
-        overlay?.palette.cancelRename()
+        overlay?.palette?.cancelRename()
     }
 
     /// What marks the row: the agent running there if Rune knows it, else the

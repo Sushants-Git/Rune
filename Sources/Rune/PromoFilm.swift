@@ -170,14 +170,14 @@ enum PromoFilm {
         at(1.9) { caption(nil, "Each row says what its agent is doing.") }
 
         at(2.0) { caption("↓", "the terminal behind it changes") }
-        at(0.6) { controller.overlay?.palette.moveSelection(by: 1) }
-        at(0.9) { controller.overlay?.palette.moveSelection(by: 1) }
+        at(0.6) { controller.overlay?.palette?.moveSelection(by: 1) }
+        at(0.9) { controller.overlay?.palette?.moveSelection(by: 1) }
         // And back up one, which is the honest way to use it: look at a couple,
         // then land on the one you meant.
-        at(0.9) { controller.overlay?.palette.moveSelection(by: -1) }
+        at(0.9) { controller.overlay?.palette?.moveSelection(by: -1) }
 
         at(1.1) { caption("⏎", "jump there") }
-        at(0.45) { controller.overlay?.palette.commit() }
+        at(0.45) { controller.overlay?.palette?.commit() }
 
         // Held on to so the zoom can go back to the pane with the agent in it.
         // Zooming the shell we just opened is technically the same feature and

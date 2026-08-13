@@ -360,6 +360,8 @@ final class SettingsWindowController: NSWindowController {
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
     private let lightIconTiles = NSButton(
         checkboxWithTitle: "", target: nil, action: nil)
+    private let todosEnabled = NSButton(
+        checkboxWithTitle: "", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
         accentWell.onChange = { [weak self] color in
@@ -373,6 +375,9 @@ final class SettingsWindowController: NSWindowController {
         lightIconTiles.target = self
         lightIconTiles.action = #selector(lightIconTilesToggled)
         lightIconTiles.title = ""
+        todosEnabled.target = self
+        todosEnabled.action = #selector(todosEnabledToggled)
+        todosEnabled.title = ""
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -421,6 +426,14 @@ final class SettingsWindowController: NSWindowController {
                         + "the panel. Icons that ship their own background — Codex's white "
                         + "card, opencode's black square — keep it either way.",
                     control: lightIconTiles),
+            ]),
+            section("Todo list", [
+                SettingsRow(
+                    title: "Enable the todo list",
+                    caption: "Adds ⌘J, which opens a list of what you have to do in the "
+                        + "same panel ⌘K uses. Off by default; with it off the key does "
+                        + "nothing. ⏎ adds, ⌘⏎ ticks off, ⌘W deletes.",
+                    control: todosEnabled),
             ]),
             section("Terminal", [
                 SettingsRow(
@@ -477,10 +490,15 @@ final class SettingsWindowController: NSWindowController {
         dimSlider.doubleValue = Double(settings.backdropDim)
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
         lightIconTiles.state = settings.lightIconTiles ? .on : .off
+        todosEnabled.state = settings.todosEnabled ? .on : .off
     }
 
     @objc private func lightIconTilesToggled() {
         Settings.shared.lightIconTiles = lightIconTiles.state == .on
+    }
+
+    @objc private func todosEnabledToggled() {
+        Settings.shared.todosEnabled = todosEnabled.state == .on
     }
 
     @objc private func systemAccentToggled() {
