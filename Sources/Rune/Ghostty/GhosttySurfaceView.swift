@@ -545,7 +545,11 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         trackingAreas.forEach { removeTrackingArea($0) }
         addTrackingArea(NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeInActiveApp],
+            // `.activeAlways` rather than `.activeInActiveApp`, which is what
+            // Ghostty uses and for the reason it gives: a program with mouse
+            // reporting on should still see the pointer move over it when Rune
+            // is not the active app.
+            options: [.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeAlways],
             owner: self,
             userInfo: nil))
     }
@@ -571,6 +575,11 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     override func mouseEntered(with event: NSEvent) {
         mouseEntered = true
         mouseShape.set()
+        // Where the pointer came in. Each pane is its own surface with its own
+        // idea of where the mouse is, and that idea is only ever updated by a
+        // move — so a surface you left an hour ago still believes the pointer
+        // is where it was then, until this.
+        sendMousePosition(event)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -594,6 +603,21 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
         _ state: ButtonState
     ) {
         guard let surface else { return }
+        // Say where the pointer is before saying what it did.
+        //
+        // libghostty resolves a click against the position it was last told
+        // about, and it is only ever told by a move. Two things routinely stop
+        // one arriving: `mouse-hide-while-typing` hides the pointer while you
+        // type, so a click with no intervening movement reports the cell you
+        // were last hovering rather than the one under the cursor; and a click
+        // that lands in a *different* pane resolves against that pane's own
+        // stale position, since each split is a separate surface. Both read the
+        // same way — the click selects a line you did not point at.
+        //
+        // Ghostty does not need this because one surface fills its window, so
+        // the pointer is nearly always generating moves in the surface you are
+        // about to click. Splits are what make it Rune's problem.
+        sendMousePosition(event)
         // A click anywhere in the terminal should also give it keyboard focus.
         //
         // Unconditionally, *not* gated on "am I already first responder": that
@@ -621,6 +645,15 @@ final class GhosttySurfaceView: NSView, @MainActor NSTextInputClient {
     override func otherMouseDragged(with event: NSEvent) { mouseMove(event) }
 
     private func mouseMove(_ event: NSEvent) {
+        sendMousePosition(event)
+    }
+
+    /// Tell libghostty where the pointer is, in this view's coordinates.
+    ///
+    /// No y flip: the view is flipped, so `convert` already hands back a
+    /// top-left origin, which is what the core wants. Ghostty's own view is
+    /// unflipped and subtracts from the height to get to the same place.
+    private func sendMousePosition(_ event: NSEvent) {
         guard let surface else { return }
         let pos = convert(event.locationInWindow, from: nil)
         ghostty_surface_mouse_pos(
