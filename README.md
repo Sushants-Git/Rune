@@ -69,8 +69,11 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⇧↵` | zoom a pane, or put it back |
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
+| `⌘J` | todo list, once you switch it on |
 
-Rebind any of them in **Settings → Shortcuts**. Your
+Rebind any of them in **Settings → Shortcuts**. The todo list is off by default:
+turn it on in **Settings → Appearance** and `⌘J` opens a list of what you have
+to do in the same panel, where `⏎` adds, `⌘⏎` ticks off and `⌘W` deletes. Your
 `~/.config/ghostty/config` carries over untouched.
 
 ## The `rune` command
@@ -103,7 +106,7 @@ git clone https://github.com/Sushants-Git/Rune.git && cd Rune
 
 If it stops on `cannot execute tool 'metal'`, run
 `xcodebuild -downloadComponent MetalToolchain` and try again. Releases are cut
-by pushing a tag: `git tag v0.13.9 && git push origin v0.13.9`.
+by pushing a tag: `git tag v0.14.0 && git push origin v0.14.0`.
 
 [**Design notes**](docs/design-notes.md) cover why it's built this way, and the
 parts that cost real debugging time.
