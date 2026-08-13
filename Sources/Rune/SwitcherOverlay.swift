@@ -20,8 +20,9 @@ import Cocoa
 /// the dragging and the remembered position rather than each growing its own.
 @MainActor
 protocol OverlayPanel where Self: NSView {
-    /// What takes the keyboard when the panel opens.
-    var focusField: NSTextField { get }
+    /// What should hold the keyboard right now. Not fixed: the todo list
+    /// hands it between its own list and its field as you type.
+    var focusView: NSView { get }
     /// Escape, or a click on the backdrop.
     func cancel()
 }
@@ -34,6 +35,12 @@ final class SwitcherOverlay: NSView {
     /// which is what keeps ⌘W and ⌘P from acting on workspaces that aren't on
     /// screen.
     var palette: SwitcherPalette? { panel as? SwitcherPalette }
+
+    /// What should hold the keyboard while this panel is up, asked afresh each
+    /// time: a panel can move it around while it is open.
+    var panelFocusView: NSView { panelRef.focusView }
+
+    private let panelRef: any OverlayPanel
 
     private let onPanelCancel: () -> Void
 
@@ -78,6 +85,7 @@ final class SwitcherOverlay: NSView {
 
     init(panel: some OverlayPanel) {
         self.panel = panel
+        self.panelRef = panel
         self.onPanelCancel = { [weak panel] in panel?.cancel() }
         self.anchor = Self.saved
         super.init(frame: .zero)

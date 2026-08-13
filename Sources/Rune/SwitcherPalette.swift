@@ -72,7 +72,7 @@ enum PaletteStyle {
 @MainActor
 final class SwitcherPalette: NSView, OverlayPanel {
     let searchField = NSTextField()
-    var focusField: NSTextField { searchField }
+    var focusView: NSView { searchField }
 
     /// Pulled fresh rather than snapshotted: a workspace can close while the
     /// switcher is open, and selecting it would resurrect a dead surface.

@@ -10,12 +10,19 @@ struct TodoItem: Codable, Equatable, Identifiable {
     var text: String
     var done: Bool
     let created: Date
+    /// The task this one sits under, or nil for a task in its own right.
+    ///
+    /// Optional on purpose rather than a level number: a missing key decodes
+    /// to nil, so a list written before there were sub-tasks loads as a list of
+    /// roots instead of failing.
+    var parent: UUID?
 
-    init(text: String) {
+    init(text: String, parent: UUID? = nil) {
         self.id = UUID()
         self.text = text
         self.done = false
         self.created = Date()
+        self.parent = parent
     }
 }
 
@@ -46,24 +53,50 @@ final class TodoStore {
 
     // MARK: - Reading
 
-    /// Undone first, each half in the order it was added.
+    /// A row as the list draws it: the task, how deep it sits, and whether it
+    /// is the last of its parent's children — which is the only thing the
+    /// branch glyph needs to know to come out as a tree.
+    struct Row {
+        let item: TodoItem
+        let depth: Int
+        let isLast: Bool
+    }
+
+    /// Roots in the order they were added, each followed by its children.
     ///
-    /// Sorted on read rather than on write so that ticking something off does
-    /// not make it jump out from under the pointer: the list settles the next
-    /// time the panel opens, which is when you are looking for what is left
-    /// rather than at what you just finished.
-    var ordered: [TodoItem] {
-        items.filter { !$0.done } + items.filter(\.done)
+    /// Creation order, and no sorting of done to the bottom. A flat list can
+    /// be re-sorted freely; a tree cannot, because moving a parent moves its
+    /// children with it and the shape you are reading changes under you. Done
+    /// tasks stay where they are and go quiet instead.
+    var rows: [Row] {
+        items.filter { $0.parent == nil }.flatMap { root -> [Row] in
+            let children = self.children(of: root.id)
+            return [Row(item: root, depth: 0, isLast: children.isEmpty)]
+                + children.enumerated().map { index, child in
+                    Row(item: child, depth: 1, isLast: index == children.count - 1)
+                }
+        }
+    }
+
+    func children(of parent: UUID) -> [TodoItem] {
+        items.filter { $0.parent == parent }
     }
 
     var remaining: Int { items.filter { !$0.done }.count }
 
     // MARK: - Writing
 
-    func add(_ text: String) {
+    /// Only two levels. A sub-task handed another sub-task's id is attached to
+    /// that one's parent instead, so pressing "add under this" on a child does
+    /// the obvious thing rather than growing a third level nobody asked for.
+    func add(_ text: String, parent: UUID? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        items.append(TodoItem(text: trimmed))
+        var under = parent
+        if let parent, let existing = items.first(where: { $0.id == parent }) {
+            under = existing.parent ?? parent
+        }
+        items.append(TodoItem(text: trimmed, parent: under))
         save()
     }
 
@@ -73,9 +106,23 @@ final class TodoStore {
         save()
     }
 
+    /// Takes the task's children with it. Leaving them behind would orphan
+    /// them at a parent that no longer exists, which is a row the tree cannot
+    /// draw and you cannot reach.
     func remove(_ id: UUID) {
-        items.removeAll { $0.id == id }
+        items.removeAll { $0.id == id || $0.parent == id }
         save()
+    }
+
+    /// The task and everything under it, as text, ready for the clipboard.
+    func copyText(for id: UUID) -> String? {
+        guard let item = items.first(where: { $0.id == id }) else { return nil }
+        // A child copies as itself. Only a parent brings its list along, since
+        // that is the thing you are pointing at when you ask for it.
+        guard item.parent == nil else { return item.text }
+        let children = self.children(of: id)
+        guard !children.isEmpty else { return item.text }
+        return ([item.text] + children.map { "  - \($0.text)" }).joined(separator: "\n")
     }
 
     func rename(_ id: UUID, to text: String) {

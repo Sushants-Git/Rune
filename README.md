@@ -73,8 +73,9 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 
 Rebind any of them in **Settings → Shortcuts**. The todo list is off by default:
 turn it on in **Settings → Appearance** and `⌘J` opens a list of what you have
-to do in the same panel, where `⏎` adds, `⌘⏎` ticks off and `⌘W` deletes. Your
-`~/.config/ghostty/config` carries over untouched.
+to do in the same panel, as a tree. In the list `a` adds, `A` adds a sub-task,
+`c` copies and `⏎` ticks off. Your `~/.config/ghostty/config` carries over
+untouched.
 
 ## The `rune` command
 

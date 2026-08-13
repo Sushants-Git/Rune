@@ -862,7 +862,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         overlay.autoresizingMask = [.width, .height]
         container.addSubview(overlay, positioned: .above, relativeTo: nil)
         self.overlay = overlay
-        window?.makeFirstResponder(panel.focusField)
+        window?.makeFirstResponder(panel.focusView)
     }
 
     // MARK: - Todos
@@ -1044,21 +1044,26 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     func windowDidBecomeKey(_ notification: Notification) {
         activeSurface?.setFocus(true)
 
-        // The ⌘K panel owns the keyboard for as long as it's on screen, and
-        // that has to survive leaving the app and coming back. Becoming key
-        // installs the window's *initial* first responder — a terminal — so
-        // without this the panel stayed up while ↑ and ↓ went to the pane
-        // behind it, which reads as the app ignoring the keys.
-        if let palette = overlay?.palette {
+        // Whichever panel is up owns the keyboard for as long as it's on
+        // screen, and that has to survive leaving the app and coming back.
+        // Becoming key installs the window's *initial* first responder — a
+        // terminal — so without this the panel stayed up while ↑ and ↓ went to
+        // the pane behind it, which reads as the app ignoring the keys.
+        //
+        // Asked of the panel rather than of the switcher specifically. It was
+        // written when the switcher was the only panel there could be, and the
+        // todo list came back from a trip to another app with no caret and its
+        // typing going into the terminal underneath.
+        if let field = overlay?.panelFocusView {
             // A rename owns its own field; the search field must not take it
-            // back mid-edit.
-            guard !palette.isRenaming else { return }
+            // back mid-edit. Only the switcher has renames.
+            if overlay?.palette?.isRenaming == true { return }
             // An editing text field is represented by the shared field editor,
-            // not by itself, so "is the search field focused" is a question
+            // not by itself, so "is the panel's field focused" is a question
             // about who that editor is working for.
             let editor = window?.firstResponder as? NSTextView
-            if editor?.delegate !== palette.searchField {
-                window?.makeFirstResponder(palette.searchField)
+            if editor?.delegate !== field {
+                window?.makeFirstResponder(field)
             }
             return
         }
