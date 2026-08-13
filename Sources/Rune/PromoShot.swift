@@ -62,11 +62,11 @@ enum PromoShot {
 
     private static func row(
         _ title: String, _ subtitle: String, _ agent: AgentIcon?, _ status: Status,
-        current: Bool = false, pinned: Bool = false
+        current: Bool = false, pinned: Bool = false, zoomed: Bool = false
     ) -> PaletteItem {
         PaletteItem(
             title: title, subtitle: subtitle, badge: nil,
-            isCurrent: current, isPinned: pinned,
+            isCurrent: current, isPinned: pinned, isZoomed: zoomed,
             icon: agent?.image, status: status,
             searchText: title, editableName: "", automaticTitle: title)
     }

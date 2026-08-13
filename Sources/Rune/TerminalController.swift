@@ -787,6 +787,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                                         badge: Self.badge(for: workspace),
                         isCurrent: workspace === origin,
                         isPinned: self.isPinned(workspace),
+                        isZoomed: workspace.activeTab?.isZoomed ?? false,
                         icon: Self.icon(for: workspace),
                         status: workspace.status,
                         searchText: workspace.searchText,

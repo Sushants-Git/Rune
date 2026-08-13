@@ -230,6 +230,12 @@ the zoom, so the state is both visible and one click from reversible. Moving to
 another pane already unzooms on its own, since focusing something you can't see
 would be worse.
 
+A zoomed pane is also marked in `⌘K`, since the state outlives the window you
+set it in: the row carries the same expand glyph the title bar uses. A glyph
+rather than a word, because "zoomed" is jargon and "full screen" is both long
+and wrong — the pane fills its tab, not the display — and either would crowd out
+the status the row exists to report.
+
 `⌘P` pins the highlighted workspace to the top of the list, and pinned rows
 stay in **the order you pinned them** — pinning A then B leaves A above B, not
 wherever they happen to sit in creation order. That's the point: pinning twice

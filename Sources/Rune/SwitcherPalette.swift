@@ -10,6 +10,8 @@ struct PaletteItem {
     let isCurrent: Bool
     /// Pinned to the top with ⌘P.
     let isPinned: Bool
+    /// One pane is filling the tab, from ⌘⇧↵.
+    let isZoomed: Bool
     /// The agent running there, or the project's own icon — either replaces
     /// the generic terminal glyph.
     let icon: NSImage?
@@ -675,6 +677,14 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         if let text = item.badge {
             cluster.addArrangedSubview(Chip(text: text))
         }
+        // A glyph rather than a word. "Zoomed" is jargon and "full screen" is
+        // both long and wrong — the pane fills its tab, not the display — and
+        // either would crowd out the status this row exists to report. The mark
+        // is the one the title bar already uses for the same state.
+        if item.isZoomed {
+            cluster.addArrangedSubview(
+                Chip(symbol: "arrow.up.left.and.arrow.down.right", hint: "A pane is zoomed"))
+        }
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
         }
@@ -960,6 +970,27 @@ private final class IconTile: NSView {
 /// tinted: these annotate a row, they don't call for action, and an accent
 /// colour on every row's right edge is noise.
 private final class Chip: NSView {
+    /// A chip carrying a mark instead of a word, for the states a word would
+    /// be too long for. Same box, so it sits in the cluster like any other.
+    convenience init(symbol: String, hint: String) {
+        self.init(text: "")
+        toolTip = hint
+        subviews.forEach { $0.removeFromSuperview() }
+
+        let image = NSImageView()
+        image.image = NSImage(systemSymbolName: symbol, accessibilityDescription: hint)
+        image.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
+        image.contentTintColor = PaletteStyle.tertiaryText
+        image.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(image)
+        NSLayoutConstraint.activate([
+            image.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            image.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            image.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: 17),
+        ])
+    }
+
     init(text: String, emphasised: Bool = false) {
         super.init(frame: .zero)
 
