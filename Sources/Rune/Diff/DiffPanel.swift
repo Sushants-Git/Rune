@@ -208,7 +208,8 @@ final class DiffPanel: NSView {
     }
 
     private func redraw(preservingScroll: Bool = false) {
-        diffView.show(files, preservingScroll: preservingScroll)
+        diffView.show(
+            files, hidden: HiddenFiles.all(root: root), preservingScroll: preservingScroll)
         fileList.show(files, root: root)
 
         let added = files.reduce(0) { $0 + $1.addedCount }
@@ -275,9 +276,11 @@ final class DiffPanel: NSView {
             let lines = diffView.selectedLineCount
             hint.stringValue = (lines > 1
                 ? "\(lines) lines · space stage · u unstage · s whole hunk"
-                : "⇥ files · space stage line · s hunk · u unstage · c commit") + sidebar
+                : "⇥ files · space stages the line · s the hunk · u unstages · h folds")
+                + sidebar
         } else {
-            hint.stringValue = "⇥ diff · space stage file · v viewed · c commit · b sidebar"
+            hint.stringValue =
+                "⇥ diff · space stage · v viewed · h fold · c commit · b sidebar"
         }
     }
 
@@ -301,8 +304,8 @@ final class DiffPanel: NSView {
         updateHint()
     }
 
-    /// `s` / `S`: the hunk the caret is in, staged or taken back out.
-    func stageHunk(reverse: Bool) {
+    /// `s` / `S`: the hunk the caret is in, moved across or explicitly back.
+    func stageHunk(reverse: Bool? = nil) {
         // Only in the diff. In the list the unit is the file, and `space`
         // already means that — a second key for it would be a second answer to
         // a question nobody asked twice.
@@ -324,31 +327,66 @@ final class DiffPanel: NSView {
 
     /// Stage — or unstage — whatever the selection in the diff covers.
     ///
-    /// A caret counts as its own line, so the common case is one keystroke on
-    /// the line you are already looking at; drag across ten and it is those ten.
-    /// Nothing here is per-hunk as a special case: a hunk is just what you get
-    /// when the selection happens to cover one.
-    func stageSelectedLines(reverse: Bool) {
+    /// `space` moves the selection across, the same word it means in the file
+    /// list: whatever is not staged gets staged, and if all of it is already
+    /// staged it comes back out. One key, one idea, on both sides of the panel.
+    /// `u` is the explicit way back for when you do not want to think about
+    /// which way a toggle will go.
+    func stageSelectedLines(reverse: Bool? = nil) {
         let changes = diffView.selectedChanges()
-        guard !changes.isEmpty, !directory.isEmpty else {
-            status.stringValue = "Nothing selected."
+        let lines = changes.flatMap { change in
+            change.hunks.flatMap { entry in
+                entry.lines.sorted().compactMap { entry.hunk.lines[safe: $0] }
+            }
+        }.filter { $0.kind != .context }
+
+        guard !lines.isEmpty else {
+            status.stringValue = "That selection has no changes in it."
             return
         }
-        do {
-            if !reverse {
-                let new = changes.filter(\.file.untracked).map(\.file.displayPath)
-                try GitDiff.intentToAdd(Array(Set(new)), in: directory)
-            }
-            var lines = 0
-            for change in changes {
-                guard let patch = GitDiff.patch(for: change.file, selecting: change.hunks) else {
-                    continue
+        // Nothing to decide when the caller already said which way.
+        let staging = reverse.map { !$0 } ?? !lines.allSatisfy(\.staged)
+        apply(changes, staging: staging)
+    }
+
+    /// Move the lines that can move, and leave the rest alone.
+    ///
+    /// A line already where it is going is dropped rather than sent again. It
+    /// is not merely redundant: a patch describing a change the index already
+    /// has does not apply, and git would refuse the whole thing — so selecting
+    /// four lines with one already staged used to stage none of them.
+    private func apply(
+        _ changes: [(file: GitDiff.File, hunks: [(hunk: GitDiff.Hunk, lines: Set<Int>)])],
+        staging: Bool
+    ) {
+        guard !directory.isEmpty else { return }
+
+        var wanted: [(path: String, untracked: Bool,
+                      lines: [(kind: GitDiff.Line.Kind, text: String)])] = []
+        for change in changes {
+            var picked: [(kind: GitDiff.Line.Kind, text: String)] = []
+            for entry in change.hunks {
+                for index in entry.lines.sorted() {
+                    guard let line = entry.hunk.lines[safe: index], line.kind != .context,
+                          line.staged != staging
+                    else { continue }
+                    picked.append((line.kind, line.text))
                 }
-                try GitDiff.apply(patch: patch, in: directory, reverse: reverse)
-                lines += change.hunks.reduce(0) { $0 + $1.lines.count }
             }
-            guard lines > 0 else {
-                status.stringValue = "That selection has no changes in it."
+            if !picked.isEmpty {
+                wanted.append((change.file.displayPath, change.file.untracked, picked))
+            }
+        }
+        guard !wanted.isEmpty else {
+            status.stringValue = staging
+                ? "That is already staged."
+                : "Nothing in that selection is staged."
+            return
+        }
+
+        do {
+            guard try GitDiff.move(wanted, staging: staging, in: directory) > 0 else {
+                status.stringValue = "Could not find those lines in the index."
                 return
             }
             onNeedsReload?()
@@ -358,6 +396,20 @@ final class DiffPanel: NSView {
     }
 
     func toggleViewedSelection() { toggleViewed(fileList.selectedFiles) }
+
+    /// `h`: fold a file's diff away, or bring it back.
+    ///
+    /// From the list it is the highlighted files; from the diff it is the file
+    /// the caret is in, so the key means the same thing on either side without
+    /// asking you to go and select the row first.
+    func toggleHiddenSelection() {
+        let files = isReadingDiff
+            ? [diffView.fileAtCaret].compactMap { $0 }
+            : fileList.selectedFiles
+        guard !files.isEmpty else { return }
+        HiddenFiles.toggle(files, root: root)
+        redraw(preservingScroll: true)
+    }
 
     private func toggleViewed(_ selected: [GitDiff.File]) {
         guard !selected.isEmpty else { return }

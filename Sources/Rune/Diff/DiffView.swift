@@ -60,6 +60,10 @@ final class DiffView: NSView {
     private var origins: [Origin?] = []
     private var lineStarts: [Int] = []
     private var shownFiles: [GitDiff.File] = []
+    /// Which file each rendered line belongs to, headers included — `origins`
+    /// cannot answer that, because a header is not a line of a file and `h`
+    /// still has to work when the caret is parked on one.
+    private var rowFiles: [Int] = []
     /// Row index to the stripe drawn down the side of it.
     private var accents: [Int: NSColor] = [:]
 
@@ -152,7 +156,9 @@ final class DiffView: NSView {
 
     // MARK: - Content
 
-    func show(_ files: [GitDiff.File], preservingScroll: Bool = false) {
+    func show(
+        _ files: [GitDiff.File], hidden: Set<String> = [], preservingScroll: Bool = false
+    ) {
         let wasAt = scrollView.contentView.bounds.origin
         // The row rather than the character offset. Staging does not remove
         // lines from this view — it is a diff against HEAD, so a staged line
@@ -168,22 +174,35 @@ final class DiffView: NSView {
         fills = []
         origins = []
         accents = [:]
+        rowFiles = []
         shownFiles = files
         currentHunk = -1
 
         for (fileIndex, file) in files.enumerated() {
             fileOffsets[file.displayPath] = text.length
             accents[rows.count] = file.tint
-            text.append(header(for: file))
+            let isHidden = hidden.contains(file.displayPath)
+            text.append(header(for: file, hidden: isHidden))
             rows.append(.none)
             fills.append(.file)
             origins.append(nil)
+            rowFiles.append(fileIndex)
+
+            if isHidden {
+                text.append(line("  ⋯ folded away, h shows it", .meta))
+                rows.append(.none)
+                fills.append(.none)
+                origins.append(nil)
+                rowFiles.append(fileIndex)
+                continue
+            }
 
             if file.isBinary {
                 text.append(line("  Binary file — nothing to show", .meta))
                 rows.append(.none)
                 fills.append(.none)
                 origins.append(nil)
+                rowFiles.append(fileIndex)
                 continue
             }
 
@@ -194,18 +213,22 @@ final class DiffView: NSView {
                 rows.append(.none)
                 fills.append(.hunk)
                 origins.append(nil)
+                rowFiles.append(fileIndex)
 
                 for (lineIndex, row) in hunk.lines.enumerated() {
                     text.append(line(
                         marker(row.kind) + row.text, style(row.kind),
                         code: row.text, language: language))
                     rows.append(.numbers(old: row.oldNumber, new: row.newNumber))
-                    switch row.kind {
-                    case .added: fills.append(.added)
-                    case .removed: fills.append(.removed)
-                    case .context: fills.append(.none)
+                    switch (row.kind, row.staged) {
+                    case (.added, false): fills.append(.added)
+                    case (.added, true): fills.append(.addedStaged)
+                    case (.removed, false): fills.append(.removed)
+                    case (.removed, true): fills.append(.removedStaged)
+                    case (.context, _): fills.append(.none)
                     }
                     origins.append(Origin(file: fileIndex, hunk: hunkIndex, line: lineIndex))
+                    rowFiles.append(fileIndex)
                 }
             }
         }
@@ -286,7 +309,7 @@ final class DiffView: NSView {
     /// and the same path in one monospaced grey run reads as more diff. The
     /// folder is dimmed, the name carries the weight, the counts take the
     /// colours they mean, and what git thinks of the file is a tag on the end.
-    private func header(for file: GitDiff.File) -> NSAttributedString {
+    private func header(for file: GitDiff.File, hidden: Bool) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineBreakMode = .byClipping
         // Air above each header, so files read as blocks rather than as one
@@ -321,6 +344,7 @@ final class DiffView: NSView {
         if file.isRename, let old = file.oldPath { tags.append("was \((old as NSString).lastPathComponent)") }
         if file.isBinary { tags.append("binary") }
         if file.staged { tags.append(file.unstaged ? "partly staged" : "staged") }
+        if hidden { tags.append("hidden") }
         append("   " + tags.joined(separator: " · "), .systemFont(ofSize: 10), .tertiaryLabelColor)
 
         text.append(NSAttributedString(string: "\n", attributes: [
@@ -460,6 +484,14 @@ final class DiffView: NSView {
 
     var focusTarget: NSView { textView }
 
+    /// The file the caret is somewhere inside, header row included.
+    var fileAtCaret: GitDiff.File? {
+        guard let row = line(containing: textView.selectedRange().location),
+              let index = rowFiles[safe: row]
+        else { return nil }
+        return shownFiles[safe: index]
+    }
+
     /// Put the caret somewhere worth staging.
     ///
     /// Called when the diff takes the keyboard: landing at offset zero puts it
@@ -475,7 +507,7 @@ final class DiffView: NSView {
         // The first *changed* line, not merely the first line that belongs to a
         // hunk: landing on a context line puts the caret somewhere `space`
         // would decline to act on, which reads as the key being broken.
-        let changed = fills.firstIndex { $0 == .added || $0 == .removed }
+        let changed = fills.firstIndex(where: \.isChange)
         guard let row = changed ?? origins.firstIndex(where: { $0 != nil }),
               let start = lineStarts[safe: row]
         else { return }
@@ -506,6 +538,17 @@ final class DiffView: NSView {
     /// How many changed lines the selection covers. Context lines do not count
     /// — staging them is a no-op, and counting them would promise more than the
     /// key delivers.
+    /// Whether every changed line in the selection is already in the index,
+    /// which is what decides which way `space` will go.
+    var selectionIsAllStaged: Bool {
+        let lines = selectedChanges().flatMap { change in
+            change.hunks.flatMap { entry in
+                entry.lines.compactMap { entry.hunk.lines[safe: $0] }
+            }
+        }.filter { $0.kind != .context }
+        return !lines.isEmpty && lines.allSatisfy(\.staged)
+    }
+
     var selectedLineCount: Int {
         selectedChanges().reduce(0) { total, change in
             total + change.hunks.reduce(0) { $0 + $1.lines.count }
@@ -580,7 +623,31 @@ extension DiffView: NSTextViewDelegate {
 /// underneath the text and across the full document width.
 @MainActor
 final class DiffTextView: NSTextView {
-    enum Fill { case none, added, removed, hunk, file }
+    enum Fill {
+        case none, added, removed, addedStaged, removedStaged, hunk, file
+
+        /// Whether this row is a line you could stage or unstage.
+        var isChange: Bool {
+            switch self {
+            case .added, .removed, .addedStaged, .removedStaged: true
+            case .none, .hunk, .file: false
+            }
+        }
+
+        var isStaged: Bool {
+            switch self {
+            case .addedStaged, .removedStaged: true
+            default: false
+            }
+        }
+
+        var isAddition: Bool {
+            switch self {
+            case .added, .addedStaged: true
+            default: false
+            }
+        }
+    }
 
     /// One per line of the document, in order.
     var fills: [Fill] = []
@@ -620,6 +687,8 @@ final class DiffTextView: NSTextView {
             switch fill {
             case .added: theme.addedBackground.setFill()
             case .removed: theme.removedBackground.setFill()
+            case .addedStaged: theme.stagedBackground(added: true).setFill()
+            case .removedStaged: theme.stagedBackground(added: false).setFill()
             case .hunk: NSColor.systemBlue.withAlphaComponent(0.08).setFill()
             case .file: NSColor.quaternaryLabelColor.withAlphaComponent(0.16).setFill()
             case .none: return
@@ -647,11 +716,11 @@ final class DiffTextView: NSTextView {
             if let accent = self.accents[row] {
                 accent.withAlphaComponent(0.9).setFill()
                 NSRect(x: 0, y: band.minY, width: 3, height: band.height).fill()
-            } else if fill == .added || fill == .removed {
-                let stripe = fill == .added
-                    ? theme.changedText(added: true)
-                    : theme.changedText(added: false)
-                stripe.withAlphaComponent(0.55).setFill()
+            } else if fill.isStaged {
+                theme.stagedStripe.setFill()
+                NSRect(x: 0, y: band.minY, width: 2, height: band.height).fill()
+            } else if fill.isChange {
+                theme.changedText(added: fill.isAddition).withAlphaComponent(0.55).setFill()
                 NSRect(x: 0, y: band.minY, width: 2, height: band.height).fill()
             }
         }
@@ -746,9 +815,12 @@ final class DiffGutter: NSView {
             // and hunk markers included, which is why this runs before the
             // numbers are asked for. Those rows have no numbers, and returning
             // early on them left each header sawn off at the seam.
-            switch self.fills[safe: row] ?? DiffTextView.Fill.none {
+            let fill = self.fills[safe: row] ?? DiffTextView.Fill.none
+            switch fill {
             case .added: theme.addedBackground.setFill()
             case .removed: theme.removedBackground.setFill()
+            case .addedStaged: theme.stagedBackground(added: true).setFill()
+            case .removedStaged: theme.stagedBackground(added: false).setFill()
             case .hunk: NSColor.systemBlue.withAlphaComponent(0.08).setFill()
             case .file: NSColor.quaternaryLabelColor.withAlphaComponent(0.16).setFill()
             case .none: NSColor.clear.setFill()
@@ -769,6 +841,11 @@ final class DiffGutter: NSView {
                 NSRect(x: 0, y: bandY, width: 3, height: fragment.height).fill()
             } else if let accent = self.accents[row] {
                 accent.withAlphaComponent(0.9).setFill()
+                NSRect(x: 0, y: bandY, width: 3, height: fragment.height).fill()
+            } else if fill.isStaged {
+                // The one mark that says "this is in the index", at the edge of
+                // the panel where a column of them reads as a run.
+                theme.stagedStripe.setFill()
                 NSRect(x: 0, y: bandY, width: 3, height: fragment.height).fill()
             }
 

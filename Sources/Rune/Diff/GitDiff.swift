@@ -42,7 +42,7 @@ enum GitDiff {
         /// The `@@ … @@` line verbatim, trailing section heading included — git
         /// puts the enclosing function there and it is worth keeping.
         let header: String
-        let lines: [Line]
+        var lines: [Line]
 
         /// The first line number on each side, read back out of the header.
         /// Parsed here rather than at parse time because only patch generation
@@ -67,6 +67,10 @@ enum GitDiff {
         enum Kind { case context, added, removed }
         let kind: Kind
         let text: String
+        /// Whether this exact change is already in the index. `git diff HEAD`
+        /// cannot say — it shows staged and unstaged together, as one change —
+        /// so it is filled in afterwards from a second diff.
+        var staged = false
         /// Where this line sits in each side, for the gutter. Nil on the side
         /// the line does not exist in.
         let oldNumber: Int?
@@ -82,17 +86,28 @@ enum GitDiff {
     /// the first one landing, and git would be left matching on context to
     /// recover a position it should never have lost.
     ///
-    /// The rules are the ones every partial-staging tool implements: a change
-    /// you did not select has to leave the patch without moving anything around
-    /// it, so an unselected addition is dropped and an unselected deletion
-    /// becomes context — the line is still there in the version this patch
-    /// applies to, which is exactly what a context line says.
+    /// The rule for a change you did not select is that it must leave the patch
+    /// without moving anything around it — and which way it leaves depends on
+    /// which way the patch is going, because `git apply` checks the side it is
+    /// coming *from* and writes the side it is going *to*.
+    ///
+    /// Staging, the patch runs index→worktree. An unselected addition is not in
+    /// the index and must not arrive, so it is dropped; an unselected deletion
+    /// is in the index and must stay, so it becomes context.
+    ///
+    /// Unstaging, the patch runs HEAD→index and is applied backwards. Now it is
+    /// the other way round: an unselected addition is in the index, is checked
+    /// against it, and must survive the reversal, so it becomes context; an
+    /// unselected deletion is already gone from the index and must stay gone,
+    /// so it is dropped. Getting this pair the wrong way round is not a
+    /// cosmetic error — git rejects the patch outright.
     ///
     /// The counts in the header are left approximate on purpose; `git apply
     /// --recount` works them out from the body, and a hand-counted header is a
     /// second place for this to be subtly wrong.
     static func patch(
-        for file: File, selecting selection: [(hunk: Hunk, lines: Set<Int>)]
+        for file: File, selecting selection: [(hunk: Hunk, lines: Set<Int>)],
+        reverse: Bool = false
     ) -> String? {
         var body: [String] = []
 
@@ -111,11 +126,15 @@ enum GitDiff {
                     hunkBody.append("+" + line.text)
                     newCount += 1
                 case (.added, false):
-                    continue
+                    guard reverse else { continue }
+                    hunkBody.append(" " + line.text)
+                    oldCount += 1
+                    newCount += 1
                 case (.removed, true):
                     hunkBody.append("-" + line.text)
                     oldCount += 1
                 case (.removed, false):
+                    guard !reverse else { continue }
                     hunkBody.append(" " + line.text)
                     oldCount += 1
                     newCount += 1
@@ -132,13 +151,14 @@ enum GitDiff {
         }
         guard !body.isEmpty else { return nil }
 
-        // An untracked file is `add --intent-to-add`-ed first, which puts an
-        // empty entry in the index — so by the time this applies, the old side
-        // exists and naming it `/dev/null` would be rejected as "already
-        // exists in index".
-        let old = file.untracked
-            ? "a/" + file.displayPath
-            : file.oldPath.map { "a/" + $0 } ?? "/dev/null"
+        // Never `/dev/null`, even for a file being created. That marker only
+        // means "create this" alongside a `new file mode` line, which a patch
+        // for *some* of a file cannot carry; without it git reads the path
+        // literally and looks for `dev/null` in the index. By the time this
+        // applies there is always an entry to diff against — an empty one, put
+        // there by `--intent-to-add` — so the file's own name is the honest
+        // old side.
+        let old = "a/" + (file.oldPath ?? file.displayPath)
         let new = file.newPath.map { "b/" + $0 } ?? "/dev/null"
         var text = [
             "diff --git a/\(file.oldPath ?? file.displayPath) b/\(file.newPath ?? file.displayPath)",
@@ -147,6 +167,40 @@ enum GitDiff {
         ]
         text.append(contentsOf: body)
         return text.joined(separator: "\n") + "\n"
+    }
+
+    /// Move some lines into the index, or back out of it.
+    ///
+    /// The lines are named by kind and text because that is all the panel can
+    /// honestly say about them: it is showing HEAD→worktree and the patch has
+    /// to be cut from a different diff. Returns how many actually moved, which
+    /// is not always how many were asked for — a line the index already agrees
+    /// with has nowhere to go.
+    static func move(
+        _ wanted: [(path: String, untracked: Bool,
+                    lines: [(kind: Line.Kind, text: String)])],
+        staging: Bool, in directory: String
+    ) throws -> Int {
+        if staging {
+            // A file git has never seen has nothing in the index to diff
+            // against, so it gets an empty entry before anything is cut from it.
+            try intentToAdd(wanted.filter(\.untracked).map(\.path), in: directory)
+        }
+        // Read fresh rather than trusting what is on screen: staging is the one
+        // moment the index is definitely about to disagree with the last draw.
+        let source = try changes(staged: !staging, in: directory)
+
+        var moved = 0
+        for entry in wanted {
+            guard let file = source.first(where: { $0.displayPath == entry.path }) else { continue }
+            let located = locate(entry.lines, in: file)
+            guard let patch = patch(for: file, selecting: located, reverse: !staging) else {
+                continue
+            }
+            try apply(patch: patch, in: directory, reverse: !staging)
+            moved += located.reduce(0) { $0 + $1.lines.count }
+        }
+        return moved
     }
 
     /// Feed a patch to the index. `--recount` because the header's counts are
@@ -201,11 +255,107 @@ enum GitDiff {
             files[index].unstaged = state.worktree != " " && state.worktree != "?"
         }
 
+        // Which of those lines are already staged. HEAD→worktree is the union
+        // of staged and unstaged work and cannot distinguish them; HEAD→index
+        // is exactly the staged half, so the second diff is what makes "this
+        // line is in, that one is not" answerable at all.
+        if let cached = try? changes(staged: true, in: directory) {
+            markStaged(&files, from: cached)
+        }
+
         let root = repositoryRoot(of: directory) ?? directory
         for (path, state) in (status ?? [:]) where state.index == "?" {
             files.append(untrackedFile(at: path, root: root))
         }
         return files.sorted { $0.displayPath < $1.displayPath }
+    }
+
+    /// One side of the story rather than both at once.
+    ///
+    /// `staged` is HEAD→index, `!staged` is index→worktree. Neither is what the
+    /// panel shows — that is HEAD→worktree, the union — but they are the only
+    /// two diffs a patch can be built from: `git apply --cached` lands on the
+    /// index, so a patch's old side has to be the index for staging and HEAD
+    /// for unstaging. This is the same pair `git add -p` and `git reset -p`
+    /// work from, for the same reason.
+    static func changes(staged: Bool, in directory: String) throws -> [File] {
+        var arguments = ["diff"]
+        if staged { arguments.append("--cached") }
+        arguments += ["--no-color", "--no-ext-diff", "-U3", "--find-renames"]
+        return parse(try run(arguments, in: directory))
+    }
+
+    /// Find the lines you picked, in a diff that is not the one you picked them
+    /// from.
+    ///
+    /// The selection comes off HEAD→worktree; the patch has to be cut from
+    /// HEAD→index or index→worktree. The two describe the same file in the same
+    /// order, so the changed lines are walked forwards in step and matched on
+    /// kind and text — a cursor rather than a set, because a repeated `}` is
+    /// common and a set would match the wrong one.
+    static func locate(
+        _ wanted: [(kind: Line.Kind, text: String)], in file: File
+    ) -> [(hunk: Hunk, lines: Set<Int>)] {
+        var flat: [(hunk: Int, line: Int, kind: Line.Kind, text: String)] = []
+        for (hunkIndex, hunk) in file.hunks.enumerated() {
+            for (lineIndex, line) in hunk.lines.enumerated() where line.kind != .context {
+                flat.append((hunkIndex, lineIndex, line.kind, line.text))
+            }
+        }
+
+        var picked: [Int: Set<Int>] = [:]
+        var cursor = 0
+        for want in wanted {
+            guard cursor < flat.count,
+                  let found = flat[cursor...].firstIndex(where: {
+                      $0.kind == want.kind && $0.text == want.text
+                  })
+            else { continue }
+            picked[flat[found].hunk, default: []].insert(flat[found].line)
+            cursor = found + 1
+        }
+
+        return picked.keys.sorted().compactMap { index in
+            guard let hunk = file.hunks[safe: index], let lines = picked[index] else { return nil }
+            return (hunk, lines)
+        }
+    }
+
+    /// Mark the lines that appear in the staged diff as well as this one.
+    ///
+    /// Matched on kind and text, walked forwards through both: the two diffs
+    /// describe the same file in the same order, so a staged change appears in
+    /// both at the same relative position. A cursor rather than a set, because
+    /// a repeated line — a lone `}`, a blank — is common, and a set would mark
+    /// every one of them the moment one was staged.
+    ///
+    /// A line staged and then edited again in the worktree does not match, and
+    /// so reads as unstaged. That is the honest answer: what is in the index is
+    /// not what is on screen.
+    private static func markStaged(_ files: inout [File], from cached: [File]) {
+        var byPath: [String: [(kind: Line.Kind, text: String)]] = [:]
+        for file in cached {
+            byPath[file.displayPath] = file.hunks
+                .flatMap(\.lines)
+                .filter { $0.kind != .context }
+                .map { (kind: $0.kind, text: $0.text) }
+        }
+
+        for index in files.indices {
+            guard let staged = byPath[files[index].displayPath], !staged.isEmpty else { continue }
+            var cursor = 0
+            for hunk in files[index].hunks.indices {
+                for line in files[index].hunks[hunk].lines.indices {
+                    let candidate = files[index].hunks[hunk].lines[line]
+                    guard candidate.kind != .context, cursor < staged.count else { continue }
+                    guard let found = staged[cursor...].firstIndex(where: {
+                        $0.kind == candidate.kind && $0.text == candidate.text
+                    }) else { continue }
+                    files[index].hunks[hunk].lines[line].staged = true
+                    cursor = found + 1
+                }
+            }
+        }
     }
 
     /// `git status --porcelain`, as index/worktree letters keyed by path.

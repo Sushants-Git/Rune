@@ -1,0 +1,16 @@
+Rune bundles and builds on third-party work. Their licences apply to their
+parts of it, whatever licence Rune itself carries.
+
+Ghostty — MIT
+    Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
+    https://github.com/ghostty-org/ghostty
+    Full text: licenses/ghostty-MIT.txt
+
+    Rune links libghostty, which is the terminal itself: parsing, rendering,
+    the lot. Key translation, dead keys and IME composition in
+    Sources/Rune/Ghostty/GhosttySurfaceView.swift and GhosttyInput.swift are
+    adapted from Ghostty's own macOS embedding layer, which is the reference
+    for getting that right.
+
+    The MIT licence asks that this notice ship with the software. It does:
+    scripts/bundle.sh copies it into Rune.app/Contents/Resources.

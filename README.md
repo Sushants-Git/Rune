@@ -81,11 +81,17 @@ ticks off.
 `⌘E` shows what is uncommitted where the focused terminal is standing, in a
 panel beside it. Staged, unstaged and untracked files, together.
 
-`⇥` moves between the file list and the diff. In the diff `space` stages the
-line under the caret, or every changed line you select, `u` takes them back out
-and `s` does the whole hunk. In the list `space` stages whole files, `v` marks
-one viewed. `c` writes the commit message. `b` hides the file list, `n` and `p`
-move by hunk, `⌘⇧↵` fills the window.
+`⇥` moves between the file list and the diff. In the diff `space` moves the
+line under the caret across, or every changed line you select: not staged, it
+stages, already staged, it comes back out. `s` does the same for the whole hunk
+and `u` is the explicit way back. In the list `space` stages whole files, `v` marks
+one viewed and `h` folds its diff away, which sticks until you unfold it, for
+the lockfiles and generated things you never want to read. `c` writes the commit
+message. `b` hides the file list, `n` and `p` move by hunk, `⌘⇧↵` fills the
+window.
+
+Lines already in the index are drawn blue instead of green or red, so a
+half-staged file shows you which half at a glance.
 
 It refreshes itself when anything else writes to the repository, so it agrees
 with the agent in the pane next to it. It is drawn in your Ghostty font and
@@ -132,4 +138,5 @@ parts that cost real debugging time.
 Key translation, dead keys and IME composition in `GhosttySurfaceView` and
 `GhosttyInput` are adapted from Ghostty's own macOS embedding layer (MIT,
 Mitchell Hashimoto and Ghostty contributors), which is the reference for getting
-that right.
+that right. Ghostty's licence ships with Rune: see [NOTICE](NOTICE) and
+[licenses/ghostty-MIT.txt](licenses/ghostty-MIT.txt).

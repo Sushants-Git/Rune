@@ -53,6 +53,40 @@ enum DiffTheme: String, CaseIterable {
         }
     }
 
+    /// A staged line's band: its own colour pulled most of the way towards
+    /// blue.
+    ///
+    /// Not blue outright, and not green-or-red outright. Outright blue loses
+    /// which side the line is on at a glance; leaving it green says nothing
+    /// about whether it is in the index. Pulled three quarters of the way, an
+    /// added line still reads warmer than a removed one and both read as
+    /// obviously not the colour of the unstaged lines around them.
+    @MainActor func stagedBackground(added: Bool) -> NSColor {
+        let base = added ? NSColor.systemGreen : NSColor.systemRed
+        let alpha = (added ? addedBackground : removedBackground).alphaComponent
+        return Self.mix(base, into: .systemBlue, by: 0.75).withAlphaComponent(alpha + 0.04)
+    }
+
+    /// The nib at the panel's edge on a staged line.
+    @MainActor var stagedStripe: NSColor { .systemBlue }
+
+    /// Blended through sRGB by hand. The system colours are dynamic catalogue
+    /// entries, and `blended(withFraction:of:)` returns nil whenever two of
+    /// those cannot be brought into a common space — which is exactly the case
+    /// here, and a nil there would silently drop the distinction.
+    @MainActor private static func mix(
+        _ colour: NSColor, into other: NSColor, by fraction: CGFloat
+    ) -> NSColor {
+        guard let a = colour.usingColorSpace(.sRGB), let b = other.usingColorSpace(.sRGB) else {
+            return other
+        }
+        return NSColor(
+            srgbRed: a.redComponent + (b.redComponent - a.redComponent) * fraction,
+            green: a.greenComponent + (b.greenComponent - a.greenComponent) * fraction,
+            blue: a.blueComponent + (b.blueComponent - a.blueComponent) * fraction,
+            alpha: 1)
+    }
+
     /// The colour of code that has not been touched.
     @MainActor var contextText: NSColor {
         switch self {

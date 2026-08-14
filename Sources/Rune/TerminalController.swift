@@ -198,6 +198,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// The last colour the chrome was painted with, so a sync that changes
     /// nothing costs a comparison instead of a window-wide invalidation.
     private var appliedChromeColor: NSColor?
+    private var appliedOpacity: Double?
     private var appliedDarkAppearance: Bool?
     /// Where ⌘K was opened from. Arrow keys preview by actually swapping the
     /// workspace in, so cancelling has to put this one back.
@@ -785,12 +786,24 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// a busy terminal feel like it was dragging.
     private func syncChrome() {
         let color = activeSurface?.backgroundColor ?? ghostty.backgroundColor
-        guard color != appliedChromeColor else { return }
+        // Opacity is watched alongside the colour because it can change on its
+        // own — the colour is identical either side of dragging the slider, and
+        // guarding on the colour alone is why the setting appeared to do
+        // nothing at all.
+        let opacity = ghostty.backgroundOpacity
+        guard color != appliedChromeColor || opacity != appliedOpacity else { return }
         appliedChromeColor = color
+        appliedOpacity = opacity
 
-        window?.backgroundColor = color
-        container.layer?.backgroundColor = color.cgColor
-        tabBar.backgroundColor = color
+        // An opaque window composites whatever the surface drew against a solid
+        // sheet of this colour, so a renderer faithfully drawing at 70% alpha
+        // still comes out looking like 100%. The window has to be told.
+        let translucent = opacity < 0.999
+        let sheet = translucent ? color.withAlphaComponent(opacity) : color
+        window?.isOpaque = !translucent
+        window?.backgroundColor = sheet
+        container.layer?.backgroundColor = sheet.cgColor
+        tabBar.backgroundColor = sheet
         activeTab?.applyDividerTint(dividerColor)
         activeTab?.applyInactiveWash(inactivePaneWash)
         activeTab?.applySearchTint(color)
@@ -810,6 +823,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// that changed is *which* views need painting, not what colour they are.
     private func invalidateChromeColor() {
         appliedChromeColor = nil
+        appliedOpacity = nil
     }
 
     private func syncWindowTitle() {
@@ -1055,9 +1069,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         switch event.charactersIgnoringModifiers {
         // In the list a file is the unit; in the diff the selection is. Same
         // key, because it is the same intention either side of the seam.
+        // Space moves things across in both halves: the file under the
+        // highlight, or the lines under the selection. Already staged, and it
+        // comes back out — which is the file list's rule, applied to lines.
         case " ":
             if panel.isReadingDiff {
-                panel.stageSelectedLines(reverse: false)
+                panel.stageSelectedLines()
             } else {
                 panel.toggleStageSelection()
             }
@@ -1069,9 +1086,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             }
         case "\t": panel.switchSide()
         case "b": panel.toggleSidebar()
-        case "s": panel.stageHunk(reverse: false)
+        case "s": panel.stageHunk()
         case "S": panel.stageHunk(reverse: true)
         case "v": panel.toggleViewedSelection()
+        case "h": panel.toggleHiddenSelection()
         case "c": panel.focusCommitMessage()
         case "n": panel.goToHunk(1)
         case "p": panel.goToHunk(-1)

@@ -203,6 +203,17 @@ final class GhosttyApp {
         return name.isEmpty ? nil : name
     }
 
+    /// `background-opacity`, which the renderer already honours when it draws.
+    /// What it cannot do from inside the surface is make the window behind it
+    /// stop being opaque, which is the other half of a translucent terminal.
+    var backgroundOpacity: Double {
+        guard let config else { return 1 }
+        var value: Float = 0
+        let key = "background-opacity"
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return 1 }
+        return Double(max(0, min(1, value)))
+    }
+
     /// `font-size` is an `f32` in Ghostty's config, so it is read as one.
     var fontSize: Double? {
         guard let config else { return nil }

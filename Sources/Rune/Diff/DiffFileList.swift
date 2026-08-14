@@ -1,12 +1,18 @@
 import Cocoa
 
 extension GitDiff.File {
-    /// Green for staged, orange for waiting, blue for never-seen. Read in the
-    /// list and again down the side of the file's header in the diff, so the
-    /// same file is the same colour wherever you meet it.
+    /// Blue for staged, yellow for half of it, orange for waiting, purple for
+    /// never-seen. Read in the list and again down the side of the file's
+    /// header in the diff, so the same file is the same colour wherever you
+    /// meet it.
+    ///
+    /// Blue rather than green for staged, and untracked moved off blue to make
+    /// room: blue is what a staged *line* is drawn in, and one panel cannot
+    /// have blue mean "in the index" on the right and "git has never seen it"
+    /// on the left.
     var tint: NSColor {
-        if untracked { return .systemBlue }
-        if staged && !unstaged { return .systemGreen }
+        if untracked { return .systemPurple }
+        if staged && !unstaged { return .systemBlue }
         if staged { return .systemYellow }
         return .systemOrange
     }
@@ -52,6 +58,42 @@ enum ViewedFiles {
         var all = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]
         all[root] = Array(set)
         UserDefaults.standard.set(all, forKey: key)
+    }
+}
+
+/// Files whose diff is folded away.
+///
+/// Keyed by path rather than by content, unlike [ViewedFiles]. Viewed means "I
+/// have read this version of it", so a new version undoes it. Hidden means "do
+/// not show me this file" — a lockfile, a generated bundle, a vendored tree —
+/// and that opinion is about the file, not about one state of it, so an edit
+/// must not bring it back.
+@MainActor
+enum HiddenFiles {
+    private static let key = "RuneDiffHidden"
+
+    static func all(root: String) -> Set<String> {
+        let stored = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]
+        return Set(stored[root] ?? [])
+    }
+
+    static func isHidden(_ file: GitDiff.File, root: String) -> Bool {
+        all(root: root).contains(file.displayPath)
+    }
+
+    /// Hides the lot unless every one of them is already hidden, which is the
+    /// same rule staging follows: one key that means "move these across".
+    static func toggle(_ files: [GitDiff.File], root: String) {
+        var set = all(root: root)
+        let paths = files.map(\.displayPath)
+        if paths.allSatisfy(set.contains) {
+            paths.forEach { set.remove($0) }
+        } else {
+            paths.forEach { set.insert($0) }
+        }
+        var stored = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] ?? [:]
+        stored[root] = Array(set)
+        UserDefaults.standard.set(stored, forKey: key)
     }
 }
 
@@ -162,7 +204,10 @@ extension DiffFileList: NSTableViewDataSource, NSTableViewDelegate {
         _ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int
     ) -> NSView? {
         guard let file = files[safe: row] else { return nil }
-        return FileRow(file: file, viewed: ViewedFiles.isViewed(file, root: root))
+        return FileRow(
+            file: file,
+            viewed: ViewedFiles.isViewed(file, root: root),
+            hidden: HiddenFiles.isHidden(file, root: root))
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -172,7 +217,7 @@ extension DiffFileList: NSTableViewDataSource, NSTableViewDelegate {
 
 /// One file: where it lives, what it is called, and how much of it moved.
 private final class FileRow: NSView {
-    init(file: GitDiff.File, viewed: Bool) {
+    init(file: GitDiff.File, viewed: Bool, hidden: Bool) {
         super.init(frame: .zero)
 
         // A dot rather than a letter. The states are few and a colour is read
@@ -209,8 +254,23 @@ private final class FileRow: NSView {
         counts.attributedStringValue = Self.counts(for: file)
         counts.setContentHuggingPriority(.required, for: .horizontal)
         counts.setContentCompressionResistancePriority(.required, for: .horizontal)
-        counts.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(counts)
+
+        // A hidden file still counts, so it keeps its numbers and gains a mark
+        // saying why there is nothing under its header.
+        let trailing = NSStackView(views: [counts])
+        if hidden {
+            let badge = NSImageView(image: NSImage(
+                systemSymbolName: "eye.slash", accessibilityDescription: "hidden") ?? NSImage())
+            badge.contentTintColor = .tertiaryLabelColor
+            badge.symbolConfiguration = .init(pointSize: 10, weight: .regular)
+            badge.setContentHuggingPriority(.required, for: .horizontal)
+            trailing.insertView(badge, at: 0, in: .leading)
+        }
+        trailing.spacing = 6
+        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing.setContentCompressionResistancePriority(.required, for: .horizontal)
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(trailing)
 
         toolTip = [
             file.displayPath,
@@ -218,6 +278,7 @@ private final class FileRow: NSView {
             file.staged ? "staged" : nil,
             file.unstaged ? "not staged" : nil,
             viewed ? "viewed" : nil,
+            hidden ? "hidden" : nil,
         ].compactMap { $0 }.joined(separator: " · ")
 
         NSLayoutConstraint.activate([
@@ -235,14 +296,14 @@ private final class FileRow: NSView {
             folder.isEmpty
                 ? name.centerYAnchor.constraint(equalTo: centerYAnchor)
                 : name.bottomAnchor.constraint(equalTo: centerYAnchor, constant: 1),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: counts.leadingAnchor, constant: -10),
+            name.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -10),
 
             path.leadingAnchor.constraint(equalTo: name.leadingAnchor),
             path.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 2),
-            path.trailingAnchor.constraint(lessThanOrEqualTo: counts.leadingAnchor, constant: -10),
+            path.trailingAnchor.constraint(lessThanOrEqualTo: trailing.leadingAnchor, constant: -10),
 
-            counts.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            counts.centerYAnchor.constraint(equalTo: centerYAnchor),
+            trailing.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            trailing.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
