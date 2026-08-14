@@ -79,7 +79,9 @@ to do in the same panel, as a tree. In the list `a` adds, `o` adds a sub-task,
 ticks off.
 
 `⌘E` shows what is uncommitted where the focused terminal is standing, staged
-and unstaged together, with `n` and `p` moving by hunk. Your
+and unstaged together, in a panel beside it. `n` and `p` move by hunk, `⌘⇧↵`
+fills the window with it, and it is drawn in your Ghostty font. Settings ▸
+Appearance ▸ Diff picks the palette. Your
 `~/.config/ghostty/config` carries over untouched.
 
 ## The `rune` command
@@ -112,7 +114,7 @@ git clone https://github.com/Sushants-Git/Rune.git && cd Rune
 
 If it stops on `cannot execute tool 'metal'`, run
 `xcodebuild -downloadComponent MetalToolchain` and try again. Releases are cut
-by pushing a tag: `git tag v0.15.0 && git push origin v0.15.0`.
+by pushing a tag: `git tag v0.15.1 && git push origin v0.15.1`.
 
 [**Design notes**](docs/design-notes.md) cover why it's built this way, and the
 parts that cost real debugging time.
