@@ -100,53 +100,7 @@ final class Settings {
         }
     }
 
-    /// Which palette the diff is drawn in. See `DiffTheme`.
-    var diffTheme: String {
-        get { defaults.string(forKey: Keys.diffTheme) ?? Defaults.diffTheme }
-        set {
-            defaults.set(newValue, forKey: Keys.diffTheme)
-            notify(.appearance)
-        }
-    }
-
-    /// The diff's font, or empty to follow the terminal's.
-    ///
-    /// Following Ghostty is the default because the diff sits beside the
-    /// terminal and the two showing the same code in different faces reads as
-    /// two applications rather than one.
-    var diffFontName: String {
-        get { defaults.string(forKey: Keys.diffFontName) ?? "" }
-        set {
-            defaults.set(newValue, forKey: Keys.diffFontName)
-            notify(.appearance)
-        }
-    }
-
-    /// Points, or zero to follow the terminal's size.
-    var diffFontSize: Double {
-        get { defaults.double(forKey: Keys.diffFontSize) }
-        set {
-            defaults.set(newValue, forKey: Keys.diffFontSize)
-            notify(.appearance)
-        }
-    }
-
-    /// Steps of ⌘+/⌘− applied on top of whatever size the font resolves to.
-    ///
-    /// The terminal and the diff zoom together — they are the same document
-    /// read two ways, and one of them changing size on its own is the kind of
-    /// mismatch you notice every time your eye crosses the seam. Persisted, so
-    /// a size you settled on survives the next launch.
-    var diffFontZoom: Double {
-        get { defaults.double(forKey: Keys.diffFontZoom) }
-        set {
-            defaults.set(max(-6, min(24, newValue)), forKey: Keys.diffFontZoom)
-            notify(.appearance)
-        }
-    }
-
     enum Defaults {
-        static let diffTheme = "zed"
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
         static let lightIconTiles = true
@@ -155,7 +109,6 @@ final class Settings {
     func resetAppearance() {
         for key in [
             Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles,
-            Keys.diffTheme, Keys.diffFontName, Keys.diffFontSize, Keys.diffFontZoom,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -225,10 +178,6 @@ final class Settings {
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
         static let todosEnabled = "RuneTodosEnabled"
-        static let diffTheme = "RuneDiffTheme"
-        static let diffFontName = "RuneDiffFontName"
-        static let diffFontSize = "RuneDiffFontSize"
-        static let diffFontZoom = "RuneDiffFontZoom"
         static let shortcuts = "RuneShortcuts"
     }
 

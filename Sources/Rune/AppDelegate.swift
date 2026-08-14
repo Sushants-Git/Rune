@@ -113,22 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
                   let controller = self.keyController
             else { return event }
 
-            // The diff panel's single keys, before anything else looks at
-            // them. It only claims them while it has the keyboard, and a
-            // commit message being typed is not the list taking commands —
-            // which is a question about editability, not about being a text
-            // view: the diff itself is one, and `space` there means stage.
-            let editing = (NSApp.keyWindow?.firstResponder as? NSTextView)?.isEditable ?? false
-            // Shift is allowed through: the diff's capital keys are the
-            // opposite of their lowercase ones, which is a shorter thing to
-            // remember than a second unrelated letter.
-            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.shift)
-                .isEmpty,
-               !editing,
-               controller.handleDiffKey(event) {
-                return nil
-            }
-
             if let index = DigitShortcut.index(for: event, modifiers: [.option]) {
                 controller.selectTab(at: index)
                 return nil
@@ -368,19 +352,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func renameWorkspaceAction(_ sender: Any?) { keyController?.renameWorkspace() }
     @objc private func nextTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: 1) }
     @objc private func prevTabAction(_ sender: Any?) { keyController?.selectRelativeTab(offset: -1) }
-    // The diff rides along with the terminal on all three, so the pane and the
-    // panel beside it stay the same size as each other.
     @objc private func increaseFontAction(_ sender: Any?) {
         keyController?.performSurfaceAction("increase_font_size:1")
-        Settings.shared.diffFontZoom += 1
     }
     @objc private func decreaseFontAction(_ sender: Any?) {
         keyController?.performSurfaceAction("decrease_font_size:1")
-        Settings.shared.diffFontZoom -= 1
     }
     @objc private func resetFontAction(_ sender: Any?) {
         keyController?.performSurfaceAction("reset_font_size")
-        Settings.shared.diffFontZoom = 0
     }
 
     @objc private func findAction(_ sender: Any?) { keyController?.toggleSearch() }
@@ -392,7 +371,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
 
-    @objc private func showDiffAction(_ sender: Any?) { keyController?.toggleDiff() }
 
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
@@ -499,7 +477,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // is always there and does nothing until you enable it, and the action
         // itself is what checks the setting.
         bind(.toggleTodos, to: tabsMenu, #selector(toggleTodosAction(_:)))
-        bind(.showDiff, to: tabsMenu, #selector(showDiffAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
         bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))

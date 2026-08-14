@@ -70,33 +70,12 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
 | `⌘J` | todo list, once you switch it on |
-| `⌘E` | uncommitted changes, as a diff |
 
 Rebind any of them in **Settings → Shortcuts**. The todo list is off by default:
 turn it on in **Settings → Appearance** and `⌘J` opens a list of what you have
 to do in the same panel, as a tree. In the list `a` adds, `o` adds a sub-task,
 `⌘R` renames in place as it does in `⌘K`, `c` copies, `d` deletes and `space`
 ticks off.
-
-`⌘E` shows what is uncommitted where the focused terminal is standing, in a
-panel beside it. Staged, unstaged and untracked files, together.
-
-`⇥` moves between the file list and the diff. In the diff `space` moves the
-line under the caret across, or every changed line you select: not staged, it
-stages, already staged, it comes back out. `s` does the same for the whole hunk
-and `u` is the explicit way back. In the list `space` stages whole files, `v` marks
-one viewed and `h` folds its diff away, which sticks until you unfold it, for
-the lockfiles and generated things you never want to read. `c` writes the commit
-message. `b` hides the file list, `n` and `p` move by hunk, `⌘⇧↵` fills the
-window.
-
-Lines already in the index are drawn blue instead of green or red, so a
-half-staged file shows you which half at a glance.
-
-It refreshes itself when anything else writes to the repository, so it agrees
-with the agent in the pane next to it. It is drawn in your Ghostty font and
-`⌘+` sizes both together. Settings ▸ Appearance ▸ Diff picks the palette. Your
-`~/.config/ghostty/config` carries over untouched.
 
 ## The `rune` command
 

@@ -100,7 +100,6 @@ enum ShortcutAction: String, CaseIterable, Codable {
     case switchWorkspace, renameWorkspace, nextTab, previousTab
     case toggleTodos
     case find, findNext, findPrevious
-    case showDiff
 
     var title: String {
         switch self {
@@ -126,7 +125,6 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .renameWorkspace: "Rename Workspace…"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
-        case .showDiff: "Changes…"
         case .find: "Find…"
         case .findNext: "Find Next"
         case .findPrevious: "Find Previous"
@@ -144,7 +142,6 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .toggleTodos:
             "Workspaces"
         case .find, .findNext, .findPrevious: "Find"
-        case .showDiff: "Workspaces"
         }
     }
 
@@ -175,9 +172,6 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .renameWorkspace: KeyChord("r")
         case .nextTab: KeyChord("]", [.command, .shift])
         case .previousTab: KeyChord("[", [.command, .shift])
-        // ⌘E is free: nothing in Rune claimed it, and it is not one of the
-        // chords libghostty binds by default.
-        case .showDiff: KeyChord("e")
         case .find: KeyChord("f")
         case .findNext: KeyChord("g")
         case .findPrevious: KeyChord("g", [.command, .shift])
