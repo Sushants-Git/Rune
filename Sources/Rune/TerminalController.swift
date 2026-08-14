@@ -164,6 +164,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// The width the panel had before ⌘⇧↵ filled the window with it, so putting
     /// it back means putting it back exactly.
     private var diffWidthBeforeZoom: CGFloat?
+    /// Watches the repository the diff is showing, so it keeps up with whoever
+    /// else is writing to it.
+    private var diffWatcher: RepositoryWatcher?
+    private var diffWatchedRoot: String?
     private var activityTimer: Timer?
 
     /// Reads agent state off the main thread. See `AgentSession.swift`.
@@ -952,23 +956,46 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         let panel = DiffPanel()
         panel.autoresizingMask = []
         panel.onClose = { [weak self] in self?.closeDiff() }
+        // Quiet: this fires because the panel just staged something, and it
+        // already knows it did. A loud reload blanks the diff to "Reading…"
+        // and paints it again, which for a keystroke that changed one line
+        // reads as the whole panel flashing.
+        panel.onNeedsReload = { [weak self] in self?.reloadDiff(quiet: true) }
         panel.onResize = { [weak self] width in
             guard let self else { return }
-            let most = max(DiffPanel.minimumWidth, self.container.bounds.width - 320)
+            let most = max(DiffPanel.minimumWidth, self.container.bounds.width - 300)
             self.diffWidth = min(max(width, DiffPanel.minimumWidth), most)
             self.layoutContent()
         }
         container.addSubview(panel, positioned: .below, relativeTo: tabBar)
         diffPanel = panel
         diffWidth = min(
-            max(DiffPanel.minimumWidth, container.bounds.width * 0.45),
-            max(DiffPanel.minimumWidth, container.bounds.width - 320))
+            max(DiffPanel.minimumWidth, container.bounds.width * 0.52),
+            max(DiffPanel.minimumWidth, container.bounds.width - 300))
         layoutContent()
         panel.takeFocus()
         reloadDiff()
     }
 
+    /// Watch the repository the panel is currently showing.
+    ///
+    /// Guarded on the root because this is called after every reload, including
+    /// the ones the watcher itself asked for: tearing the stream down and
+    /// building it again every time is how you miss the write that lands in
+    /// between.
+    private func watchDiffRepository(root: String) {
+        guard root != diffWatchedRoot else { return }
+        diffWatchedRoot = root
+        diffWatcher?.stop()
+        diffWatcher = RepositoryWatcher(root: root) { [weak self] in
+            MainActor.assumeIsolated { self?.reloadDiff(quiet: true) }
+        }
+    }
+
     private func closeDiff() {
+        diffWatcher?.stop()
+        diffWatcher = nil
+        diffWatchedRoot = nil
         diffPanel?.removeFromSuperview()
         diffPanel = nil
         diffWidth = 0
@@ -986,13 +1013,16 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         return GitDiff.workingDirectory(ofProcess: surface.foregroundPID)
     }
 
-    func reloadDiff() {
+    /// - Parameter quiet: a reload nobody asked for — the watcher noticed a
+    ///   write. It must not announce itself, must not throw away the selection,
+    ///   and must not scroll you back to the top of a diff you were reading.
+    func reloadDiff(quiet: Bool = false) {
         guard let panel = diffPanel else { return }
         guard let directory = diffDirectory else {
             panel.showMessage("Could not tell where this terminal is.")
             return
         }
-        panel.showMessage("Reading…")
+        if !quiet { panel.showMessage("Reading…") }
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result { try GitDiff.uncommitted(in: directory) }
             let root = GitDiff.repositoryRoot(of: directory)
@@ -1000,7 +1030,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 MainActor.assumeIsolated {
                     switch result {
                     case .success(let files):
-                        panel.show(files: files, root: root, directory: directory)
+                        panel.show(
+                            files: files, root: root, directory: directory,
+                            preservingScroll: quiet)
+                        if let root { self.watchDiffRepository(root: root) }
                     case .failure(GitDiff.Failure.notARepository):
                         panel.showMessage("\(directory) is not in a git repository.")
                     case .failure(let error):
@@ -1009,6 +1042,45 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    /// The diff's own keys, routed here because the panel is not in the
+    /// responder chain the menu talks to.
+    ///
+    /// Only while the keyboard is inside the panel — the same rule the todo
+    /// list follows, so a terminal never loses a keystroke to a panel it is
+    /// merely sitting next to.
+    func handleDiffKey(_ event: NSEvent) -> Bool {
+        guard isDiffFocused, let panel = diffPanel else { return false }
+        switch event.charactersIgnoringModifiers {
+        // In the list a file is the unit; in the diff the selection is. Same
+        // key, because it is the same intention either side of the seam.
+        case " ":
+            if panel.isReadingDiff {
+                panel.stageSelectedLines(reverse: false)
+            } else {
+                panel.toggleStageSelection()
+            }
+        case "u":
+            if panel.isReadingDiff {
+                panel.stageSelectedLines(reverse: true)
+            } else {
+                panel.toggleStageSelection()
+            }
+        case "\t": panel.switchSide()
+        case "b": panel.toggleSidebar()
+        case "s": panel.stageHunk(reverse: false)
+        case "S": panel.stageHunk(reverse: true)
+        case "v": panel.toggleViewedSelection()
+        case "c": panel.focusCommitMessage()
+        case "n": panel.goToHunk(1)
+        case "p": panel.goToHunk(-1)
+        case "j": panel.moveInList(by: 1)
+        case "k": panel.moveInList(by: -1)
+        case "r": reloadDiff()
+        default: return false
+        }
+        return true
     }
 
     /// ⌘W with the todo list up: delete the highlighted one.

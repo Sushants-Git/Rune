@@ -13,9 +13,16 @@ enum GitDiff {
         let oldPath: String?
         /// Nil when the file was deleted.
         let newPath: String?
-        let hunks: [Hunk]
+        var hunks: [Hunk]
         /// Git said the contents are binary, so there is nothing to show.
-        let isBinary: Bool
+        var isBinary: Bool
+        /// Where the change currently lives. A file can be in both — some
+        /// hunks staged, the rest not — which is why these are not one enum.
+        var staged = false
+        var unstaged = false
+        /// Git has never seen this file. `git diff` says nothing about those,
+        /// which is the whole reason Rune used to call a dirty tree clean.
+        var untracked = false
 
         /// What the header calls it: the new name, or the old one if it is gone.
         var displayPath: String { newPath ?? oldPath ?? "?" }
@@ -36,6 +43,24 @@ enum GitDiff {
         /// puts the enclosing function there and it is worth keeping.
         let header: String
         let lines: [Line]
+
+        /// The first line number on each side, read back out of the header.
+        /// Parsed here rather than at parse time because only patch generation
+        /// wants them, and the header is the authority either way.
+        var oldStart: Int { Self.start(in: header, prefix: "-") }
+        var newStart: Int { Self.start(in: header, prefix: "+") }
+
+        private static func start(in header: String, prefix: Character) -> Int {
+            guard let range = header.range(of: "@@ "), let end = header.range(of: " @@") else {
+                return 1
+            }
+            let body = header[range.upperBound..<end.lowerBound]
+            for field in body.split(separator: " ") where field.first == prefix {
+                let digits = field.dropFirst().prefix { $0.isNumber }
+                return Int(digits) ?? 1
+            }
+            return 1
+        }
     }
 
     struct Line {
@@ -48,6 +73,102 @@ enum GitDiff {
         let newNumber: Int?
     }
 
+    // MARK: - Staging part of a file
+
+    /// A patch containing only the lines you picked out of a file.
+    ///
+    /// One patch for the whole file rather than one per hunk: applied
+    /// separately, the second hunk's line numbers would already be stale from
+    /// the first one landing, and git would be left matching on context to
+    /// recover a position it should never have lost.
+    ///
+    /// The rules are the ones every partial-staging tool implements: a change
+    /// you did not select has to leave the patch without moving anything around
+    /// it, so an unselected addition is dropped and an unselected deletion
+    /// becomes context — the line is still there in the version this patch
+    /// applies to, which is exactly what a context line says.
+    ///
+    /// The counts in the header are left approximate on purpose; `git apply
+    /// --recount` works them out from the body, and a hand-counted header is a
+    /// second place for this to be subtly wrong.
+    static func patch(
+        for file: File, selecting selection: [(hunk: Hunk, lines: Set<Int>)]
+    ) -> String? {
+        var body: [String] = []
+
+        for entry in selection {
+            var hunkBody: [String] = []
+            var oldCount = 0
+            var newCount = 0
+
+            for (index, line) in entry.hunk.lines.enumerated() {
+                switch (line.kind, entry.lines.contains(index)) {
+                case (.context, _):
+                    hunkBody.append(" " + line.text)
+                    oldCount += 1
+                    newCount += 1
+                case (.added, true):
+                    hunkBody.append("+" + line.text)
+                    newCount += 1
+                case (.added, false):
+                    continue
+                case (.removed, true):
+                    hunkBody.append("-" + line.text)
+                    oldCount += 1
+                case (.removed, false):
+                    hunkBody.append(" " + line.text)
+                    oldCount += 1
+                    newCount += 1
+                }
+            }
+            // Context only: the selection covered no change in this hunk, so it
+            // contributes nothing rather than an empty hunk to fail on.
+            guard hunkBody.contains(where: { $0.hasPrefix("+") || $0.hasPrefix("-") }) else {
+                continue
+            }
+            body.append(
+                "@@ -\(entry.hunk.oldStart),\(oldCount) +\(entry.hunk.newStart),\(newCount) @@")
+            body.append(contentsOf: hunkBody)
+        }
+        guard !body.isEmpty else { return nil }
+
+        // An untracked file is `add --intent-to-add`-ed first, which puts an
+        // empty entry in the index — so by the time this applies, the old side
+        // exists and naming it `/dev/null` would be rejected as "already
+        // exists in index".
+        let old = file.untracked
+            ? "a/" + file.displayPath
+            : file.oldPath.map { "a/" + $0 } ?? "/dev/null"
+        let new = file.newPath.map { "b/" + $0 } ?? "/dev/null"
+        var text = [
+            "diff --git a/\(file.oldPath ?? file.displayPath) b/\(file.newPath ?? file.displayPath)",
+            "--- \(old)",
+            "+++ \(new)",
+        ]
+        text.append(contentsOf: body)
+        return text.joined(separator: "\n") + "\n"
+    }
+
+    /// Feed a patch to the index. `--recount` because the header's counts are
+    /// deliberately approximate; `--cached` because the working tree is already
+    /// what the user wants and only the index is being edited.
+    static func apply(
+        patch: String, in directory: String, reverse: Bool = false
+    ) throws {
+        var arguments = ["apply", "--cached", "--recount", "--allow-empty"]
+        if reverse { arguments.append("--reverse") }
+        arguments.append("-")
+        _ = try run(arguments, in: directory, input: patch)
+    }
+
+    /// Tell git a new file exists without staging its contents, so a patch
+    /// has an index entry to land on rather than being told the path is
+    /// unknown.
+    static func intentToAdd(_ paths: [String], in directory: String) throws {
+        guard !paths.isEmpty else { return }
+        _ = try run(["add", "--intent-to-add", "--"] + paths, in: directory)
+    }
+
     // MARK: - Running
 
     enum Failure: Error {
@@ -55,17 +176,104 @@ enum GitDiff {
         case git(String)
     }
 
-    /// Everything uncommitted: staged and unstaged together, which is what
-    /// "what have I changed" means to someone who has not thought about the
-    /// index. `HEAD` rather than no argument for exactly that reason — a plain
-    /// `git diff` hides anything already staged, and a file you staged an hour
-    /// ago vanishing from the list is not a useful answer.
+    /// Everything uncommitted: staged, unstaged, and files git has never seen.
+    ///
+    /// `git diff HEAD` covers the first two — a plain `git diff` would hide
+    /// anything already staged, and a file you staged an hour ago vanishing
+    /// from the list is not a useful answer. It covers the third not at all,
+    /// and that omission is why Rune reported a clean tree next to a lazygit
+    /// listing two untracked files. An untracked file has no blob to diff
+    /// against, so its contents are read and presented as one added hunk,
+    /// which is what it is.
     static func uncommitted(in directory: String) throws -> [File] {
         _ = try run(["rev-parse", "--is-inside-work-tree"], in: directory)
         let output = try run(
             ["diff", "HEAD", "--no-color", "--no-ext-diff", "-U3", "--find-renames"],
             in: directory)
-        return parse(output)
+        var files = parse(output)
+
+        // Where each change lives, so the list can say "staged" and the keys
+        // know which direction to move it.
+        let status = try? self.status(in: directory)
+        for index in files.indices {
+            guard let state = status?[files[index].displayPath] else { continue }
+            files[index].staged = state.index != " " && state.index != "?"
+            files[index].unstaged = state.worktree != " " && state.worktree != "?"
+        }
+
+        let root = repositoryRoot(of: directory) ?? directory
+        for (path, state) in (status ?? [:]) where state.index == "?" {
+            files.append(untrackedFile(at: path, root: root))
+        }
+        return files.sorted { $0.displayPath < $1.displayPath }
+    }
+
+    /// `git status --porcelain`, as index/worktree letters keyed by path.
+    static func status(in directory: String) throws -> [String: (index: Character, worktree: Character)] {
+        let output = try run(
+            ["status", "--porcelain", "--untracked-files=all", "--no-renames"], in: directory)
+        var result: [String: (Character, Character)] = [:]
+        for line in output.split(separator: "\n") where line.count > 3 {
+            let characters = Array(line)
+            let path = String(characters[3...]).trimmingCharacters(in: .whitespaces)
+            // Quoted when it has anything unusual in it; git's own escaping.
+            let unquoted = path.hasPrefix("\"") && path.hasSuffix("\"")
+                ? String(path.dropFirst().dropLast())
+                : path
+            result[unquoted] = (characters[0], characters[1])
+        }
+        return result
+    }
+
+    /// A file git has never seen, shown as though every line were added.
+    private static func untrackedFile(at path: String, root: String) -> File {
+        let full = (root as NSString).appendingPathComponent(path)
+        guard let data = FileManager.default.contents(atPath: full) else {
+            return File(oldPath: nil, newPath: path, hunks: [], isBinary: true, untracked: true)
+        }
+        // A NUL in the first block is what `git` itself treats as binary.
+        if data.prefix(8000).contains(0) || data.count > 2_000_000 {
+            return File(oldPath: nil, newPath: path, hunks: [], isBinary: true, untracked: true)
+        }
+        let text = String(decoding: data, as: UTF8.self)
+        var body = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        // A trailing newline splits into a final empty piece that is not a line.
+        if body.last == "" { body.removeLast() }
+
+        let lines = body.enumerated().map { index, content in
+            Line(kind: .added, text: content, oldNumber: nil, newNumber: index + 1)
+        }
+        let hunk = Hunk(header: "@@ -0,0 +1,\(lines.count) @@", lines: lines)
+        return File(
+            oldPath: nil, newPath: path, hunks: lines.isEmpty ? [] : [hunk],
+            isBinary: false, unstaged: true, untracked: true)
+    }
+
+    // MARK: - Changing things
+
+    /// `git add`. On an untracked file this is what starts tracking it.
+    static func stage(_ paths: [String], in directory: String) throws {
+        guard !paths.isEmpty else { return }
+        _ = try run(["add", "--"] + paths, in: directory)
+    }
+
+    /// Back out of the index, leaving the working tree alone.
+    static func unstage(_ paths: [String], in directory: String) throws {
+        guard !paths.isEmpty else { return }
+        _ = try run(["restore", "--staged", "--"] + paths, in: directory)
+    }
+
+    /// Commit what is staged. Returns git's own summary line.
+    static func commit(message: String, in directory: String) throws -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw Failure.git("a commit needs a message") }
+        return try run(["commit", "-m", trimmed], in: directory)
+            .split(separator: "\n").first.map(String.init) ?? "committed"
+    }
+
+    static func stagedCount(in directory: String) -> Int {
+        ((try? status(in: directory)) ?? [:])
+            .filter { $0.value.index != " " && $0.value.index != "?" }.count
     }
 
     /// The repository root, or nil if `directory` isn't in one.
@@ -97,7 +305,9 @@ enum GitDiff {
         }
     }
 
-    private static func run(_ arguments: [String], in directory: String) throws -> String {
+    private static func run(
+        _ arguments: [String], in directory: String, input: String? = nil
+    ) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git"] + arguments
@@ -113,7 +323,17 @@ enum GitDiff {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+
+        let stdin = Pipe()
+        if input != nil { process.standardInput = stdin }
         try process.run()
+        if let input {
+            // Written and closed before anything is read back, because a patch
+            // is small enough to fit the pipe buffer and git will not say a
+            // word until it has seen the end of it.
+            stdin.fileHandleForWriting.write(Data(input.utf8))
+            stdin.fileHandleForWriting.closeFile()
+        }
 
         // Read before waiting: a diff larger than the pipe buffer fills it, git
         // blocks writing, and a `waitUntilExit` first would deadlock on any
@@ -163,8 +383,16 @@ enum GitDiff {
             hunks = []
         }
 
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+        let rawLines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        for (index, raw) in rawLines.enumerated() {
             let line = String(raw)
+
+            // The text ends with a newline, so splitting it leaves one empty
+            // piece on the end that is not a line of anything. Counting it as
+            // context invented a line the file does not have — invisible on
+            // screen, and fatal to a generated patch, which git rejected for
+            // describing nine lines where there were eight.
+            if line.isEmpty, index == rawLines.count - 1 { continue }
 
             if line.hasPrefix("diff --git ") {
                 closeFile()

@@ -131,6 +131,20 @@ final class Settings {
         }
     }
 
+    /// Steps of ⌘+/⌘− applied on top of whatever size the font resolves to.
+    ///
+    /// The terminal and the diff zoom together — they are the same document
+    /// read two ways, and one of them changing size on its own is the kind of
+    /// mismatch you notice every time your eye crosses the seam. Persisted, so
+    /// a size you settled on survives the next launch.
+    var diffFontZoom: Double {
+        get { defaults.double(forKey: Keys.diffFontZoom) }
+        set {
+            defaults.set(max(-6, min(24, newValue)), forKey: Keys.diffFontZoom)
+            notify(.appearance)
+        }
+    }
+
     enum Defaults {
         static let diffTheme = "rune"
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
@@ -141,7 +155,7 @@ final class Settings {
     func resetAppearance() {
         for key in [
             Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles,
-            Keys.diffTheme, Keys.diffFontName, Keys.diffFontSize,
+            Keys.diffTheme, Keys.diffFontName, Keys.diffFontSize, Keys.diffFontZoom,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -214,6 +228,7 @@ final class Settings {
         static let diffTheme = "RuneDiffTheme"
         static let diffFontName = "RuneDiffFontName"
         static let diffFontSize = "RuneDiffFontSize"
+        static let diffFontZoom = "RuneDiffFontZoom"
         static let shortcuts = "RuneShortcuts"
     }
 

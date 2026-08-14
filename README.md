@@ -78,10 +78,18 @@ to do in the same panel, as a tree. In the list `a` adds, `o` adds a sub-task,
 `⌘R` renames in place as it does in `⌘K`, `c` copies, `d` deletes and `space`
 ticks off.
 
-`⌘E` shows what is uncommitted where the focused terminal is standing, staged
-and unstaged together, in a panel beside it. `n` and `p` move by hunk, `⌘⇧↵`
-fills the window with it, and it is drawn in your Ghostty font. Settings ▸
-Appearance ▸ Diff picks the palette. Your
+`⌘E` shows what is uncommitted where the focused terminal is standing, in a
+panel beside it. Staged, unstaged and untracked files, together.
+
+`⇥` moves between the file list and the diff. In the diff `space` stages the
+line under the caret, or every changed line you select, `u` takes them back out
+and `s` does the whole hunk. In the list `space` stages whole files, `v` marks
+one viewed. `c` writes the commit message. `b` hides the file list, `n` and `p`
+move by hunk, `⌘⇧↵` fills the window.
+
+It refreshes itself when anything else writes to the repository, so it agrees
+with the agent in the pane next to it. It is drawn in your Ghostty font and
+`⌘+` sizes both together. Settings ▸ Appearance ▸ Diff picks the palette. Your
 `~/.config/ghostty/config` carries over untouched.
 
 ## The `rune` command

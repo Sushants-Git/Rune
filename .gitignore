@@ -11,5 +11,8 @@ vendor/ghostty/
 .zig-cache/
 zig-out/
 
+# Xcode's opinions about a SwiftPM package
+.swiftpm/
+
 # macOS
 .DS_Store
