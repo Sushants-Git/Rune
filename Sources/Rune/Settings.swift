@@ -146,7 +146,7 @@ final class Settings {
     }
 
     enum Defaults {
-        static let diffTheme = "rune"
+        static let diffTheme = "zed"
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
         static let lightIconTiles = true

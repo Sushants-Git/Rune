@@ -8,7 +8,7 @@ import Foundation
 /// renames, same binary detection, same submodule handling, and the user's own
 /// `diff.algorithm` and `.gitattributes` already apply.
 enum GitDiff {
-    struct File {
+    struct File: Equatable {
         /// Nil when the file is new.
         let oldPath: String?
         /// Nil when the file was deleted.
@@ -38,7 +38,7 @@ enum GitDiff {
         }
     }
 
-    struct Hunk {
+    struct Hunk: Equatable {
         /// The `@@ … @@` line verbatim, trailing section heading included — git
         /// puts the enclosing function there and it is worth keeping.
         let header: String
@@ -63,8 +63,8 @@ enum GitDiff {
         }
     }
 
-    struct Line {
-        enum Kind { case context, added, removed }
+    struct Line: Equatable {
+        enum Kind: Equatable { case context, added, removed }
         let kind: Kind
         let text: String
         /// Whether this exact change is already in the index. `git diff HEAD`
@@ -240,7 +240,10 @@ enum GitDiff {
     /// against, so its contents are read and presented as one added hunk,
     /// which is what it is.
     static func uncommitted(in directory: String) throws -> [File] {
-        _ = try run(["rev-parse", "--is-inside-work-tree"], in: directory)
+        // No `rev-parse --is-inside-work-tree` first. It was a whole extra
+        // subprocess — a quarter of the cost of a refresh — to ask a question
+        // the very next command answers anyway: `git diff` outside a repository
+        // says so on stderr, and `run` already turns that into `notARepository`.
         let output = try run(
             ["diff", "HEAD", "--no-color", "--no-ext-diff", "-U3", "--find-renames"],
             in: directory)
@@ -495,7 +498,11 @@ enum GitDiff {
         guard process.terminationStatus == 0 else {
             let message = String(decoding: problem, as: UTF8.self)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw message.contains("not a git repository")
+            // Case-insensitively: git writes "fatal: not a git repository" from
+            // some commands and "warning: Not a git repository." from others,
+            // and matching only the lowercase one turned a plain "you are not
+            // in a repository" into two hundred lines of `git diff` usage.
+            throw message.lowercased().contains("not a git repository")
                 ? Failure.notARepository
                 : Failure.git(message.isEmpty ? "git exited \(process.terminationStatus)" : message)
         }

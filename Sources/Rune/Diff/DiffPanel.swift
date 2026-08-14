@@ -60,13 +60,16 @@ final class DiffPanel: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
 
-        status.font = .systemFont(ofSize: 11, weight: .medium)
+        // The whole panel in the editor's face. One SF Pro label beside a
+        // monospaced diff is what made this read as a Mac window with code in
+        // it rather than as part of the editor.
+        status.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingMiddle
         status.translatesAutoresizingMaskIntoConstraints = false
         addSubview(status)
 
-        hint.font = .systemFont(ofSize: 10)
+        hint.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
         hint.textColor = .tertiaryLabelColor
         hint.alignment = .right
         hint.stringValue = ""
@@ -100,7 +103,7 @@ final class DiffPanel: NSView {
         addSubview(diffView)
 
         message.placeholderString = "Commit message"
-        message.font = .systemFont(ofSize: 12)
+        message.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         message.controlSize = .small
         message.target = self
         message.action = #selector(commitClicked)
@@ -201,6 +204,14 @@ final class DiffPanel: NSView {
         files: [GitDiff.File], root: String?, directory: String,
         preservingScroll: Bool = false
     ) {
+        // A refresh nobody asked for, saying exactly what the last one said.
+        // The watcher fires on any write under the working tree, and a build
+        // writing to an ignored directory produces hundreds of those — each of
+        // which used to rebuild and re-lay-out the whole document for a diff
+        // that had not changed by a character.
+        let sameRoot = self.root == (root ?? directory)
+        if preservingScroll, sameRoot, files == self.files { return }
+
         self.files = files
         self.root = root ?? directory
         self.directory = directory

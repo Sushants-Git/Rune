@@ -232,7 +232,7 @@ private final class FileRow: NSView {
 
         let full = file.displayPath as NSString
         let name = NSTextField(labelWithString: full.lastPathComponent)
-        name.font = .systemFont(ofSize: 12, weight: viewed ? .regular : .medium)
+        name.font = .monospacedSystemFont(ofSize: 11.5, weight: viewed ? .regular : .medium)
         name.textColor = viewed ? .tertiaryLabelColor : .labelColor
         name.lineBreakMode = .byTruncatingMiddle
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -241,7 +241,7 @@ private final class FileRow: NSView {
 
         let folder = full.deletingLastPathComponent
         let path = NSTextField(labelWithString: folder)
-        path.font = .systemFont(ofSize: 10)
+        path.font = .monospacedSystemFont(ofSize: 9.5, weight: .regular)
         path.textColor = .tertiaryLabelColor
         path.lineBreakMode = .byTruncatingHead
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

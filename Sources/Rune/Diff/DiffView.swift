@@ -67,6 +67,16 @@ final class DiffView: NSView {
     /// Row index to the stripe drawn down the side of it.
     private var accents: [Int: NSColor] = [:]
 
+    /// Resolved once per rebuild rather than once per line.
+    ///
+    /// `font` and `DiffTheme.current` both read `UserDefaults`, and a thousand
+    /// line diff asked each of them a thousand times. A paragraph style is a
+    /// fresh allocation every time it is built, and every line was building an
+    /// identical one.
+    private var renderFont: NSFont = .monospacedSystemFont(ofSize: 12, weight: .regular)
+    private var renderTheme: DiffTheme = .rune
+    private var renderParagraph = NSParagraphStyle.default
+
     /// Where a rendered line came from.
     struct Origin {
         let file: Int
@@ -159,6 +169,16 @@ final class DiffView: NSView {
     func show(
         _ files: [GitDiff.File], hidden: Set<String> = [], preservingScroll: Bool = false
     ) {
+        renderFont = Self.font
+        renderTheme = DiffTheme.current
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byClipping
+        // A little air between rows. A diff read at the terminal's own line
+        // height is a solid block of text, and the bands behind it have no room
+        // to read as separate rows.
+        paragraph.lineHeightMultiple = 1.15
+        renderParagraph = paragraph
+
         let wasAt = scrollView.contentView.bounds.origin
         // The row rather than the character offset. Staging does not remove
         // lines from this view — it is a diff against HEAD, so a staged line
@@ -208,8 +228,18 @@ final class DiffView: NSView {
 
             let language = Syntax.language(forPath: file.displayPath)
             for (hunkIndex, hunk) in file.hunks.enumerated() {
+                // The lines between one hunk and the next, which are not on
+                // screen and are not nothing either. An empty hatched row says
+                // "the file continues here" without pretending to show it.
+                if hunkIndex > 0 {
+                    text.append(line("", .meta))
+                    rows.append(.none)
+                    fills.append(.gap)
+                    origins.append(nil)
+                    rowFiles.append(fileIndex)
+                }
                 hunkOffsets.append(text.length)
-                text.append(line(hunk.header, .hunk))
+                text.append(line(Self.context(in: hunk.header), .hunk))
                 rows.append(.none)
                 fills.append(.hunk)
                 origins.append(nil)
@@ -257,19 +287,29 @@ final class DiffView: NSView {
         gutter.accents = accents
         gutter.lineStarts = starts
         gutter.needsDisplay = true
-        // Laid out either way: restoring an offset needs the document to be
-        // its real size first, and scrolling to the top needs the same before
-        // anything else asks where the top is.
-        if let container = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: container)
-        }
-        textView.scroll(preservingScroll ? wasAt : .zero)
-
-        if let wasOn, let start = lineStarts[safe: wasOn] {
+        // Laying out the whole container here cost the entire document on
+        // every refresh — every line measured, whether or not anyone would
+        // ever scroll to it. Only as far as the line being returned to, which
+        // the layout manager would have had to do anyway.
+        if preservingScroll, let wasOn, let start = lineStarts[safe: wasOn] {
+            textView.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: 0, length: start + 1))
             textView.setSelectedRange(NSRange(location: start, length: 0))
+            textView.scroll(wasAt)
+        } else {
+            textView.scroll(.zero)
         }
         refreshCurrentRow()
 
+    }
+
+    /// The trailing part of an `@@` line: the function or scope git worked out
+    /// the hunk sits in. The numeric half is dropped because the gutter shows
+    /// the real line numbers two inches to the left, and showing both meant the
+    /// only row with no numbers carried four of them.
+    private static func context(in header: String) -> String {
+        guard let end = header.range(of: " @@") else { return "  ⋯" }
+        let rest = header[end.upperBound...].trimmingCharacters(in: .whitespaces)
+        return rest.isEmpty ? "  ⋯" : "  ⋯  " + rest
     }
 
     private func marker(_ kind: GitDiff.Line.Kind) -> String {
@@ -325,15 +365,22 @@ final class DiffView: NSView {
             ]))
         }
 
+        // The editor's face, not the system's. A path set in SF Pro on top of
+        // a monospaced diff is the seam where this stopped looking like a
+        // coding surface and started looking like a Mac dialog with code in it.
+        let size = renderFont.pointSize
+        let name = NSFontManager.shared.convert(renderFont, toHaveTrait: .boldFontMask)
+        let quiet = NSFont(descriptor: renderFont.fontDescriptor, size: size - 1) ?? renderFont
+
         let full = file.displayPath as NSString
         let folder = full.deletingLastPathComponent
-        append(folder.isEmpty ? "" : folder + "/", .systemFont(ofSize: 11), .tertiaryLabelColor)
-        append(full.lastPathComponent, .systemFont(ofSize: 12.5, weight: .semibold), .labelColor)
+        append(folder.isEmpty ? "" : folder + "/", quiet, .tertiaryLabelColor)
+        append(full.lastPathComponent, name, renderTheme.changedText(added: true))
 
         if !file.isBinary {
-            append("   +\(file.addedCount)", .monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            append("   +\(file.addedCount)", quiet,
                    file.addedCount > 0 ? .systemGreen : .quaternaryLabelColor)
-            append(" −\(file.removedCount)", .monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            append(" −\(file.removedCount)", quiet,
                    file.removedCount > 0 ? .systemRed : .quaternaryLabelColor)
         }
 
@@ -345,10 +392,10 @@ final class DiffView: NSView {
         if file.isBinary { tags.append("binary") }
         if file.staged { tags.append(file.unstaged ? "partly staged" : "staged") }
         if hidden { tags.append("hidden") }
-        append("   " + tags.joined(separator: " · "), .systemFont(ofSize: 10), .tertiaryLabelColor)
+        append("   " + tags.joined(separator: " · "), quiet, .tertiaryLabelColor)
 
         text.append(NSAttributedString(string: "\n", attributes: [
-            .font: NSFont.systemFont(ofSize: 12.5), .paragraphStyle: paragraph,
+            .font: renderFont, .paragraphStyle: paragraph,
         ]))
         return text
     }
@@ -359,19 +406,12 @@ final class DiffView: NSView {
         _ body: String, _ style: Style,
         code: String? = nil, language: Syntax.Language = .none
     ) -> NSAttributedString {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byClipping
-        // A little air between rows. A diff read at the terminal's own line
-        // height is a solid block of text, and the bands behind it have no room
-        // to read as separate rows.
-        paragraph.lineHeightMultiple = 1.15
-
         var attributes: [NSAttributedString.Key: Any] = [
-            .font: Self.font,
-            .paragraphStyle: paragraph,
+            .font: renderFont,
+            .paragraphStyle: renderParagraph,
         ]
 
-        let theme = DiffTheme.current
+        let theme = renderTheme
         switch style {
         case .context:
             attributes[.foregroundColor] = theme.contextText
@@ -426,10 +466,9 @@ final class DiffView: NSView {
         // The document may have been set microseconds ago, in which case none
         // of it has been laid out and every question about where a character
         // sits answers zero — which is how a jump to the first file landed in
-        // the middle of the second.
-        if let container = textView.textContainer {
-            textView.layoutManager?.ensureLayout(for: container)
-        }
+        // the middle of the second. As far as the target only: laying out the
+        // rest is work nobody asked for.
+        textView.layoutManager?.ensureLayout(forCharacterRange: NSRange(location: 0, length: offset + 1))
         // To the top of the view rather than merely into it: a file header
         // scrolled to the bottom edge is technically visible and useless.
         textView.scrollRangeToVisible(NSRange(location: textView.string.utf16.count - 1, length: 0))
@@ -483,6 +522,7 @@ final class DiffView: NSView {
     var isTextFocused: Bool { window?.firstResponder === textView }
 
     var focusTarget: NSView { textView }
+
 
     /// The file the caret is somewhere inside, header row included.
     var fileAtCaret: GitDiff.File? {
@@ -613,6 +653,30 @@ extension DiffView: NSTextViewDelegate {
     }
 }
 
+/// Diagonal hatching, the way a diff marks a stretch with nothing on the other
+/// side of it.
+///
+/// A flat tint says "this row is special". Hatching says "there is nothing
+/// here" — which is what a jump between hunks actually is, and it reads as a
+/// gap in the file rather than as another kind of change.
+@MainActor
+func drawHatching(in rect: NSRect, colour: NSColor, spacing: CGFloat = 7) {
+    guard let context = NSGraphicsContext.current?.cgContext, rect.height > 0 else { return }
+    context.saveGState()
+    context.clip(to: rect)
+    colour.setStroke()
+    let path = NSBezierPath()
+    path.lineWidth = 1
+    var x = rect.minX - rect.height
+    while x < rect.maxX + rect.height {
+        path.move(to: NSPoint(x: x, y: rect.minY))
+        path.line(to: NSPoint(x: x + rect.height, y: rect.maxY))
+        x += spacing
+    }
+    path.stroke()
+    context.restoreGState()
+}
+
 /// The document, with the row bands drawn behind the text.
 ///
 /// A `.backgroundColor` attribute paints the glyphs' own extent and stops. On
@@ -624,13 +688,13 @@ extension DiffView: NSTextViewDelegate {
 @MainActor
 final class DiffTextView: NSTextView {
     enum Fill {
-        case none, added, removed, addedStaged, removedStaged, hunk, file
+        case none, added, removed, addedStaged, removedStaged, hunk, gap, file
 
         /// Whether this row is a line you could stage or unstage.
         var isChange: Bool {
             switch self {
             case .added, .removed, .addedStaged, .removedStaged: true
-            case .none, .hunk, .file: false
+            case .none, .hunk, .gap, .file: false
             }
         }
 
@@ -689,11 +753,16 @@ final class DiffTextView: NSTextView {
             case .removed: theme.removedBackground.setFill()
             case .addedStaged: theme.stagedBackground(added: true).setFill()
             case .removedStaged: theme.stagedBackground(added: false).setFill()
-            case .hunk: NSColor.systemBlue.withAlphaComponent(0.08).setFill()
+            case .hunk: NSColor.quaternaryLabelColor.withAlphaComponent(0.07).setFill()
+            case .gap: NSColor.clear.setFill()
             case .file: NSColor.quaternaryLabelColor.withAlphaComponent(0.16).setFill()
             case .none: return
             }
             band.fill()
+
+            if fill == .gap {
+                drawHatching(in: band, colour: NSColor.separatorColor.withAlphaComponent(0.5))
+            }
 
             // A file starts with a rule above it. Without one the headers ran
             // together with the last line of the file before them.
@@ -821,9 +890,9 @@ final class DiffGutter: NSView {
             case .removed: theme.removedBackground.setFill()
             case .addedStaged: theme.stagedBackground(added: true).setFill()
             case .removedStaged: theme.stagedBackground(added: false).setFill()
-            case .hunk: NSColor.systemBlue.withAlphaComponent(0.08).setFill()
+            case .gap, .none: NSColor.clear.setFill()
+            case .hunk: NSColor.quaternaryLabelColor.withAlphaComponent(0.07).setFill()
             case .file: NSColor.quaternaryLabelColor.withAlphaComponent(0.16).setFill()
-            case .none: NSColor.clear.setFill()
             }
             // The fragment rather than the used rect, and over the seam rather
             // than up to it: the text side bands the whole fragment, including
@@ -831,6 +900,12 @@ final class DiffGutter: NSView {
             // would leave a step at every heading.
             let bandY = fragment.minY + inset - visible.minY
             NSRect(x: 0, y: bandY, width: self.bounds.width, height: fragment.height).fill()
+
+            if fill == .gap {
+                drawHatching(
+                    in: NSRect(x: 0, y: bandY, width: self.bounds.width, height: fragment.height),
+                    colour: NSColor.separatorColor.withAlphaComponent(0.5))
+            }
 
             if row == self.currentRow {
                 NSColor.controlAccentColor.withAlphaComponent(0.22).setFill()

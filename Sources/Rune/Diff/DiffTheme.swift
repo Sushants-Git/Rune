@@ -17,6 +17,11 @@ enum DiffTheme: String, CaseIterable {
     /// No colour on the code at all, only the bands. For anyone who finds
     /// highlighting in a diff more noise than signal.
     case plain
+    /// An editor's palette rather than a Mac window's: One Dark, the colours
+    /// Zed and half the editors on the machine already use. The default,
+    /// because a diff sitting beside a terminal is a coding surface and reads
+    /// better in a coding surface's colours than in the system's.
+    case zed
 
     var title: String {
         switch self {
@@ -24,13 +29,14 @@ enum DiffTheme: String, CaseIterable {
         case .terminal: "Terminal"
         case .paper: "Paper"
         case .plain: "No highlighting"
+        case .zed: "Editor"
         }
     }
 
     /// Whether the code gets syntax colours at all.
     var highlightsSyntax: Bool {
         switch self {
-        case .rune, .paper: true
+        case .rune, .paper, .zed: true
         case .terminal, .plain: false
         }
     }
@@ -41,6 +47,7 @@ enum DiffTheme: String, CaseIterable {
         case .terminal: NSColor.systemGreen.withAlphaComponent(0.24)
         case .paper: NSColor.systemGreen.withAlphaComponent(0.18)
         case .plain: NSColor.systemGreen.withAlphaComponent(0.16)
+        case .zed: NSColor(srgbRed: 0.596, green: 0.765, blue: 0.475, alpha: 0.16)
         }
     }
 
@@ -50,6 +57,7 @@ enum DiffTheme: String, CaseIterable {
         case .terminal: NSColor.systemRed.withAlphaComponent(0.24)
         case .paper: NSColor.systemRed.withAlphaComponent(0.18)
         case .plain: NSColor.systemRed.withAlphaComponent(0.16)
+        case .zed: NSColor(srgbRed: 0.878, green: 0.424, blue: 0.459, alpha: 0.16)
         }
     }
 
@@ -90,7 +98,7 @@ enum DiffTheme: String, CaseIterable {
     /// The colour of code that has not been touched.
     @MainActor var contextText: NSColor {
         switch self {
-        case .terminal: NSColor.secondaryLabelColor
+        case .zed: NSColor(srgbRed: 0.671, green: 0.698, blue: 0.749, alpha: 1)
         default: NSColor.secondaryLabelColor
         }
     }
@@ -100,6 +108,7 @@ enum DiffTheme: String, CaseIterable {
     @MainActor func changedText(added: Bool) -> NSColor {
         switch self {
         case .terminal: added ? NSColor.systemGreen : NSColor.systemRed
+        case .zed: NSColor(srgbRed: 0.847, green: 0.871, blue: 0.914, alpha: 1)
         default: NSColor.labelColor
         }
     }
@@ -109,6 +118,12 @@ enum DiffTheme: String, CaseIterable {
         switch self {
         case .paper:
             (.systemPurple, .systemRed, .tertiaryLabelColor, .systemBlue, .systemIndigo)
+        case .zed:
+            (NSColor(srgbRed: 0.776, green: 0.471, blue: 0.867, alpha: 1),   // keyword
+             NSColor(srgbRed: 0.596, green: 0.765, blue: 0.475, alpha: 1),   // string
+             NSColor(srgbRed: 0.361, green: 0.388, blue: 0.439, alpha: 1),   // comment
+             NSColor(srgbRed: 0.820, green: 0.604, blue: 0.400, alpha: 1),   // number
+             NSColor(srgbRed: 0.898, green: 0.753, blue: 0.482, alpha: 1))   // type
         default:
             (.systemPink, .systemOrange, .tertiaryLabelColor, .systemTeal, .systemPurple)
         }
