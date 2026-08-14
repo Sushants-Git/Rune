@@ -362,6 +362,9 @@ final class SettingsWindowController: NSWindowController {
         checkboxWithTitle: "", target: nil, action: nil)
     private let todosEnabled = NSButton(
         checkboxWithTitle: "", target: nil, action: nil)
+    private let diffTheme = NSPopUpButton()
+    private let diffFont = NSTextField()
+    private let diffFontSize = NSTextField()
 
     private func makeAppearancePane() -> NSView {
         accentWell.onChange = { [weak self] color in
@@ -378,6 +381,29 @@ final class SettingsWindowController: NSWindowController {
         todosEnabled.target = self
         todosEnabled.action = #selector(todosEnabledToggled)
         todosEnabled.title = ""
+
+        diffTheme.removeAllItems()
+        diffTheme.addItems(withTitles: DiffTheme.allCases.map(\.title))
+        diffTheme.target = self
+        diffTheme.action = #selector(diffThemeChanged)
+        diffTheme.controlSize = .small
+        diffTheme.font = .systemFont(ofSize: 12)
+        diffTheme.translatesAutoresizingMaskIntoConstraints = false
+        diffTheme.widthAnchor.constraint(equalToConstant: 160).isActive = true
+
+        for (field, width, action) in [
+            (diffFont, CGFloat(200), #selector(diffFontChanged)),
+            (diffFontSize, CGFloat(60), #selector(diffFontChanged)),
+        ] {
+            field.font = .systemFont(ofSize: 12)
+            field.controlSize = .small
+            field.target = self
+            field.action = action
+            field.translatesAutoresizingMaskIntoConstraints = false
+            field.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        diffFont.placeholderString = "same as Ghostty"
+        diffFontSize.placeholderString = "auto"
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -437,6 +463,21 @@ final class SettingsWindowController: NSWindowController {
                         + "c copies, d deletes, space ticks off.",
                     control: todosEnabled),
             ]),
+            section("Diff", [
+                SettingsRow(
+                    title: "Theme",
+                    caption: "What ⌘E is drawn in.",
+                    control: diffTheme),
+                SettingsRow(
+                    title: "Font",
+                    caption: "Left empty it follows your Ghostty font, so the diff and the "
+                        + "terminal beside it match.",
+                    control: {
+                        let stack = NSStackView(views: [diffFont, diffFontSize])
+                        stack.spacing = 8
+                        return stack
+                    }()),
+            ]),
             section("Terminal", [
                 SettingsRow(
                     title: "Ghostty config",
@@ -493,6 +534,24 @@ final class SettingsWindowController: NSWindowController {
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
         lightIconTiles.state = settings.lightIconTiles ? .on : .off
         todosEnabled.state = settings.todosEnabled ? .on : .off
+        diffTheme.selectItem(at: DiffTheme.allCases.firstIndex(of: .current) ?? 0)
+        diffFont.stringValue = settings.diffFontName
+        diffFontSize.stringValue = settings.diffFontSize > 0
+            ? String(Int(settings.diffFontSize)) : ""
+    }
+
+    @objc private func diffThemeChanged() {
+        let index = diffTheme.indexOfSelectedItem
+        guard let theme = DiffTheme.allCases[safe: index] else { return }
+        Settings.shared.diffTheme = theme.rawValue
+    }
+
+    /// Also called when the field gives up focus, so a value typed and then
+    /// clicked away from is not quietly lost.
+    @objc private func diffFontChanged() {
+        Settings.shared.diffFontName = diffFont.stringValue
+            .trimmingCharacters(in: .whitespaces)
+        Settings.shared.diffFontSize = Double(diffFontSize.stringValue) ?? 0
     }
 
     @objc private func lightIconTilesToggled() {

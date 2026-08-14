@@ -74,6 +74,29 @@ enum GitDiff {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Where a process actually is.
+    ///
+    /// Rune's `pwd` comes from OSC 7, which only arrives if the shell has
+    /// Ghostty's integration loaded — and plenty do not. Asking the kernel
+    /// instead needs no cooperation from the shell at all, so the diff works in
+    /// a terminal that has never emitted an escape sequence in its life. This
+    /// is the fallback, not the primary: OSC 7 follows `cd` inside the shell
+    /// and is the more accurate answer when it is there.
+    static func workingDirectory(ofProcess pid: pid_t) -> String? {
+        guard pid > 0 else { return nil }
+        var info = proc_vnodepathinfo()
+        let size = MemoryLayout<proc_vnodepathinfo>.size
+        let read = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, $0, Int32(size))
+        }
+        guard read == Int32(size) else { return nil }
+        return withUnsafePointer(to: &info.pvi_cdir.vip_path) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) {
+                String(validatingCString: $0)
+            }
+        }
+    }
+
     private static func run(_ arguments: [String], in directory: String) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")

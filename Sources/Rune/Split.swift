@@ -573,3 +573,18 @@ final class Tab {
         panes.first { $0.surface === surface }
     }
 }
+
+/// The window's content area, which lays its own children out.
+///
+/// The terminal and the diff panel are siblings sharing one width, and two
+/// siblings autoresizing independently both claim all of it. One place decides
+/// instead, and it runs on every resize because `layout` does.
+@MainActor
+final class ContainerView: NSView {
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}

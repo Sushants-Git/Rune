@@ -100,14 +100,49 @@ final class Settings {
         }
     }
 
+    /// Which palette the diff is drawn in. See `DiffTheme`.
+    var diffTheme: String {
+        get { defaults.string(forKey: Keys.diffTheme) ?? Defaults.diffTheme }
+        set {
+            defaults.set(newValue, forKey: Keys.diffTheme)
+            notify(.appearance)
+        }
+    }
+
+    /// The diff's font, or empty to follow the terminal's.
+    ///
+    /// Following Ghostty is the default because the diff sits beside the
+    /// terminal and the two showing the same code in different faces reads as
+    /// two applications rather than one.
+    var diffFontName: String {
+        get { defaults.string(forKey: Keys.diffFontName) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Keys.diffFontName)
+            notify(.appearance)
+        }
+    }
+
+    /// Points, or zero to follow the terminal's size.
+    var diffFontSize: Double {
+        get { defaults.double(forKey: Keys.diffFontSize) }
+        set {
+            defaults.set(newValue, forKey: Keys.diffFontSize)
+            notify(.appearance)
+        }
+    }
+
     enum Defaults {
+        static let diffTheme = "rune"
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
         static let lightIconTiles = true
     }
 
     func resetAppearance() {
-        for key in [Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles] {
+        for key in [
+            Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles,
+            Keys.diffTheme, Keys.diffFontName, Keys.diffFontSize,
+        ] {
             defaults.removeObject(forKey: key)
         }
         notify(.appearance)
@@ -176,6 +211,9 @@ final class Settings {
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
         static let todosEnabled = "RuneTodosEnabled"
+        static let diffTheme = "RuneDiffTheme"
+        static let diffFontName = "RuneDiffFontName"
+        static let diffFontSize = "RuneDiffFontSize"
         static let shortcuts = "RuneShortcuts"
     }
 

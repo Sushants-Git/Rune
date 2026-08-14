@@ -365,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
 
-    @objc private func showDiffAction(_ sender: Any?) { keyController?.showDiff() }
+    @objc private func showDiffAction(_ sender: Any?) { keyController?.toggleDiff() }
 
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)

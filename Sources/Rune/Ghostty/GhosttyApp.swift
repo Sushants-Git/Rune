@@ -188,6 +188,31 @@ final class GhosttyApp {
         return NSColor(ghostty: color)
     }
 
+    /// The terminal's own font, so the diff can be set in it.
+    ///
+    /// Strings come back from libghostty as a borrowed `char *`, which is why
+    /// this copies rather than holding the pointer: the config owns it and will
+    /// free it on the next reload.
+    var fontFamily: String? {
+        guard let config else { return nil }
+        var value: UnsafePointer<Int8>?
+        let key = "font-family"
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)), let value
+        else { return nil }
+        let name = String(cString: value)
+        return name.isEmpty ? nil : name
+    }
+
+    /// `font-size` is an `f32` in Ghostty's config, so it is read as one.
+    var fontSize: Double? {
+        guard let config else { return nil }
+        var value: Float = 0
+        let key = "font-size"
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)), value > 0
+        else { return nil }
+        return Double(value)
+    }
+
     var needsConfirmQuit: Bool {
         guard let app else { return false }
         return ghostty_app_needs_confirm_quit(app)

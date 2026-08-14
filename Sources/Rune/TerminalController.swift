@@ -153,10 +153,17 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// Every terminal in the window, across all workspaces, tabs and splits.
     var allSurfaces: [GhosttySurfaceView] { workspaces.flatMap(\.surfaces) }
 
-    private let container = NSView()
+    private let container = ContainerView()
     private let tabBar = TabBar()
 
     private(set) var overlay: SwitcherOverlay?
+
+    /// The diff, when it is open. Nil is the normal state.
+    private var diffPanel: DiffPanel?
+    private var diffWidth: CGFloat = 0
+    /// The width the panel had before ⌘⇧↵ filled the window with it, so putting
+    /// it back means putting it back exactly.
+    private var diffWidthBeforeZoom: CGFloat?
     private var activityTimer: Timer?
 
     /// Reads agent state off the main thread. See `AgentSession.swift`.
@@ -215,6 +222,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         window.contentView = container
 
         super.init(window: window)
+
+        // After `super.init`, since it captures self. The terminal area and the
+        // diff panel share this space, and two siblings autoresizing
+        // independently would both claim the full width — so one place decides,
+        // on every resize.
+        container.onLayout = { [weak self] in self?.layoutContent() }
 
         // A reloaded config can change the terminal's colours without any
         // surface reporting a change, and `syncChrome` short-circuits when the
@@ -347,7 +360,43 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     private var terminalFrame: NSRect {
         var frame = container.bounds
         frame.size.height = max(0, frame.size.height - Self.titlebarInset)
+        frame.size.width = max(0, frame.size.width - diffWidth)
         return frame
+    }
+
+    /// The strip down the right, when the diff is open.
+    /// Whether the keyboard is inside the diff panel, which is what decides
+    /// who ⌘⇧↵ is talking to.
+    var isDiffFocused: Bool {
+        guard let panel = diffPanel, let responder = window?.firstResponder as? NSView
+        else { return false }
+        return responder === panel || responder.isDescendant(of: panel)
+    }
+
+    /// ⌘⇧↵ with the diff focused: fill the window with it, or put the terminal
+    /// back. The same key zooms a split pane when a terminal has the keyboard,
+    /// which is the same idea applied to whichever thing you are reading.
+    func toggleDiffZoom() {
+        guard diffPanel != nil else { return }
+        if let previous = diffWidthBeforeZoom {
+            diffWidth = previous
+            diffWidthBeforeZoom = nil
+        } else {
+            diffWidthBeforeZoom = diffWidth
+            diffWidth = container.bounds.width
+        }
+        layoutContent()
+    }
+
+    private var diffFrame: NSRect {
+        NSRect(
+            x: container.bounds.width - diffWidth, y: 0,
+            width: diffWidth, height: max(0, container.bounds.height - Self.titlebarInset))
+    }
+
+    private func layoutContent() {
+        activeTab?.view.frame = terminalFrame
+        diffPanel?.frame = diffFrame
     }
 
     // MARK: - Making terminals
@@ -673,6 +722,11 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘⇧↵: fill the tab with the focused pane, or put the layout back.
     func toggleSplitZoom() {
+        // The diff answers this key when it is the thing you are reading.
+        if isDiffFocused {
+            toggleDiffZoom()
+            return
+        }
         hideSwitcher()
         guard let tab = activeTab, tab.surfaces.count > 1 else { return }
         tab.toggleZoom()
@@ -884,9 +938,77 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         present(TodoPalette(onDismiss: { [weak self] in self?.closeSwitcher() }))
     }
 
-    /// ⌘E: the uncommitted changes where the focused terminal is standing.
-    func showDiff() {
-        DiffWindowController.shared.show(directory: activeSurface?.pwd)
+    /// ⌘E: the uncommitted changes where the focused terminal is standing,
+    /// beside it rather than over it. Pressing it again puts the width back.
+    func toggleDiff() {
+        if diffPanel != nil {
+            closeDiff()
+        } else {
+            openDiff()
+        }
+    }
+
+    private func openDiff() {
+        let panel = DiffPanel()
+        panel.autoresizingMask = []
+        panel.onClose = { [weak self] in self?.closeDiff() }
+        panel.onResize = { [weak self] width in
+            guard let self else { return }
+            let most = max(DiffPanel.minimumWidth, self.container.bounds.width - 320)
+            self.diffWidth = min(max(width, DiffPanel.minimumWidth), most)
+            self.layoutContent()
+        }
+        container.addSubview(panel, positioned: .below, relativeTo: tabBar)
+        diffPanel = panel
+        diffWidth = min(
+            max(DiffPanel.minimumWidth, container.bounds.width * 0.45),
+            max(DiffPanel.minimumWidth, container.bounds.width - 320))
+        layoutContent()
+        panel.takeFocus()
+        reloadDiff()
+    }
+
+    private func closeDiff() {
+        diffPanel?.removeFromSuperview()
+        diffPanel = nil
+        diffWidth = 0
+        diffWidthBeforeZoom = nil
+        layoutContent()
+        if let surface = activeSurface { window?.makeFirstResponder(surface) }
+    }
+
+    /// Where the terminal is standing. OSC 7 when the shell says so, and the
+    /// kernel's answer for the shell's own process when it doesn't — which is
+    /// most shells, since Ghostty's integration has to be installed.
+    private var diffDirectory: String? {
+        guard let surface = activeSurface else { return nil }
+        if let pwd = surface.pwd { return pwd }
+        return GitDiff.workingDirectory(ofProcess: surface.foregroundPID)
+    }
+
+    func reloadDiff() {
+        guard let panel = diffPanel else { return }
+        guard let directory = diffDirectory else {
+            panel.showMessage("Could not tell where this terminal is.")
+            return
+        }
+        panel.showMessage("Reading…")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try GitDiff.uncommitted(in: directory) }
+            let root = GitDiff.repositoryRoot(of: directory)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    switch result {
+                    case .success(let files):
+                        panel.show(files: files, root: root, directory: directory)
+                    case .failure(GitDiff.Failure.notARepository):
+                        panel.showMessage("\(directory) is not in a git repository.")
+                    case .failure(let error):
+                        panel.showMessage("git: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
     }
 
     /// ⌘W with the todo list up: delete the highlighted one.
