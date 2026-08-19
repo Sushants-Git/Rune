@@ -1,5 +1,6 @@
 import Cocoa
 import GhosttyKit
+import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
@@ -34,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
             }
         installTabShortcuts()
         installCommandLineListener()
+        // Only the delegate is set up front; permission is asked for the first
+        // time a bell is actually armed. See `Notify`.
+        if Notify.isAvailable { UNUserNotificationCenter.current().delegate = self }
         // `rune <path>` on a cold launch says where the first window belongs.
         let controller = newWindow(workingDirectory: CLI.startupDirectory)
         NSApp.activate(ignoringOtherApps: true)
@@ -547,6 +551,80 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         item.target = nil
         menu.addItem(item)
         return item
+    }
+}
+
+// MARK: - Notifications
+
+/// Carries a notification-centre completion handler across the hop to the main
+/// actor.
+///
+/// `UNUserNotificationCenterDelegate` is not actor-isolated and its handlers
+/// are not `Sendable`, but the only question they need answered — which
+/// workspace is on screen — is main-actor state. Each handler is called exactly
+/// once, on the main queue, and touched from nowhere else, which is the promise
+/// the compiler can't see and this type makes on its behalf.
+private struct Handoff<Value>: @unchecked Sendable {
+    let deliver: (Value) -> Void
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    /// macOS suppresses banners for the app that is already frontmost, which is
+    /// the right default and the wrong one here: Rune being in front says
+    /// nothing about whether you can see the workspace that just finished. You
+    /// are far more likely to be *in another workspace of Rune's* than in
+    /// another app entirely — that is the whole reason you armed the bell.
+    ///
+    /// So the banner is shown unless you are genuinely looking at the thing it
+    /// is about, in the window that has the keyboard.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler:
+            @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // Read on the way in, while the notification is still the caller's:
+        // only the id crosses to the main actor, and a UUID is Sendable.
+        let subject = Notify.workspace(of: notification)
+        let handoff = Handoff(deliver: completionHandler)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let onScreen = (NSApp.keyWindow as? TerminalWindow)?
+                    .controller?.activeWorkspace?.id
+                let watching = subject != nil && subject == onScreen
+                handoff.deliver(watching ? [] : [.banner, .sound])
+            }
+        }
+    }
+
+    /// Clicking it goes there. A notification that only tells you something
+    /// finished leaves you to find it again by hand, which is the work you were
+    /// trying to avoid by asking to be told.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let subject = Notify.workspace(of: response.notification)
+        let handoff = Handoff<Void> { _ in completionHandler() }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let subject { (NSApp.delegate as? AppDelegate)?.reveal(subject) }
+                handoff.deliver(())
+            }
+        }
+    }
+
+    /// Bring a workspace to the front, wherever it is.
+    private func reveal(_ id: UUID) {
+        for controller in controllers {
+            guard let workspace = controller.workspaces.first(where: { $0.id == id })
+            else { continue }
+            NSApp.activate(ignoringOtherApps: true)
+            controller.window?.makeKeyAndOrderFront(nil)
+            controller.selectWorkspace(workspace)
+            return
+        }
     }
 }
 

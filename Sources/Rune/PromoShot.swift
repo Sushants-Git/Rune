@@ -24,7 +24,8 @@ enum PromoShot {
                 pinned: true),
             row("devfolio-api", "~/Workspace", .codex,
                 Status(activity: .working, detail: "Running a command",
-                       since: Date().addingTimeInterval(-83))),
+                       since: Date().addingTimeInterval(-83)),
+                notifies: true),
             row("rune-website", "~/", .openCode,
                 Status(activity: .working, detail: "Running bash",
                        since: Date().addingTimeInterval(-14))),
@@ -62,12 +63,14 @@ enum PromoShot {
 
     private static func row(
         _ title: String, _ subtitle: String, _ agent: AgentIcon?, _ status: Status,
-        current: Bool = false, pinned: Bool = false, zoomed: Bool = false
+        current: Bool = false, pinned: Bool = false, zoomed: Bool = false,
+        notifies: Bool = false
     ) -> PaletteItem {
         PaletteItem(
             title: title, subtitle: subtitle, badge: nil,
             isCurrent: current, isPinned: pinned, isZoomed: zoomed,
             icon: agent?.image, status: status,
-            searchText: title, editableName: "", automaticTitle: title)
+            searchText: title, editableName: "", automaticTitle: title,
+            notifiesWhenDone: notifies)
     }
 }

@@ -24,6 +24,8 @@ struct PaletteItem {
     /// Shown greyed out while renaming, so an empty field reads as "back to
     /// whatever the terminal calls itself" rather than as blank.
     let automaticTitle: String
+    /// Armed with → to notify when its agent stops.
+    let notifiesWhenDone: Bool
 }
 
 /// The switcher's own colours.
@@ -92,6 +94,10 @@ final class SwitcherPalette: NSView, OverlayPanel {
     /// point of closing from here is clearing out several at once, and a dialog
     /// that dismissed itself after each one would make that four ⌘Ks.
     var onCloseItem: ((Int) -> Void)?
+    /// →: arm or disarm "tell me when the agent in this one stops". The host
+    /// owns the arming, and reloads the list to put the bell on the row.
+    var onToggleNotify: ((Int) -> Void)?
+
     /// ⌘P: pin the row to the top, or unpin it. The host owns the pin order and
     /// reloads the list, so the palette never reorders anything itself.
     var onTogglePin: ((Int) -> Void)?
@@ -385,6 +391,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
         for (keys, label) in [
             (["⌘R"], "Rename"),
             (["⌘P"], "Pin"),
+            (["→"], "Notify"),
             (["⌘W"], "Close"),
             // "Dismiss" rather than "Close", now that ⌘W closes a workspace and
             // esc closes the panel. Two rows both labelled Close would be a
@@ -521,6 +528,17 @@ final class SwitcherPalette: NSView, OverlayPanel {
     func togglePinOnSelected() {
         guard !isRenaming, let index = selectedItemIndex else { return }
         onTogglePin?(index)
+    }
+
+    /// →: ring me when the agent on the highlighted row stops.
+    ///
+    /// An arrow key rather than another ⌘-chord, because it is the one gesture
+    /// in this panel that is *about* the row you are arrowing through — you
+    /// come down the list looking for the one that's working, and the key that
+    /// arms it is under the same finger that got you there.
+    func toggleNotifyOnSelected() {
+        guard !isRenaming, let index = selectedItemIndex else { return }
+        onToggleNotify?(index)
     }
 
     @objc private func tableClicked() {
@@ -684,6 +702,13 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         if item.isZoomed {
             cluster.addArrangedSubview(
                 Chip(symbol: "arrow.up.left.and.arrow.down.right", hint: "A pane is zoomed"))
+        }
+        // A bell, because that is what it is. It sits before "current" so the
+        // thing you armed reads the same whether or not you happen to be
+        // standing in it.
+        if item.notifiesWhenDone {
+            cluster.addArrangedSubview(
+                Chip(symbol: "bell.fill", hint: "Notifies you when this agent stops"))
         }
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
@@ -1164,6 +1189,16 @@ extension SwitcherPalette: NSTextFieldDelegate {
             commit()
         case #selector(NSResponder.cancelOperation(_:)):
             cancel()
+        case #selector(NSResponder.moveRight(_:)):
+            // Right arrow belongs to the field editor first — it is how you get
+            // back through a query you are still editing. It only means "notify
+            // me" at the very end of the text, where moving right would do
+            // nothing anyway, so the two never compete for the same keystroke.
+            let caret = textView.selectedRange()
+            guard caret.length == 0,
+                  caret.location >= (textView.string as NSString).length
+            else { return false }
+            toggleNotifyOnSelected()
         case #selector(NSResponder.insertTab(_:)):
             moveSelection(by: 1)
         case #selector(NSResponder.insertBacktab(_:)):

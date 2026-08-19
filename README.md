@@ -39,13 +39,17 @@ updates itself after that.
 - `⌘W` closes the highlighted one, with every tab and split in it.
 - `⌘P` pins it to the top. Pinned rows stay in the order you pinned them.
 - `⌘R` renames it, in place.
+- `→` rings you when that workspace's agent stops. A bell appears on the row,
+  and the notification takes you back there when you click it.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
 down.
 
 Every row says what its agent is doing: `working` with a clock, `your turn` when
-it stops, nothing when there's nothing worth saying.
+it stops, nothing when there's nothing worth saying. If you'd rather not watch
+the list, arm a row with `→` and go do something else — Rune tells you when that
+one finishes.
 
 ## Keys
 
@@ -57,6 +61,7 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘N` | new workspace |
 | `⌘W` | close the terminal, or the `⌘K` row |
 | `⌘P` | pin a workspace to the top of `⌘K` |
+| `→` | in `⌘K`, notify me when this agent stops |
 | `⌘1`–`⌘9` | workspace by position |
 | `⌘R` | rename a workspace, in place |
 | `⌥1`–`⌥9` | tab by position |

@@ -81,6 +81,17 @@ final class Workspace {
     /// Matching against directories or background tabs made rows light up for
     /// reasons you couldn't see.
     var searchText: String { title }
+
+    /// Tell me when the agent in here stops. Armed with → from ⌘K, and cleared
+    /// by the notification it fires: you asked to be told once, not subscribed.
+    var notifiesWhenDone = false
+
+    /// What this workspace was doing at the last poll.
+    ///
+    /// Kept because "it has stopped" and "it just stopped" are different facts
+    /// and only the second one is worth a notification. Without it, arming a
+    /// bell on something already sitting at its prompt would fire immediately.
+    var lastActivity: Activity = .idle
 }
 
 /// One macOS window, holding any number of workspaces.
@@ -306,6 +317,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             // Not `||`, which would short-circuit and stop updating the rest.
             if surface.apply(verdict) { changed = true }
         }
+
+        // Before the early return below: a bell that came due is worth more
+        // than the redraw it rides along with, and the bookkeeping has to
+        // happen on every poll for the edge to be detectable at all.
+        ringDueBells()
+
         guard changed else { return }
 
         // Not the palette while a row is being renamed: reloading rebuilds the
@@ -313,6 +330,41 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         var work: ChromeWork = [.tabBar]
         if overlay?.palette?.isRenaming != true { work.insert(.palette) }
         scheduleChromeSync(work)
+    }
+
+    /// Fire the bells that just came due, and record where every workspace got
+    /// to so the next poll can tell a transition from a state it's been sitting
+    /// in.
+    ///
+    /// Edge-triggered on `waiting`, and only on `waiting`. That is the state
+    /// that means the agent is done — at its prompt or on a question, both of
+    /// which are your move. `idle` is tempting, because an agent that exits
+    /// lands there, but `idle` is also what a workspace reports for the second
+    /// the monitor loses track of a process, and a notification fired on that
+    /// would be a lie told at exactly the moment you'd started trusting it.
+    private func ringDueBells() {
+        for workspace in workspaces {
+            let activity = workspace.status.activity
+            defer { workspace.lastActivity = activity }
+
+            guard workspace.notifiesWhenDone,
+                  activity == .waiting, workspace.lastActivity != .waiting
+            else { continue }
+
+            // One-shot. Leaving it armed would turn a question you asked once
+            // into a running commentary on that workspace.
+            workspace.notifiesWhenDone = false
+
+            let detail = workspace.status.detail
+            Notify.post(
+                title: workspace.title,
+                body: detail?.isEmpty == false ? detail! : "Finished — it's your turn.",
+                workspace: workspace.id)
+
+            // The row's bell has to go out at the same moment, and the switcher
+            // may well be open in front of you when it does.
+            if overlay?.palette?.isRenaming != true { scheduleChromeSync(.palette) }
+        }
     }
 
     // MARK: - Chrome scheduling
@@ -817,7 +869,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                         status: workspace.status,
                         searchText: workspace.searchText,
                         editableName: workspace.customName ?? "",
-                        automaticTitle: workspace.automaticTitle)
+                        automaticTitle: workspace.automaticTitle,
+                        notifiesWhenDone: workspace.notifiesWhenDone)
                 }
             },
             onPreview: { [weak self] index in
@@ -846,6 +899,22 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             // you pinned rather than on whatever slid into its old position.
             let destination = self.orderedWorkspaces.firstIndex { $0 === workspace }
             self.overlay?.palette?.reload(selecting: destination)
+        }
+
+        palette.onToggleNotify = { [weak self] index in
+            guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
+            workspace.notifiesWhenDone.toggle()
+            if workspace.notifiesWhenDone {
+                // Baselined at the moment of arming rather than left at
+                // whatever the last poll saw: arming a bell on a workspace that
+                // is *already* stopped should wait for the next time it stops,
+                // not go off in your face a second later.
+                workspace.lastActivity = workspace.status.activity
+                Notify.requestAuthorization()
+            }
+            // Selecting the same row again keeps the highlight where your hand
+            // left it — the list hasn't moved, only the row's chip has.
+            self.overlay?.palette?.reload(selecting: index)
         }
 
         palette.onCloseItem = { [weak self] index in
