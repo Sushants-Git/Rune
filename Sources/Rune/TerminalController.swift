@@ -84,7 +84,33 @@ final class Workspace {
 
     /// Tell me when the agent in here stops. Armed with → from ⌘K, and cleared
     /// by the notification it fires: you asked to be told once, not subscribed.
-    var notifiesWhenDone = false
+    /// Whether stopping rings you, and whether it keeps doing so.
+    ///
+    /// Three states rather than two because the two useful questions are
+    /// different ones: "tell me when this finishes" is asked about a particular
+    /// run, and "keep telling me" is asked about a workspace you are going to
+    /// be away from for a while. A one-shot bell that had to be re-armed after
+    /// every turn is the second question answered badly.
+    enum Bell {
+        case off
+        /// Rings once, then disarms.
+        case once
+        /// Rings every time it stops, until you turn it off.
+        case always
+
+        var rings: Bool { self != .off }
+
+        /// `→` steps through them, so a second press is "and keep doing it".
+        var next: Bell {
+            switch self {
+            case .off: .once
+            case .once: .always
+            case .always: .off
+            }
+        }
+    }
+
+    var bell: Bell = .off
 
     /// What this workspace was doing at the last poll.
     ///
@@ -246,6 +272,18 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                     self?.syncChromeNow([.title, .colors, .tabBar, .palette])
                 }
             }
+        // Rune's own settings, on the same footing as Ghostty's. The window
+        // listened for one and not the other, so changing the accent or the
+        // panel's appearance repainted nothing already on screen and looked
+        // like a setting that did not work.
+        NotificationCenter.default.addObserver(
+            forName: Settings.changed, object: nil, queue: .main) { [weak self] note in
+                guard note.object as? Settings.Kind != .shortcuts else { return }
+                MainActor.assumeIsolated {
+                    self?.invalidateChromeColor()
+                    self?.syncChromeNow([.title, .colors, .tabBar, .palette])
+                }
+            }
         window.delegate = self
         window.controller = self
 
@@ -347,18 +385,20 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             let activity = workspace.status.activity
             defer { workspace.lastActivity = activity }
 
-            guard workspace.notifiesWhenDone,
+            guard workspace.bell.rings,
                   activity == .waiting, workspace.lastActivity != .waiting
             else { continue }
 
-            // One-shot. Leaving it armed would turn a question you asked once
-            // into a running commentary on that workspace.
-            workspace.notifiesWhenDone = false
+            // A bell armed once is a question you asked about this run, and
+            // leaving it armed would turn it into a running commentary. One
+            // armed twice is a standing request, and disarming it would be
+            // ignoring what the second press was for.
+            if workspace.bell == .once { workspace.bell = .off }
 
             let detail = workspace.status.detail
             Notify.post(
                 title: workspace.title,
-                body: detail?.isEmpty == false ? detail! : "Finished — it's your turn.",
+                body: detail?.isEmpty == false ? detail! : "Finished. It's your turn.",
                 workspace: workspace.id)
 
             // The row's bell has to go out at the same moment, and the switcher
@@ -870,7 +910,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                         searchText: workspace.searchText,
                         editableName: workspace.customName ?? "",
                         automaticTitle: workspace.automaticTitle,
-                        notifiesWhenDone: workspace.notifiesWhenDone)
+                        bell: workspace.bell)
                 }
             },
             onPreview: { [weak self] index in
@@ -903,8 +943,8 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
         palette.onToggleNotify = { [weak self] index in
             guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
-            workspace.notifiesWhenDone.toggle()
-            if workspace.notifiesWhenDone {
+            workspace.bell = workspace.bell.next
+            if workspace.bell.rings {
                 // Baselined at the moment of arming rather than left at
                 // whatever the last poll saw: arming a bell on a workspace that
                 // is *already* stopped should wait for the next time it stops,

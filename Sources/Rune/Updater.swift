@@ -462,6 +462,27 @@ final class Updater {
         NSApp.terminate(nil)
     }
 
+    /// Quitting counts as restarting.
+    ///
+    /// "Restart to update" is a button, but it describes something the user can
+    /// also just *do* — and doing it left the update staged and unapplied, so
+    /// the new copy re-downloaded on the next launch and offered the same
+    /// button again, for ever. Anyone who quits Rune with an update waiting has
+    /// asked for it as clearly as anyone who clicked.
+    ///
+    /// No reopen: they quit, so they wanted to be quit.
+    func installIfStagedOnQuit() {
+        guard case .readyToInstall = state, let staged else { return }
+        let destination = Bundle.main.bundleURL
+        guard destination.pathExtension == "app",
+              FileManager.default.isWritableFile(atPath: destination.path),
+              FileManager.default.isWritableFile(
+                atPath: destination.deletingLastPathComponent().path)
+        else { return }
+        try? Self.swap(
+            staged: staged, into: destination, waitingFor: getpid(), reopen: false)
+    }
+
     /// Wait for Rune to quit, swap the bundle, put it back if the swap fails,
     /// and start the new one.
     nonisolated private static let installScript = """
@@ -563,7 +584,7 @@ final class Updater {
             let deadline = Date().addingTimeInterval(15)
             while !app.isTerminated, Date() < deadline { usleep(200_000) }
             if !app.isTerminated {
-                note("rune: Rune is still running and wouldn't quit — quit it and try again")
+                note("rune: Rune is still running and wouldn't quit. Quit it and try again.")
                 exit(75)  // EX_TEMPFAIL
             }
         }

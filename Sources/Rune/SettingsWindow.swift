@@ -358,6 +358,11 @@ final class SettingsWindowController: NSWindowController {
     private let dimLabel = NSTextField(labelWithString: "")
     private let systemAccent = NSButton(
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
+    private let appearance = NSPopUpButton()
+    /// Four lines of terminal in whatever the config currently says, so a
+    /// colour or a font size can be judged by looking rather than by reading a
+    /// hex triplet.
+    private let preview = GhosttyPreview()
     private let lightIconTiles = NSButton(
         checkboxWithTitle: "", target: nil, action: nil)
     private let todosEnabled = NSButton(
@@ -372,6 +377,13 @@ final class SettingsWindowController: NSWindowController {
         systemAccent.action = #selector(systemAccentToggled)
         systemAccent.title = ""
         panelWell.onChange = { color in Settings.shared.panelBackground = color }
+        appearance.addItems(withTitles: Settings.Appearance.allCases.map(\.title))
+        appearance.target = self
+        appearance.action = #selector(appearanceChanged)
+        appearance.controlSize = .small
+        appearance.translatesAutoresizingMaskIntoConstraints = false
+        appearance.widthAnchor.constraint(equalToConstant: 176).isActive = true
+
         lightIconTiles.target = self
         lightIconTiles.action = #selector(lightIconTilesToggled)
         lightIconTiles.title = ""
@@ -402,6 +414,12 @@ final class SettingsWindowController: NSWindowController {
         let content = column([
             section("Rune", [
                 SettingsRow(
+                    title: "Appearance",
+                    caption: "Whether Rune's own panels are drawn light or dark. Matching "
+                        + "the terminal is the default because the ⌘K panel sits on top of "
+                        + "it, so that is what its text has to stay readable against.",
+                    control: appearance),
+                SettingsRow(
                     title: "Accent",
                     caption: "Marks the active tab, the update pill and the switcher's "
                         + "focus ring.",
@@ -411,9 +429,8 @@ final class SettingsWindowController: NSWindowController {
                     caption: nil, control: systemAccent),
                 SettingsRow(
                     title: "Switcher panel",
-                    caption: "The ⌘K panel's background. It stays dark on purpose — the "
-                        + "window's appearance follows your terminal theme, and a light one "
-                        + "would take the panel's text with it.",
+                    caption: "The ⌘K panel's background. Leave it unset and it follows the "
+                        + "Appearance above; set it and it stays what you picked.",
                     control: panelWell),
                 SettingsRow(
                     title: "Backdrop dim",
@@ -423,15 +440,15 @@ final class SettingsWindowController: NSWindowController {
                     title: "Light icon tiles",
                     caption: "What sits behind an agent's mark in ⌘K. Brand marks are drawn "
                         + "for paper, so most of them read better on a light tile than on "
-                        + "the panel. Icons that ship their own background — Codex's white "
-                        + "card, opencode's black square — keep it either way.",
+                        + "the panel. Icons that ship their own background, like Codex's white "
+                        + "card and opencode's black square, keep it either way.",
                     control: lightIconTiles),
             ]),
             section("Todo list", [
                 SettingsRow(
                     title: "Enable the todo list",
                     caption: "Adds ⌘J, which opens a list of what you have to do in the "
-                        + "same panel ⌘K uses. Off by default; with it off the key does "
+                        + "same panel ⌘K uses. On by default; with it off the key does "
                         + "nothing. In the list: a adds, o adds a sub-task under the "
                         + "highlighted one, ⌘R renames it in place as it does in ⌘K, "
                         + "c copies, d deletes, space ticks off.",
@@ -442,7 +459,7 @@ final class SettingsWindowController: NSWindowController {
                     title: "Ghostty config",
                     caption: "Colours, font and everything else about the terminal itself "
                         + "come from your Ghostty config. Rune keeps no second copy, so "
-                        + "there is only ever one file to edit — and the Ghostty tab edits "
+                        + "there is only ever one file to edit, and the Ghostty tab edits "
                         + "it for you.",
                     control: openConfig),
             ]),
@@ -492,11 +509,19 @@ final class SettingsWindowController: NSWindowController {
         dimSlider.doubleValue = Double(settings.backdropDim)
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
         lightIconTiles.state = settings.lightIconTiles ? .on : .off
+        appearance.selectItem(at: Settings.Appearance.allCases
+            .firstIndex(of: settings.appearance) ?? 0)
         todosEnabled.state = settings.todosEnabled ? .on : .off
     }
 
     /// Also called when the field gives up focus, so a value typed and then
     /// clicked away from is not quietly lost.
+    @objc private func appearanceChanged() {
+        let index = appearance.indexOfSelectedItem
+        guard let choice = Settings.Appearance.allCases[safe: index] else { return }
+        Settings.shared.appearance = choice
+    }
+
     @objc private func lightIconTilesToggled() {
         Settings.shared.lightIconTiles = lightIconTiles.state == .on
     }
@@ -647,7 +672,7 @@ final class SettingsWindowController: NSWindowController {
         pathRow.alignment = .centerY
         configPathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let header = NSStackView(views: [pathRow, configSummary, configWarning])
+        let header = NSStackView(views: [pathRow, configSummary, preview, configWarning])
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = 4
@@ -657,6 +682,9 @@ final class SettingsWindowController: NSWindowController {
         pathRow.translatesAutoresizingMaskIntoConstraints = false
         pathRow.widthAnchor.constraint(
             equalTo: header.widthAnchor, constant: -Metric.margin * 2).isActive = true
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        preview.widthAnchor.constraint(
+            equalTo: header.widthAnchor, constant: -Metric.margin * 2).isActive = true
 
         reloadGhosttyRows()
         return pane(scrolling(column(sections)), header: header)
@@ -664,6 +692,7 @@ final class SettingsWindowController: NSWindowController {
 
     /// Read the file and put every row back in step with it.
     private func reloadGhosttyRows() {
+        preview.refresh()
         let file = GhosttyConfigFile()
         for row in ghosttyControls { row.show(file.value(for: row.option.key)) }
 
@@ -676,7 +705,7 @@ final class SettingsWindowController: NSWindowController {
         let set = GhosttyOptions.all.filter { file.value(for: $0.key) != nil }.count
         let exists = FileManager.default.fileExists(atPath: file.url.path)
         configSummary.stringValue = !exists
-            ? "This file does not exist yet — changing anything here will create it."
+            ? "This file does not exist yet. Changing anything here will create it."
             : "\(set) of \(GhosttyOptions.all.count) shown below are set in this file; "
                 + "the rest are Ghostty's defaults."
 
@@ -774,7 +803,8 @@ final class SettingsWindowController: NSWindowController {
         alert.informativeText =
             "This deletes these lines from \(configPathLabel.stringValue):\n\n"
             + present.joined(separator: ", ")
-            + "\n\nEverything else in the file — comments, keys Rune does not show — is left "
+            + "\n\nEverything else in the file, including comments and keys Rune does not "
+            + "show, is left "
             + "alone, and the original was copied to a .rune-backup file the first time Rune "
             + "wrote to it."
         alert.addButton(withTitle: "Remove")

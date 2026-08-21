@@ -58,6 +58,27 @@ cp "$REPO_ROOT/Resources/opencode-plugin.js" "$APP/Contents/Resources/opencode-p
 
 # The MIT licence Ghostty is under asks that its notice ship with anything
 # built on it, so it travels inside the app rather than only in the repo.
+# Ghostty's own resources: the theme library and the terminfo database.
+#
+# `theme = Ayu Light` resolves from two places — the user's
+# ~/.config/ghostty/themes, then the app's bundled library. Rune shipped
+# neither, so any theme the user had not hand-copied simply was not found,
+# while the same config line worked in Ghostty.
+#
+# The terminfo has to come with them. libghostty only sets TERM=xterm-ghostty
+# when it has a resources directory, and it looks for the terminfo database
+# beside it — so shipping themes without terminfo would leave every shell
+# claiming to be a terminal whose capabilities nothing can look up.
+GHOSTTY_SHARE="$REPO_ROOT/vendor/ghostty/zig-out/share"
+if [ -d "$GHOSTTY_SHARE/ghostty" ] && [ -d "$GHOSTTY_SHARE/terminfo" ]; then
+  cp -R "$GHOSTTY_SHARE/ghostty" "$APP/Contents/Resources/ghostty"
+  cp -R "$GHOSTTY_SHARE/terminfo" "$APP/Contents/Resources/terminfo"
+  echo "==> bundled $(ls "$APP/Contents/Resources/ghostty/themes" | wc -l | tr -d ' ') ghostty themes"
+else
+  echo "warning: no ghostty resources at $GHOSTTY_SHARE — themes will not resolve" >&2
+  echo "warning: run ./scripts/build-libghostty.sh to produce them" >&2
+fi
+
 cp "$REPO_ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
 cp -R "$REPO_ROOT/licenses" "$APP/Contents/Resources/licenses"
 

@@ -52,6 +52,44 @@ final class Settings {
         set { setColor(newValue, forKey: Keys.panelBackground) }
     }
 
+    /// Whether Rune's own surfaces are drawn light or dark.
+    ///
+    /// Three answers, and the default is the interesting one: the ⌘K panel sits
+    /// *on* the terminal, so the thing it has to stay legible against is the
+    /// terminal's own background — not the system's idea of the hour. A Mac in
+    /// light mode running a dark terminal wants a dark panel, and `.system`
+    /// would get that exactly backwards.
+    enum Appearance: String, CaseIterable {
+        /// Follow the terminal's background.
+        case automatic
+        case light
+        case dark
+
+        var title: String {
+            switch self {
+            case .automatic: "Match the terminal"
+            case .light: "Light"
+            case .dark: "Dark"
+            }
+        }
+    }
+
+    var appearance: Appearance {
+        get { Appearance(rawValue: defaults.string(forKey: Keys.appearance) ?? "") ?? .automatic }
+        set {
+            defaults.set(newValue.rawValue, forKey: Keys.appearance)
+            notify(.appearance)
+        }
+    }
+
+    /// The panel colour only when it was chosen by hand.
+    ///
+    /// The default is a near-black, which is the wrong default over a light
+    /// terminal — but a colour the user actually picked is a colour they want,
+    /// whatever the terminal is doing. Telling the two apart is the difference
+    /// between following the theme and overriding a preference.
+    var panelBackgroundOverride: NSColor? { color(forKey: Keys.panelBackground) }
+
     /// How much of the terminal the switcher's backdrop carries away, 0…1.
     var backdropDim: CGFloat {
         get {
@@ -88,12 +126,15 @@ final class Settings {
 
     /// Whether `⌘J` opens a todo list in the switcher's panel.
     ///
-    /// Off by default, and the only feature in Rune that is. A terminal that
-    /// grew a task manager nobody asked for would be a worse terminal; this is
-    /// here for people who want one and invisible to everyone else, down to the
-    /// key doing nothing until it is switched on.
+    /// On by default, and switchable off — the other way round from where it
+    /// started. It shares the switcher's panel and costs nothing when unused,
+    /// and a key that did nothing until you found a setting was a feature most
+    /// people never discovered they had.
     var todosEnabled: Bool {
-        get { defaults.bool(forKey: Keys.todosEnabled) }
+        // On unless turned off. `defaults.bool` reads a missing key as false,
+        // which is the wrong default for a list that is one keystroke away and
+        // costs nothing when unused.
+        get { defaults.object(forKey: Keys.todosEnabled) as? Bool ?? true }
         set {
             defaults.set(newValue, forKey: Keys.todosEnabled)
             notify(.appearance)
@@ -109,6 +150,7 @@ final class Settings {
     func resetAppearance() {
         for key in [
             Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles,
+            Keys.appearance,
         ] {
             defaults.removeObject(forKey: key)
         }
@@ -178,6 +220,7 @@ final class Settings {
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
         static let todosEnabled = "RuneTodosEnabled"
+        static let appearance = "RuneAppearance"
         static let shortcuts = "RuneShortcuts"
     }
 
@@ -200,6 +243,18 @@ final class Settings {
             [srgb.redComponent, srgb.greenComponent, srgb.blueComponent, srgb.alphaComponent],
             forKey: key)
         notify(.appearance)
+    }
+
+    /// Re-read what is on disk and tell everything to repaint.
+    ///
+    /// Nothing is cached here — every property reads `UserDefaults` on demand —
+    /// so this is a synchronise plus an announcement rather than a reload. That
+    /// is enough: the announcement is the part anything already on screen was
+    /// missing.
+    func reload() {
+        defaults.synchronize()
+        notify(.appearance)
+        notify(.shortcuts)
     }
 
     private func notify(_ kind: Kind) {

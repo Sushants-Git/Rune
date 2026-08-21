@@ -90,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Quitting with an update waiting installs it, so that reopening Rune
+        // yourself is a way of taking the update rather than a way of being
+        // offered it again.
+        Updater.shared.installIfStagedOnQuit()
         if let tabKeyMonitor {
             NSEvent.removeMonitor(tabKeyMonitor)
             self.tabKeyMonitor = nil
@@ -375,6 +379,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
 
+    /// ⌘⇧, — re-read everything Rune is configured by, the way Ghostty does.
+    ///
+    /// Both halves, not just Ghostty's. Rune's own settings live in
+    /// `UserDefaults` and can be changed from outside the app — by `defaults
+    /// write`, or by another copy of Rune — and a reload that pointedly ignored
+    /// them would be a reload only by half. Every surface is handed the new
+    /// config and every window repaints, so a theme swap lands on what is
+    /// already open rather than on the next window you happen to make.
+    @objc private func reloadConfigAction(_ sender: Any?) {
+        _ = ghostty?.reloadConfig()
+        Settings.shared.reload()
+    }
+
 
     @objc private func selectWorkspaceByIndex(_ sender: NSMenuItem) {
         keyController?.selectWorkspace(at: sender.tag)
@@ -445,6 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         bind(.increaseFont, to: viewMenu, #selector(increaseFontAction(_:)))
         bind(.decreaseFont, to: viewMenu, #selector(decreaseFontAction(_:)))
         bind(.resetFont, to: viewMenu, #selector(resetFontAction(_:)))
+        viewMenu.addItem(.separator())
+        bind(.reloadConfig, to: viewMenu, #selector(reloadConfigAction(_:)))
         viewMenu.addItem(.separator())
         bind(.toggleFullScreen, to: viewMenu, #selector(NSWindow.toggleFullScreen(_:)), responder: true)
         viewItem.submenu = viewMenu

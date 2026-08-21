@@ -25,7 +25,7 @@ struct PaletteItem {
     /// whatever the terminal calls itself" rather than as blank.
     let automaticTitle: String
     /// Armed with → to notify when its agent stops.
-    let notifiesWhenDone: Bool
+    let bell: Workspace.Bell
 }
 
 /// The switcher's own colours.
@@ -37,32 +37,89 @@ struct PaletteItem {
 /// its own colours or it goes black-on-black the first time someone uses a
 /// light colourscheme.
 enum PaletteStyle {
+    /// Whether the panel should be drawn dark-on-light rather than
+    /// light-on-dark.
+    ///
+    /// Taken from the terminal's own background, because that is what the panel
+    /// sits on. Every colour below is a translucent white over a near-black
+    /// slab, which over a light theme leaves white text on pale grey — legible
+    /// in the sense that the pixels differ, and unreadable in every sense that
+    /// matters.
+    @MainActor static var isLight: Bool {
+        // A panel colour picked by hand decides this outright. The text has to
+        // be legible on the panel it is drawn on, and nothing else — pick a
+        // white panel under a dark terminal and following the *terminal* would
+        // put white text on it.
+        if let chosen = Settings.shared.panelBackgroundOverride { return chosen.isLight }
+        switch Settings.shared.appearance {
+        case .light: return true
+        case .dark: return false
+        case .automatic:
+            let terminal = (NSApp.delegate as? AppDelegate)?.ghostty?.backgroundColor
+            return (terminal ?? .black).isLight
+        }
+    }
+
     /// Near-black rather than pure black: a true #000 panel over a #000
     /// terminal has no edge at all, and the switcher needs to read as a thing
-    /// sitting *on* the terminal.
+    /// sitting *on* the terminal. Near-white for the same reason on a light
+    /// theme.
+    ///
     /// Settable in Settings ▸ Appearance. Computed rather than stored so the
     /// next ⌘K picks up a change without anything having to be told about it —
     /// the panel is built fresh on every open.
-    @MainActor static var background: NSColor { Settings.shared.panelBackground }
+    @MainActor static var background: NSColor {
+        Settings.shared.panelBackgroundOverride
+            ?? (isLight ? NSColor(white: 0.97, alpha: 1) : Settings.Defaults.panelBackground)
+    }
+
     /// Laid over the glass so the rows' contrast is a constant, not a function
     /// of whatever the terminal happens to be showing.
-    static let scrim = NSColor(white: 0.04, alpha: 0.42)
-    static let border = NSColor(white: 1, alpha: 0.10)
-    static let divider = NSColor(white: 1, alpha: 0.07)
-    static let selection = NSColor(white: 1, alpha: 0.09)
-
-    static let primaryText = NSColor(white: 0.96, alpha: 1)
-    static let secondaryText = NSColor(white: 1, alpha: 0.55)
-    static let tertiaryText = NSColor(white: 1, alpha: 0.34)
-
-    static let tile = NSColor(white: 1, alpha: 0.07)
-    /// What goes behind a mark that doesn't paint its own background.
-    /// Settable in Settings ▸ Appearance; see `Settings.lightIconTiles`.
-    @MainActor static var markPlate: NSColor {
-        Settings.shared.lightIconTiles ? NSColor.white.withAlphaComponent(0.9) : tile
+    @MainActor static var scrim: NSColor {
+        isLight ? NSColor(white: 1, alpha: 0.45) : NSColor(white: 0.04, alpha: 0.42)
     }
-    static let chip = NSColor(white: 1, alpha: 0.07)
-    static let chipEmphasised = NSColor(white: 1, alpha: 0.14)
+    @MainActor static var border: NSColor { ink(0.14, over: 0.10) }
+    @MainActor static var divider: NSColor { ink(0.09, over: 0.07) }
+    @MainActor static var selection: NSColor { ink(0.08, over: 0.09) }
+
+    @MainActor static var primaryText: NSColor {
+        isLight ? NSColor(white: 0.12, alpha: 1) : NSColor(white: 0.96, alpha: 1)
+    }
+    @MainActor static var secondaryText: NSColor { ink(0.62, over: 0.55) }
+    @MainActor static var tertiaryText: NSColor { ink(0.42, over: 0.34) }
+
+    @MainActor static var tile: NSColor { ink(0.07, over: 0.07) }
+    /// What goes behind a mark that doesn't paint its own background.
+    ///
+    /// Settable in Settings ▸ Appearance; see `Settings.lightIconTiles`. On a
+    /// light panel a white plate is invisible, so the setting means "a plate
+    /// that contrasts" rather than literally "a white one".
+    @MainActor static var markPlate: NSColor {
+        guard Settings.shared.lightIconTiles else { return tile }
+        return isLight ? NSColor(white: 0, alpha: 0.06) : NSColor.white.withAlphaComponent(0.9)
+    }
+    @MainActor static var chip: NSColor { ink(0.07, over: 0.07) }
+    @MainActor static var chipEmphasised: NSColor { ink(0.13, over: 0.14) }
+
+    /// Ink of the right polarity: black over a light panel, white over a dark
+    /// one. The two alphas are separate because the same number does not read
+    /// the same in both directions — black at 8% is heavier than white at 8%.
+    @MainActor private static func ink(_ onLight: CGFloat, over onDark: CGFloat) -> NSColor {
+        isLight ? NSColor(white: 0, alpha: onLight) : NSColor(white: 1, alpha: onDark)
+    }
+}
+
+extension NSColor {
+    /// Whether this reads as a light colour, by perceived brightness rather
+    /// than by the average of the channels — green carries most of the
+    /// impression of lightness and blue almost none.
+    var isLight: Bool {
+        guard let srgb = usingColorSpace(.sRGB) else { return false }
+        let luminance = 0.2126 * srgb.redComponent
+            + 0.7152 * srgb.greenComponent
+            + 0.0722 * srgb.blueComponent
+        return luminance > 0.5
+    }
 }
 
 /// The body of the ⌘K switcher: a filter field over a list, plus a hint bar.
@@ -234,10 +291,10 @@ final class SwitcherPalette: NSView, OverlayPanel {
             scrim.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
         ])
 
-        panel.shadow = NSShadow()
-        panel.layer?.shadowOpacity = 0.55
-        panel.layer?.shadowRadius = 40
-        panel.layer?.shadowOffset = CGSize(width: 0, height: -10)
+        // No shadow. It was doing the job of a border — a grey haze spreading a
+        // third of the way across the window — and the panel already has an
+        // edge, a scrim and a background that differs from the terminal's. Three
+        // things saying "this is in front" is two too many.
         panel.layer?.masksToBounds = false
 
         // A big, bare field. No leading icon: the panel appearing *is* the
@@ -706,9 +763,21 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         // A bell, because that is what it is. It sits before "current" so the
         // thing you armed reads the same whether or not you happen to be
         // standing in it.
-        if item.notifiesWhenDone {
+        // Two different bells, because they promise different things. The
+        // ringing one says "every time", and it has to be distinguishable at a
+        // glance from the one that goes quiet after it fires — otherwise the
+        // second press has no visible result and you cannot tell which you
+        // asked for.
+        switch item.bell {
+        case .off:
+            break
+        case .once:
             cluster.addArrangedSubview(
-                Chip(symbol: "bell.fill", hint: "Notifies you when this agent stops"))
+                Chip(symbol: "bell.fill", hint: "Notifies you the next time this agent stops"))
+        case .always:
+            cluster.addArrangedSubview(Chip(
+                symbol: "bell.and.waves.left.and.right.fill",
+                hint: "Notifies you every time this agent stops"))
         }
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))

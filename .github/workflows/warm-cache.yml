@@ -37,7 +37,13 @@ jobs:
         id: ghostty-cache
         uses: actions/cache@v4
         with:
-          path: vendor/ghostty/macos/GhosttyKit.xcframework
+          # The themes and terminfo ship in the app bundle, and they come out
+          # of the same zig build as the framework. Cached together or the
+          # bundle silently loses them on every cache hit — `theme = Ayu Light`
+          # resolving on a developer's machine and nowhere else.
+          path: |
+            vendor/ghostty/macos/GhosttyKit.xcframework
+            vendor/ghostty/zig-out/share
           # Byte-identical to the release workflow's key, which is the entire
           # point — a key that drifts warms a cache nothing will ever read.
           key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-universal

@@ -188,6 +188,18 @@ final class GhosttyApp {
         return NSColor(ghostty: color)
     }
 
+    /// Any colour the config names, or nil when it does not name one.
+    ///
+    /// Same shape as `backgroundColor`, but nil-returning: a preview that drew
+    /// black text because it asked for a key the theme leaves unset would be
+    /// showing something the terminal will never do.
+    func color(_ key: String) -> NSColor? {
+        guard let config else { return nil }
+        var value = ghostty_config_color_s()
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return nil }
+        return NSColor(ghostty: value)
+    }
+
     /// The terminal's own font, so the diff can be set in it.
     ///
     /// Strings come back from libghostty as a borrowed `char *`, which is why

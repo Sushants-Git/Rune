@@ -39,8 +39,9 @@ updates itself after that.
 - `⌘W` closes the highlighted one, with every tab and split in it.
 - `⌘P` pins it to the top. Pinned rows stay in the order you pinned them.
 - `⌘R` renames it, in place.
-- `→` rings you when that workspace's agent stops. A bell appears on the row,
-  and the notification takes you back there when you click it.
+- `→` rings you when that workspace's agent stops. Press it twice and it keeps
+  ringing every time, rather than once. A bell appears on the row, and the
+  notification takes you back there when you click it.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
@@ -48,7 +49,7 @@ down.
 
 Every row says what its agent is doing: `working` with a clock, `your turn` when
 it stops, nothing when there's nothing worth saying. If you'd rather not watch
-the list, arm a row with `→` and go do something else — Rune tells you when that
+the list, arm a row with `→` and go do something else. Rune tells you when that
 one finishes.
 
 ## Keys
@@ -61,7 +62,7 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘N` | new workspace |
 | `⌘W` | close the terminal, or the `⌘K` row |
 | `⌘P` | pin a workspace to the top of `⌘K` |
-| `→` | in `⌘K`, notify me when this agent stops |
+| `→` | in `⌘K`, notify me when this agent stops. Twice: every time |
 | `⌘1`–`⌘9` | workspace by position |
 | `⌘R` | rename a workspace, in place |
 | `⌥1`–`⌥9` | tab by position |
@@ -74,11 +75,12 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⇧↵` | zoom a pane, or put it back |
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
-| `⌘J` | todo list, once you switch it on |
+| `⌘J` | todo list |
+| `⌘⇧,` | reload the Ghostty config and Rune's settings |
 
-Rebind any of them in **Settings → Shortcuts**. The todo list is off by default:
-turn it on in **Settings → Appearance** and `⌘J` opens a list of what you have
-to do in the same panel, as a tree. In the list `a` adds, `o` adds a sub-task,
+Rebind any of them in **Settings → Shortcuts**. `⌘J` opens a list of what you
+have to do in the same panel, as a tree; turn it off in **Settings →
+Appearance** if you don't want it. In the list `a` adds, `o` adds a sub-task,
 `⌘R` renames in place as it does in `⌘K`, `c` copies, `d` deletes and `space`
 ticks off.
 

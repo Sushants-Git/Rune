@@ -132,7 +132,7 @@ final class TabBar: NSView {
         zoomButton.contentTintColor = .secondaryLabelColor
         zoomButton.target = self
         zoomButton.action = #selector(resetZoomClicked)
-        zoomButton.toolTip = "Pane zoomed — click to restore the splits (⌘⇧↵)"
+        zoomButton.toolTip = "Pane zoomed. Click to restore the splits (⌘⇧↵)"
         zoomButton.isHidden = true
         zoomButton.wantsLayer = true
         zoomButton.layer?.cornerRadius = Chrome.cornerRadius
@@ -226,6 +226,7 @@ final class TabBar: NSView {
             chips.append(chip)
             stack.addArrangedSubview(chip)
         }
+        syncEqualWidths()
 
         for (chip, tab) in zip(chips, tabs) {
             chip.apply(
@@ -237,6 +238,24 @@ final class TabBar: NSView {
     }
 
     private var chips: [TabChip] = []
+    /// Ties every chip to the width of the first, so the strip is even.
+    private var equalWidths: [NSLayoutConstraint] = []
+
+    /// Give every chip the width of the first one.
+    ///
+    /// `.fill` sizes each chip to its own title, so the strip came out as a
+    /// ragged row where a tab's width told you how long its name was and
+    /// nothing else. Equal widths leave position as the only thing that varies,
+    /// which is the thing you actually navigate by.
+    private func syncEqualWidths() {
+        NSLayoutConstraint.deactivate(equalWidths)
+        equalWidths.removeAll()
+        guard let first = chips.first, chips.count > 1 else { return }
+        equalWidths = chips.dropFirst().map {
+            $0.widthAnchor.constraint(equalTo: first.widthAnchor)
+        }
+        NSLayoutConstraint.activate(equalWidths)
+    }
 
     @objc private func newTabClicked() {
         onNewTab?()
@@ -348,8 +367,16 @@ private final class TabChip: NSView {
         closeButton.isHidden = true
         addSubview(closeButton)
 
+        // Breakable, unlike the ceiling. A required floor means a strip of
+        // eight tabs is wider than the window, and something has to give — what
+        // gave was the "+" button's promise to stay clear of the trailing
+        // cluster, so it slid under the tabs. A floor that yields lets the tabs
+        // narrow instead, which is what every other tab strip does.
+        let floor = widthAnchor.constraint(greaterThanOrEqualToConstant: 84)
+        floor.priority = .defaultHigh
+        floor.isActive = true
+
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 84),
             widthAnchor.constraint(lessThanOrEqualToConstant: maxWidth),
 
             accent.topAnchor.constraint(equalTo: topAnchor),
@@ -424,7 +451,7 @@ private final class TabChip: NSView {
         // The tooltip is where the detail goes: there is no room for words in
         // a chip this size, and ⌘K is the place that spells it out.
         let tip = [status.activity.label, status.detail].compactMap { $0 }
-        toolTip = tip.isEmpty ? nil : tip.joined(separator: " — ")
+        toolTip = tip.isEmpty ? nil : tip.joined(separator: " · ")
 
         let backgroundChanged = self.background != background
         self.background = background

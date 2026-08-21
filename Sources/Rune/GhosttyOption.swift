@@ -105,7 +105,7 @@ enum GhosttyOptions {
                           .choice(["detect", "none", "bash", "elvish", "fish", "zsh"]),
                           default: "detect",
                           note: "How Rune learns your working directory and what is running "
-                              + "— the ⌘K switcher is built on it."),
+                              + "the ⌘K switcher is built on it."),
             GhosttyOption("scrollback-limit", "Scrollback",
                           .number(min: 0, max: 1_000_000_000, integral: true),
                           default: "50000000", note: "Bytes of history kept per terminal."),

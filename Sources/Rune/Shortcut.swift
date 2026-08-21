@@ -100,6 +100,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
     case switchWorkspace, renameWorkspace, nextTab, previousTab
     case toggleTodos
     case find, findNext, findPrevious
+    case reloadConfig
 
     var title: String {
         switch self {
@@ -128,6 +129,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .find: "Find…"
         case .findNext: "Find Next"
         case .findPrevious: "Find Previous"
+        case .reloadConfig: "Reload Config"
         }
     }
 
@@ -142,6 +144,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .toggleTodos:
             "Workspaces"
         case .find, .findNext, .findPrevious: "Find"
+        case .reloadConfig: "View"
         }
     }
 
@@ -175,6 +178,8 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .find: KeyChord("f")
         case .findNext: KeyChord("g")
         case .findPrevious: KeyChord("g", [.command, .shift])
+        // The chord Ghostty itself uses for this, so the reflex carries over.
+        case .reloadConfig: KeyChord(",", [.command, .shift])
         }
     }
 

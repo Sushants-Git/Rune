@@ -39,7 +39,13 @@ jobs:
         id: ghostty-cache
         uses: actions/cache@v4
         with:
-          path: vendor/ghostty/macos/GhosttyKit.xcframework
+          # The themes and terminfo ship in the app bundle, and they come out
+          # of the same zig build as the framework. Cached together or the
+          # bundle silently loses them on every cache hit — `theme = Ayu Light`
+          # resolving on a developer's machine and nowhere else.
+          path: |
+            vendor/ghostty/macos/GhosttyKit.xcframework
+            vendor/ghostty/zig-out/share
           # 'universal' is part of the key: a cached arm64-only xcframework
           # would fail the x86_64 link, and an artefact that can't be rebuilt
           # from its own key is worse than a cache miss.

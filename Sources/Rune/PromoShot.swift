@@ -71,6 +71,6 @@ enum PromoShot {
             isCurrent: current, isPinned: pinned, isZoomed: zoomed,
             icon: agent?.image, status: status,
             searchText: title, editableName: "", automaticTitle: title,
-            notifiesWhenDone: notifies)
+            bell: notifies ? .once : .off)
     }
 }
