@@ -121,6 +121,19 @@ final class GhosttyApp {
         config = next
         if let previous { ghostty_config_free(previous) }
 
+        // Hand every surface the new background as well.
+        //
+        // A surface caches this, and the only thing that used to update the
+        // cache was libghostty reporting a colour change — which is how a
+        // program setting its own background via OSC 11 gets through, and not
+        // something a config reload sends. Rune paints its title bar and tab
+        // strip from that cache, so a new theme repainted the terminal and left
+        // the chrome above it in the old one until the surface was rebuilt.
+        // Anything the program sets afterwards still wins; this only resets the
+        // starting point to what the config now says.
+        let background = backgroundColor
+        for view in surfaces.values { view.setBackgroundColor(background) }
+
         NotificationCenter.default.post(name: Self.configReloaded, object: nil)
         return true
     }
