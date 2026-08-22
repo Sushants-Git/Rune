@@ -261,10 +261,22 @@ final class SettingsWindowController: NSWindowController {
     ///
     /// Sentence case, not shouted uppercase — a heading is a label for the
     /// group under it, and there are five of them down a pane.
-    private func section(_ title: String, _ rows: [NSView]) -> NSView {
-        let heading = NSTextField(labelWithString: title)
-        heading.font = .systemFont(ofSize: 11, weight: .semibold)
-        heading.textColor = .secondaryLabelColor
+    private func section(_ title: String, symbol: String? = nil, _ rows: [NSView]) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+
+        let heading = NSStackView(views: [label])
+        heading.orientation = .horizontal
+        heading.alignment = .centerY
+        heading.spacing = 5
+        if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            let mark = NSImageView(image: image)
+            mark.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+            mark.contentTintColor = .secondaryLabelColor
+            mark.setContentHuggingPriority(.required, for: .horizontal)
+            heading.insertArrangedSubview(mark, at: 0)
+        }
 
         let stack = NSStackView(views: [heading, SettingsCard(rows: rows)])
         stack.orientation = .vertical
@@ -353,7 +365,6 @@ final class SettingsWindowController: NSWindowController {
     // MARK: - Appearance
 
     private let accentWell = ColorField()
-    private let panelWell = ColorField()
     private let dimSlider = NSSlider()
     private let dimLabel = NSTextField(labelWithString: "")
     private let systemAccent = NSButton(
@@ -363,8 +374,8 @@ final class SettingsWindowController: NSWindowController {
     /// colour or a font size can be judged by looking rather than by reading a
     /// hex triplet.
     private let preview = GhosttyPreview()
-    private let lightIconTiles = NSButton(
-        checkboxWithTitle: "", target: nil, action: nil)
+    /// The ⌘K panel as these settings will draw it.
+    private let switcherPreview = SwitcherPreview()
     private let todosEnabled = NSButton(
         checkboxWithTitle: "", target: nil, action: nil)
 
@@ -373,10 +384,11 @@ final class SettingsWindowController: NSWindowController {
             Settings.shared.accent = color
             self?.syncAppearance()
         }
+        // `syncAppearance` ends in `refreshPreviews`, so every control that
+        // routes through it keeps the picture current for free.
         systemAccent.target = self
         systemAccent.action = #selector(systemAccentToggled)
         systemAccent.title = ""
-        panelWell.onChange = { color in Settings.shared.panelBackground = color }
         appearance.addItems(withTitles: Settings.Appearance.allCases.map(\.title))
         appearance.target = self
         appearance.action = #selector(appearanceChanged)
@@ -384,9 +396,6 @@ final class SettingsWindowController: NSWindowController {
         appearance.translatesAutoresizingMaskIntoConstraints = false
         appearance.widthAnchor.constraint(equalToConstant: 176).isActive = true
 
-        lightIconTiles.target = self
-        lightIconTiles.action = #selector(lightIconTilesToggled)
-        lightIconTiles.title = ""
         todosEnabled.target = self
         todosEnabled.action = #selector(todosEnabledToggled)
         todosEnabled.title = ""
@@ -411,56 +420,48 @@ final class SettingsWindowController: NSWindowController {
         openConfig.bezelStyle = .rounded
         openConfig.controlSize = .small
 
+        // One row rather than two: "Accent" and "Follow the system accent" were
+        // the same decision asked twice, and the second row's answer silently
+        // overruled the first's.
+        systemAccent.title = "System"
+        let accentRow = NSStackView(views: [accentWell, systemAccent])
+        accentRow.spacing = 10
+        accentRow.alignment = .centerY
+
+        let note = NSTextField(labelWithString: "Changes apply as you make them.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .tertiaryLabelColor
+
         let content = column([
-            section("Rune", [
+            switcherPreview,
+            note,
+            section("Switcher", symbol: "command", [
                 SettingsRow(
-                    title: "Appearance",
-                    caption: "Whether Rune's own panels are drawn light or dark. Matching "
-                        + "the terminal is the default because the ⌘K panel sits on top of "
-                        + "it, so that is what its text has to stay readable against.",
+                    title: "Panel", symbol: "circle.lefthalf.filled",
+                    caption: "Light or dark. Matching the terminal keeps the panel readable "
+                        + "against whatever it is sitting on.",
                     control: appearance),
                 SettingsRow(
-                    title: "Accent",
-                    caption: "Marks the active tab, the update pill and the switcher's "
-                        + "focus ring.",
-                    control: accentWell),
+                    title: "Accent", symbol: "paintpalette",
+                    caption: "The highlighted row, the active tab and the update pill.",
+                    control: accentRow),
                 SettingsRow(
-                    title: "Follow the system accent",
-                    caption: nil, control: systemAccent),
-                SettingsRow(
-                    title: "Switcher panel",
-                    caption: "The ⌘K panel's background. Leave it unset and it follows the "
-                        + "Appearance above; set it and it stays what you picked.",
-                    control: panelWell),
-                SettingsRow(
-                    title: "Backdrop dim",
-                    caption: "How much of the terminal the switcher's backdrop carries away.",
+                    title: "Backdrop", symbol: "square.stack.3d.down.right",
+                    caption: "How much of the terminal behind the panel is dimmed away.",
                     control: dim),
-                SettingsRow(
-                    title: "Light icon tiles",
-                    caption: "What sits behind an agent's mark in ⌘K. Brand marks are drawn "
-                        + "for paper, so most of them read better on a light tile than on "
-                        + "the panel. Icons that ship their own background, like Codex's white "
-                        + "card and opencode's black square, keep it either way.",
-                    control: lightIconTiles),
             ]),
-            section("Todo list", [
+            section("Todo list", symbol: "checklist", [
                 SettingsRow(
-                    title: "Enable the todo list",
-                    caption: "Adds ⌘J, which opens a list of what you have to do in the "
-                        + "same panel ⌘K uses. On by default; with it off the key does "
-                        + "nothing. In the list: a adds, o adds a sub-task under the "
-                        + "highlighted one, ⌘R renames it in place as it does in ⌘K, "
-                        + "c copies, d deletes, space ticks off.",
+                    title: "⌘J opens a todo list", symbol: "list.bullet.indent",
+                    caption: "In the list: a adds, o adds a sub-task, ⌘R renames, c copies, "
+                        + "d deletes, space ticks off.",
                     control: todosEnabled),
             ]),
-            section("Terminal", [
+            section("Terminal", symbol: "terminal", [
                 SettingsRow(
-                    title: "Ghostty config",
+                    title: "Ghostty config", symbol: "doc.text",
                     caption: "Colours, font and everything else about the terminal itself "
-                        + "come from your Ghostty config. Rune keeps no second copy, so "
-                        + "there is only ever one file to edit, and the Ghostty tab edits "
-                        + "it for you.",
+                        + "live in your Ghostty config. Rune keeps no second copy of it.",
                     control: openConfig),
             ]),
         ])
@@ -505,25 +506,27 @@ final class SettingsWindowController: NSWindowController {
         accentWell.isEnabled = settings.accent != nil
         accentWell.alphaValue = settings.accent != nil ? 1 : 0.4
         systemAccent.state = settings.accent == nil ? .on : .off
-        panelWell.color = settings.panelBackground
         dimSlider.doubleValue = Double(settings.backdropDim)
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
-        lightIconTiles.state = settings.lightIconTiles ? .on : .off
         appearance.selectItem(at: Settings.Appearance.allCases
             .firstIndex(of: settings.appearance) ?? 0)
         todosEnabled.state = settings.todosEnabled ? .on : .off
+        refreshPreviews()
     }
 
     /// Also called when the field gives up focus, so a value typed and then
     /// clicked away from is not quietly lost.
+    /// Redraw the miniature panel. Called from every control in this pane, so
+    /// the picture is never a version behind the thing it is a picture of.
+    private func refreshPreviews() {
+        switcherPreview.refresh()
+    }
+
     @objc private func appearanceChanged() {
         let index = appearance.indexOfSelectedItem
         guard let choice = Settings.Appearance.allCases[safe: index] else { return }
         Settings.shared.appearance = choice
-    }
-
-    @objc private func lightIconTilesToggled() {
-        Settings.shared.lightIconTiles = lightIconTiles.state == .on
+        refreshPreviews()
     }
 
     @objc private func todosEnabledToggled() {
@@ -540,6 +543,7 @@ final class SettingsWindowController: NSWindowController {
     @objc private func dimChanged() {
         Settings.shared.backdropDim = CGFloat(dimSlider.doubleValue)
         dimLabel.stringValue = "\(Int(Settings.shared.backdropDim * 100))%"
+        refreshPreviews()
     }
 
     /// Ghostty reads several paths; this opens the one it actually uses,

@@ -46,11 +46,6 @@ enum PaletteStyle {
     /// in the sense that the pixels differ, and unreadable in every sense that
     /// matters.
     @MainActor static var isLight: Bool {
-        // A panel colour picked by hand decides this outright. The text has to
-        // be legible on the panel it is drawn on, and nothing else — pick a
-        // white panel under a dark terminal and following the *terminal* would
-        // put white text on it.
-        if let chosen = Settings.shared.panelBackgroundOverride { return chosen.isLight }
         switch Settings.shared.appearance {
         case .light: return true
         case .dark: return false
@@ -69,8 +64,7 @@ enum PaletteStyle {
     /// next ⌘K picks up a change without anything having to be told about it —
     /// the panel is built fresh on every open.
     @MainActor static var background: NSColor {
-        Settings.shared.panelBackgroundOverride
-            ?? (isLight ? NSColor(white: 0.97, alpha: 1) : Settings.Defaults.panelBackground)
+        isLight ? NSColor(white: 0.97, alpha: 1) : Settings.Defaults.panelBackground
     }
 
     /// Laid over the glass so the rows' contrast is a constant, not a function
@@ -91,12 +85,12 @@ enum PaletteStyle {
     @MainActor static var tile: NSColor { ink(0.07, over: 0.07) }
     /// What goes behind a mark that doesn't paint its own background.
     ///
-    /// Settable in Settings ▸ Appearance; see `Settings.lightIconTiles`. On a
-    /// light panel a white plate is invisible, so the setting means "a plate
-    /// that contrasts" rather than literally "a white one".
+    /// Always a plate that contrasts with the panel, rather than a setting that
+    /// asked you to work out which way round that was. Brand marks are drawn
+    /// for paper and read better on a light plate; on a light panel the light
+    /// plate is the invisible one, so it flips.
     @MainActor static var markPlate: NSColor {
-        guard Settings.shared.lightIconTiles else { return tile }
-        return isLight ? NSColor(white: 0, alpha: 0.06) : NSColor.white.withAlphaComponent(0.9)
+        isLight ? NSColor(white: 0, alpha: 0.06) : NSColor.white.withAlphaComponent(0.9)
     }
     @MainActor static var chip: NSColor { ink(0.07, over: 0.07) }
     @MainActor static var chipEmphasised: NSColor { ink(0.13, over: 0.14) }

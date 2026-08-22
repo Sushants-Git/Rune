@@ -41,17 +41,6 @@ final class Settings {
     /// Resolved for drawing. Callers want a colour, not a decision.
     var effectiveAccent: NSColor { accent ?? .controlAccentColor }
 
-    /// The ⌘K panel's own background.
-    ///
-    /// Near-black by default and deliberately not semantic: Rune sets the
-    /// window's appearance from the terminal's background, so a light
-    /// colourscheme flips `labelColor` to black and the panel would go
-    /// black-on-black. See `PaletteStyle`.
-    var panelBackground: NSColor {
-        get { color(forKey: Keys.panelBackground) ?? Defaults.panelBackground }
-        set { setColor(newValue, forKey: Keys.panelBackground) }
-    }
-
     /// Whether Rune's own surfaces are drawn light or dark.
     ///
     /// Three answers, and the default is the interesting one: the ⌘K panel sits
@@ -82,14 +71,6 @@ final class Settings {
         }
     }
 
-    /// The panel colour only when it was chosen by hand.
-    ///
-    /// The default is a near-black, which is the wrong default over a light
-    /// terminal — but a colour the user actually picked is a colour they want,
-    /// whatever the terminal is doing. Telling the two apart is the difference
-    /// between following the theme and overriding a preference.
-    var panelBackgroundOverride: NSColor? { color(forKey: Keys.panelBackground) }
-
     /// How much of the terminal the switcher's backdrop carries away, 0…1.
     var backdropDim: CGFloat {
         get {
@@ -98,28 +79,6 @@ final class Settings {
         }
         set {
             defaults.set(Double(min(max(newValue, 0), 1)), forKey: Keys.backdropDim)
-            notify(.appearance)
-        }
-    }
-
-    /// What sits behind a ⌘K row's mark when the mark doesn't paint its own
-    /// background.
-    ///
-    /// Light by default, because these are brand marks and brand marks are
-    /// drawn to sit on paper — Claude's is a mid-salmon glyph with holes cut
-    /// out of it, and on a near-black tile the holes fill in with the panel and
-    /// the whole thing reads as a smudge. It is also the only way the row is
-    /// consistent: an icon that ships its own white card, like Codex's, is
-    /// already a white square, and a bare glyph beside it on black looks like a
-    /// different kind of thing rather than the same kind drawn differently.
-    var lightIconTiles: Bool {
-        get {
-            guard defaults.object(forKey: Keys.lightIconTiles) != nil
-            else { return Defaults.lightIconTiles }
-            return defaults.bool(forKey: Keys.lightIconTiles)
-        }
-        set {
-            defaults.set(newValue, forKey: Keys.lightIconTiles)
             notify(.appearance)
         }
     }
@@ -142,15 +101,18 @@ final class Settings {
     }
 
     enum Defaults {
+        /// The dark panel. Near-black rather than pure black: a #000 panel over
+        /// a #000 terminal has no edge at all.
         static let panelBackground = NSColor(white: 0.055, alpha: 1)
         static let backdropDim: CGFloat = 0.6
-        static let lightIconTiles = true
     }
 
     func resetAppearance() {
         for key in [
-            Keys.accent, Keys.panelBackground, Keys.backdropDim, Keys.lightIconTiles,
-            Keys.appearance,
+            Keys.accent, Keys.backdropDim, Keys.appearance,
+            // Written by older versions, and still cleared so a reset leaves
+            // nothing behind that a future build might start reading again.
+            Keys.panelBackground, Keys.lightIconTiles,
         ] {
             defaults.removeObject(forKey: key)
         }

@@ -20,7 +20,10 @@ final class SettingsRow: NSView {
     static let horizontalPadding: CGFloat = 14
     static let verticalPadding: CGFloat = 9
 
-    init(title: String, caption: String?, control: NSView, accessory: NSView? = nil) {
+    init(
+        title: String, symbol: String? = nil, caption: String?, control: NSView,
+        accessory: NSView? = nil
+    ) {
         self.accessory = accessory
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -30,7 +33,24 @@ final class SettingsRow: NSView {
         titleLabel.textColor = .labelColor
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let text = NSStackView(views: [titleLabel])
+        // A glyph in front of the name. A settings pane is a list of words,
+        // and a row you are hunting for is found by shape long before it is
+        // found by reading.
+        let heading = NSStackView(views: [titleLabel])
+        heading.orientation = .horizontal
+        heading.alignment = .firstBaseline
+        heading.spacing = 7
+        if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            let mark = NSImageView(image: image)
+            mark.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+            mark.contentTintColor = .secondaryLabelColor
+            mark.setContentHuggingPriority(.required, for: .horizontal)
+            mark.translatesAutoresizingMaskIntoConstraints = false
+            mark.widthAnchor.constraint(equalToConstant: 16).isActive = true
+            heading.insertArrangedSubview(mark, at: 0)
+        }
+
+        let text = NSStackView(views: [heading])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 2
