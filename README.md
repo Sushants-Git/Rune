@@ -42,6 +42,8 @@ updates itself after that.
 - `→` rings you when that workspace's agent stops. Press it twice and it keeps
   ringing every time, rather than once. A bell appears on the row, and the
   notification takes you back there when you click it.
+- `←` twice detaches the highlighted workspace into a window of its own. The
+  first press arms it and says so; the second moves it. Nothing restarts.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
@@ -75,6 +77,8 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⇧↵` | zoom a pane, or put it back |
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
+| `←` | in `⌘K`, twice: detach this workspace into its own window |
+| `⌘L` | every window, and what each is holding |
 | `⌘J` | todo list |
 | `⌘⇧,` | reload the Ghostty config and Rune's settings |
 

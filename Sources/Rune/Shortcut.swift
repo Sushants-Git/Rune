@@ -98,7 +98,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
     case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
     case zoomSplit, equalizeSplits
     case switchWorkspace, renameWorkspace, nextTab, previousTab
-    case toggleTodos
+    case toggleTodos, showWindows
     case find, findNext, findPrevious
     case reloadConfig
 
@@ -123,6 +123,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .equalizeSplits: "Equalize Splits"
         case .switchWorkspace: "Switch to Workspace…"
         case .toggleTodos: "Todo List"
+        case .showWindows: "All Windows…"
         case .renameWorkspace: "Rename Workspace…"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
@@ -141,7 +142,8 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .increaseFont, .decreaseFont, .resetFont, .toggleFullScreen: "View"
         case .splitRight, .splitDown, .focusSplitLeft, .focusSplitRight,
              .focusSplitUp, .focusSplitDown, .zoomSplit, .equalizeSplits: "Splits"
-        case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .toggleTodos:
+        case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .toggleTodos,
+             .showWindows:
             "Workspaces"
         case .find, .findNext, .findPrevious: "Find"
         case .reloadConfig: "View"
@@ -172,6 +174,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         // does not bind it, so the list can have a key of its own rather than
         // a chord nobody can reach.
         case .toggleTodos: KeyChord("j")
+        case .showWindows: KeyChord("l")
         case .renameWorkspace: KeyChord("r")
         case .nextTab: KeyChord("]", [.command, .shift])
         case .previousTab: KeyChord("[", [.command, .shift])

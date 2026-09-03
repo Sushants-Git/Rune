@@ -8,6 +8,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     private var controllers: [TerminalController] = []
     private var tabKeyMonitor: Any?
 
+    /// Every open window, in the order they were opened. What ⌘L lists.
+    var windows: [TerminalController] { controllers }
+
+    /// The number a window is known by: its position, so closing the first one
+    /// renumbers the rest rather than leaving a gap where a window used to be.
+    func number(of controller: TerminalController) -> Int {
+        (controllers.firstIndex { $0 === controller } ?? 0) + 1
+    }
+
     private var keyController: TerminalController? {
         if let window = NSApp.keyWindow as? TerminalWindow, let c = window.controller { return c }
         if let window = NSApp.mainWindow as? TerminalWindow, let c = window.controller { return c }
@@ -221,6 +230,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
 
     // MARK: - Windows and tabs
 
+    /// A window with nothing in it, for a workspace that is about to move in.
+    ///
+    /// `newWindow` spawns a shell as its first act, which is right for ⌘⇧N and
+    /// wrong here: detaching would start a terminal nobody asked for, only to
+    /// close it a moment later.
+    func newEmptyWindow() -> TerminalController? {
+        guard let ghostty else { return nil }
+        let controller = TerminalController(ghostty: ghostty)
+        controllers.append(controller)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        return controller
+    }
+
     @discardableResult
     func newWindow(workingDirectory: String? = nil) -> TerminalController? {
         guard let ghostty else { return nil }
@@ -378,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
     @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
+    @objc private func showWindowsAction(_ sender: Any?) { keyController?.showWindows() }
 
     /// ⌘⇧, — re-read everything Rune is configured by, the way Ghostty does.
     ///
@@ -500,6 +524,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // is always there and does nothing until you enable it, and the action
         // itself is what checks the setting.
         bind(.toggleTodos, to: tabsMenu, #selector(toggleTodosAction(_:)))
+        bind(.showWindows, to: tabsMenu, #selector(showWindowsAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
         bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))

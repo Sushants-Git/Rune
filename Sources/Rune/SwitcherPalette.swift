@@ -26,6 +26,8 @@ struct PaletteItem {
     let automaticTitle: String
     /// Armed with → to notify when its agent stops.
     let bell: Workspace.Bell
+    /// One `←` has been pressed on this row; a second detaches it.
+    var detachArmed: Bool = false
 }
 
 /// The switcher's own colours.
@@ -148,6 +150,15 @@ final class SwitcherPalette: NSView, OverlayPanel {
     /// →: arm or disarm "tell me when the agent in this one stops". The host
     /// owns the arming, and reloads the list to put the bell on the row.
     var onToggleNotify: ((Int) -> Void)?
+    var onDetach: ((Int) -> Void)?
+
+    /// The row a first `←` has landed on, if any.
+    ///
+    /// Detaching moves a workspace into a window of its own, which is a
+    /// rearrangement rather than a navigation — so it asks twice. The first
+    /// press says which row and shows it; the second does it. Anything else you
+    /// press in between calls the whole thing off.
+    private var detachArmed: Int?
 
     /// ⌘P: pin the row to the top, or unpin it. The host owns the pin order and
     /// reloads the list, so the palette never reorders anything itself.
@@ -443,6 +454,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
             (["⌘R"], "Rename"),
             (["⌘P"], "Pin"),
             (["→"], "Notify"),
+            (["←"], "Detach"),
             (["⌘W"], "Close"),
             // "Dismiss" rather than "Close", now that ⌘W closes a workspace and
             // esc closes the panel. Two rows both labelled Close would be a
@@ -496,6 +508,9 @@ final class SwitcherPalette: NSView, OverlayPanel {
         let anchor = keepSelection ? filtered[safe: selection] : nil
 
         items = currentItems()
+        if let armed = detachArmed, items.indices.contains(armed) {
+            items[armed].detachArmed = true
+        }
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             // No query means creation order, untouched. The switcher never
@@ -773,6 +788,12 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
                 symbol: "bell.and.waves.left.and.right.fill",
                 hint: "Notifies you every time this agent stops"))
         }
+        // Says what the next keystroke will do, because a first press that
+        // changed nothing on screen would be indistinguishable from a key that
+        // does not work.
+        if item.detachArmed {
+            cluster.addArrangedSubview(Chip(text: "← again to detach", emphasised: true))
+        }
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
         }
@@ -780,7 +801,33 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         return PaletteRow(icon: icon, text: stack, cluster: cluster)
     }
 
+    /// `←`: arm the highlighted row, or detach it if it is already armed.
+    private func detachSelected() {
+        guard let index = filtered[safe: tableView.selectedRow] else { return }
+        if detachArmed == index {
+            detachArmed = nil
+            onDetach?(index)
+            return
+        }
+        detachArmed = index
+        // The item index, not the row: `reload` looks its argument up in the
+        // filtered list, so handing it a row number lands on whatever item
+        // happens to sit at that index instead.
+        reload(selecting: index)
+    }
+
+    /// Forget a half-pressed detach once the highlight has moved off the row it
+    /// was armed on. A second `←` should only ever detach the row you were
+    /// looking at when you pressed the first one.
+    private func disarmDetachIfMoved() {
+        guard let armed = detachArmed else { return }
+        guard filtered[safe: tableView.selectedRow] != armed else { return }
+        detachArmed = nil
+        applyFilter(searchField.stringValue, keepSelection: true)
+    }
+
     func tableViewSelectionDidChange(_ notification: Notification) {
+        disarmDetachIfMoved()
         guard !suppressPreview else { return }
         let row = tableView.selectedRow
         guard let index = filtered[safe: row], row != selection else { return }
@@ -801,7 +848,7 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
 /// its trailing end, and the text is masked to fade out just before it reaches
 /// the cluster. A short name is unaffected: it never reaches the fade. A long
 /// one runs as far as there is room and dissolves rather than being chopped.
-private final class PaletteRow: NSView {
+final class PaletteRow: NSView {
     private let text: NSView
     private let cluster: NSView
     private let fade = CAGradientLayer()
@@ -944,7 +991,7 @@ final class Divider: NSView {
 }
 
 /// The rounded square a row's mark sits in.
-private final class IconTile: NSView {
+final class IconTile: NSView {
     private static let side: CGFloat = 24
 
     init(image artwork: NSImage?, symbol: String) {
@@ -1057,7 +1104,7 @@ private final class IconTile: NSView {
 /// A small rounded label — tab counts, the "current" marker. Grey rather than
 /// tinted: these annotate a row, they don't call for action, and an accent
 /// colour on every row's right edge is noise.
-private final class Chip: NSView {
+final class Chip: NSView {
     /// A chip carrying a mark instead of a word, for the states a word would
     /// be too long for. Same box, so it sits in the cluster like any other.
     convenience init(symbol: String, hint: String) {
@@ -1252,6 +1299,13 @@ extension SwitcherPalette: NSTextFieldDelegate {
             commit()
         case #selector(NSResponder.cancelOperation(_:)):
             cancel()
+        case #selector(NSResponder.moveLeft(_:)):
+            // The mirror of the right arrow's rule: the field editor gets it
+            // everywhere except the very start of the query, where moving left
+            // would do nothing anyway.
+            let caret = textView.selectedRange()
+            guard caret.length == 0, caret.location == 0 else { return false }
+            detachSelected()
         case #selector(NSResponder.moveRight(_:)):
             // Right arrow belongs to the field editor first — it is how you get
             // back through a query you are still editing. It only means "notify

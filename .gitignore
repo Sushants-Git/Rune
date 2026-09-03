@@ -14,5 +14,10 @@ zig-out/
 # Xcode's opinions about a SwiftPM package
 .swiftpm/
 
+# Stray artefacts other tooling drops in here, so `git add -A` can't sweep
+# them into a commit again.
+attestation.jws
+ids.json
+
 # macOS
 .DS_Store

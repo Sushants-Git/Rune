@@ -941,6 +941,17 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             self.overlay?.palette?.reload(selecting: destination)
         }
 
+        palette.onDetach = { [weak self] index in
+            guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
+            guard self.canDetach(workspace) else { return }
+            // The panel belongs to the window the workspace is leaving, so it
+            // goes down with it rather than hanging over a window that no
+            // longer holds what it is pointing at.
+            if self.switcherOrigin === workspace { self.switcherOrigin = nil }
+            self.closeSwitcher()
+            self.detach(workspace)
+        }
+
         palette.onToggleNotify = { [weak self] index in
             guard let self, let workspace = self.orderedWorkspaces[safe: index] else { return }
             workspace.bell = workspace.bell.next
@@ -1008,6 +1019,40 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// Opening it takes the switcher down if that was up, because they share
     /// the one panel — and because they are two answers to the same question at
     /// different scopes, so wanting both at once is not a state worth having.
+    /// ⌘L: the windows, and what each one is holding.
+    func showWindows() {
+        guard overlay == nil else {
+            closeSwitcher()
+            return
+        }
+        let all = (NSApp.delegate as? AppDelegate)?.windows ?? [self]
+        guard !all.isEmpty else { return }
+
+        let items = all.map { controller in
+            WindowPalette.Item(
+                number: controller.windowNumber,
+                title: "Window \(controller.windowNumber)",
+                workspaces: controller.orderedWorkspaces.map(\.title),
+                isCurrent: controller === self)
+        }
+
+        present(WindowPalette(
+            items: items,
+            onCommit: { [weak self] index in
+                guard let self else { return }
+                self.closeSwitcher()
+                guard let target = all[safe: index] else { return }
+                // Raising rather than moving anything: this is a map, and
+                // picking a place on a map takes you there.
+                NSApp.activate(ignoringOtherApps: true)
+                target.window?.makeKeyAndOrderFront(nil)
+            },
+            onCancel: { [weak self] in self?.closeSwitcher() }))
+    }
+
+    /// What this window is called in ⌘L.
+    var windowNumber: Int { (NSApp.delegate as? AppDelegate)?.number(of: self) ?? 1 }
+
     func toggleTodos() {
         guard Settings.shared.todosEnabled else { return }
         if isTodosVisible {
@@ -1163,6 +1208,60 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     /// Whether a surface belongs to this window.
+    // MARK: - Detaching
+
+    /// Whether this workspace has anything to be detached *from*.
+    ///
+    /// The only workspace in a window is already a window of its own, and
+    /// moving it into a second empty one would leave the first with nothing.
+    func canDetach(_ workspace: Workspace) -> Bool {
+        workspaces.count > 1 && workspaces.contains { $0 === workspace }
+    }
+
+    /// Move a workspace into a window of its own.
+    ///
+    /// A terminal is one view and a view lives in one window, so this is a move
+    /// rather than a copy — but nothing restarts. `showTab` re-parents whatever
+    /// it is handed and a surface re-reads its backing scale when its window
+    /// changes, so the shell does not notice and the scrollback comes with it.
+    func detach(_ workspace: Workspace) {
+        guard canDetach(workspace),
+              let host = (NSApp.delegate as? AppDelegate)?.newEmptyWindow()
+        else { return }
+
+        release(workspace)
+        host.takeOver(workspace)
+    }
+
+    /// Accept a workspace that used to belong to another window.
+    func takeOver(_ workspace: Workspace) {
+        workspaces.append(workspace)
+        selectWorkspace(workspace)
+        syncTabBar()
+        syncWindowTitle()
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Give a workspace up, and carry on with whatever is left.
+    private func release(_ workspace: Workspace) {
+        workspaces.removeAll { $0 === workspace }
+        mruWorkspaces.removeAll { $0 == workspace.id }
+        pinnedWorkspaces.removeAll { $0 == workspace.id }
+        if switcherOrigin === workspace { switcherOrigin = nil }
+
+        guard activeWorkspace === workspace else {
+            syncTabBar()
+            return
+        }
+        activeWorkspace = nil
+        let survivor = mruWorkspaces
+            .compactMap { id in workspaces.first { $0.id == id } }
+            .first ?? workspaces.first
+        if let survivor { selectWorkspace(survivor) }
+        syncTabBar()
+        syncWindowTitle()
+    }
+
     func owns(_ view: GhosttySurfaceView) -> Bool {
         workspaces.contains { $0.tab(owning: view) != nil }
     }

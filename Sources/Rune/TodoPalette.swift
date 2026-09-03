@@ -116,10 +116,9 @@ final class TodoPalette: NSView, OverlayPanel {
         scrim.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(scrim, positioned: .above, relativeTo: backdrop)
 
-        panel.shadow = NSShadow()
-        panel.layer?.shadowOpacity = 0.55
-        panel.layer?.shadowRadius = 40
-        panel.layer?.shadowOffset = CGSize(width: 0, height: -10)
+        // No shadow, the same as ⌘K. This is the same panel on the same
+        // surface, and a 40pt haze on one of them and not the other reads as
+        // two different things.
         panel.layer?.masksToBounds = false
 
         // The header is a title until you press `a`, and the field takes its
