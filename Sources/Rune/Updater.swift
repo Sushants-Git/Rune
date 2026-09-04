@@ -485,6 +485,22 @@ final class Updater {
 
     /// Wait for Rune to quit, swap the bundle, put it back if the swap fails,
     /// and start the new one.
+    /// Copy first, swap last.
+    ///
+    /// The obvious order — move the old app aside, then copy the new one into
+    /// place — leaves no app at that path for as long as the copy takes. That
+    /// is 160ms on a warm SSD here and seconds on a slow disk or behind an
+    /// endpoint scanner, for a bundle of six hundred files. It did not matter
+    /// while this only ran from "Restart to Update", because the script
+    /// reopened the app itself and nobody was racing it.
+    ///
+    /// It matters now that quitting installs a staged update, because the
+    /// natural way to take one is to quit and open Rune again straight away —
+    /// which is exactly the moment the app was missing. Launching into that gap
+    /// gets you "the application can't be opened", or a half-copied binary.
+    ///
+    /// So the copy happens beside the installed app, which stays where it is
+    /// and stays launchable throughout, and the swap itself is two renames.
     nonisolated private static let installScript = """
     #!/bin/sh
     # $1 pid  $2 new app  $3 installed app  $4 staging dir  $5 reopen (1/0)
@@ -492,18 +508,30 @@ final class Updater {
     while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
 
     backup="$3.rune-previous"
-    rm -rf "$backup"
-    mv "$3" "$backup" || exit 1
-    if ! /usr/bin/ditto "$2" "$3"; then
-      rm -rf "$3"
-      mv "$backup" "$3"
-      /usr/bin/open "$3"
+    incoming="$3.rune-incoming"
+    rm -rf "$backup" "$incoming"
+
+    # The slow part, with the installed app untouched and openable.
+    if ! /usr/bin/ditto "$2" "$incoming"; then
+      rm -rf "$incoming"
+      [ "$5" = 1 ] && /usr/bin/open "$3"
       exit 1
     fi
 
     # Downloads carry a quarantine flag that would make the freshly installed
     # app ask to be vouched for on first launch, as though it were unknown.
-    /usr/bin/xattr -dr com.apple.quarantine "$3" 2>/dev/null
+    # Cleared before it is installed, so it is never briefly the flagged one.
+    /usr/bin/xattr -dr com.apple.quarantine "$incoming" 2>/dev/null
+
+    # Two renames. Between them there is no app at "$3", and that is the whole
+    # window a launch can fall into.
+    mv "$3" "$backup" || { rm -rf "$incoming"; exit 1; }
+    if ! mv "$incoming" "$3"; then
+      mv "$backup" "$3"
+      [ "$5" = 1 ] && /usr/bin/open "$3"
+      exit 1
+    fi
+
     rm -rf "$backup" "$4"
     [ "$5" = 1 ] && /usr/bin/open "$3"
 

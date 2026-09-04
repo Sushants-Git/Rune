@@ -35,7 +35,12 @@ final class WindowPalette: NSView, OverlayPanel {
     private let onCancel: () -> Void
 
     private static let cornerRadius: CGFloat = 12
-    private static let rowHeight: CGFloat = 46
+    /// The same numbers ⌘K uses. `PaletteRow` works its own padding out from
+    /// them, so a panel with a different width or a different scroll inset gets
+    /// rows whose contents sit slightly wrong — which is most of why this
+    /// looked off beside the switcher it is supposed to match.
+    private static let width = SwitcherPalette.width
+    private static let rowHeight: CGFloat = 44
     private static let maxVisibleRows = 7
 
     var focusView: NSView { tableView }
@@ -96,8 +101,11 @@ final class WindowPalette: NSView, OverlayPanel {
         tableView.rowHeight = Self.rowHeight
         tableView.backgroundColor = .clear
         tableView.selectionHighlightStyle = .regular
-        tableView.style = .inset
-        tableView.intercellSpacing = NSSize(width: 0, height: 2)
+        // The same as ⌘K, and it has to be: `.inset` adds AppKit's own
+        // horizontal padding on top of the row's, so the icons sat further in
+        // than the header above them, and the trailing chips further out.
+        tableView.style = .plain
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.dataSource = self
         tableView.delegate = self
         tableView.target = self
@@ -112,6 +120,10 @@ final class WindowPalette: NSView, OverlayPanel {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(scrollView)
 
+        let headerDivider = Divider()
+        headerDivider.translatesAutoresizingMaskIntoConstraints = false
+        panel.addSubview(headerDivider)
+
         let rows = min(max(items.count, 1), Self.maxVisibleRows)
         NSLayoutConstraint.activate([
             // The panel *is* this view's size. The overlay places this view by
@@ -122,7 +134,7 @@ final class WindowPalette: NSView, OverlayPanel {
             panel.trailingAnchor.constraint(equalTo: trailingAnchor),
             panel.topAnchor.constraint(equalTo: topAnchor),
             panel.bottomAnchor.constraint(equalTo: bottomAnchor),
-            panel.widthAnchor.constraint(equalToConstant: 460),
+            widthAnchor.constraint(equalToConstant: Self.width),
 
             backdrop.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
@@ -133,17 +145,27 @@ final class WindowPalette: NSView, OverlayPanel {
             scrim.topAnchor.constraint(equalTo: panel.topAnchor),
             scrim.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
 
-            title.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 16),
-            title.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
+            title.leadingAnchor.constraint(
+                equalTo: panel.leadingAnchor, constant: SwitcherPalette.contentInset),
+            title.topAnchor.constraint(equalTo: panel.topAnchor, constant: 16),
+
+            headerDivider.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 15),
+            headerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            headerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
             subtitle.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
             subtitle.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
 
-            scrollView.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 6),
-            scrollView.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -6),
-            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 10),
+            scrollView.leadingAnchor.constraint(
+                equalTo: panel.leadingAnchor, constant: SwitcherPalette.rowInset),
+            scrollView.trailingAnchor.constraint(
+                equalTo: panel.trailingAnchor, constant: -SwitcherPalette.rowInset),
+            // No constant: the padding above the first row and below the last
+            // both come from the scroll view's own content inset, so they
+            // cannot drift apart.
+            scrollView.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
             scrollView.heightAnchor.constraint(
-                equalToConstant: CGFloat(rows) * (Self.rowHeight + 2) + 12),
-            scrollView.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -8),
+                equalToConstant: CGFloat(rows) * Self.rowHeight + 12),
+            scrollView.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
         ])
 
         let current = items.firstIndex(where: \.isCurrent) ?? 0
@@ -187,30 +209,41 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
     ) -> NSView? {
         guard let item = items[safe: row] else { return nil }
 
-        let name = NSTextField(labelWithString: item.title)
-        name.font = .systemFont(ofSize: 13, weight: .medium)
-        name.textColor = PaletteStyle.primaryText
+        let heading = NSMutableAttributedString(string: item.title, attributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .foregroundColor: PaletteStyle.primaryText,
+        ])
+        // The count rides with the name rather than taking a chip of its own.
+        // It is the least interesting thing on the row and was the widest.
+        heading.append(NSAttributedString(
+            string: item.workspaces.count == 1 ? "  1 workspace" : "  \(item.workspaces.count) workspaces",
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 11),
+                .foregroundColor: PaletteStyle.tertiaryText,
+            ]))
+        let name = NSTextField(labelWithAttributedString: heading)
 
-        // What the window is actually holding, named rather than counted. A
-        // number tells you how much is in there; the names tell you whether it
-        // is the one you are looking for.
-        let contents = NSTextField(labelWithString: item.workspaces.joined(separator: " · "))
-        contents.font = .systemFont(ofSize: 11)
-        contents.textColor = PaletteStyle.tertiaryText
-        contents.lineBreakMode = .byTruncatingTail
-        contents.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // What the window is holding, named rather than counted. A count says
+        // how much is in there; the names say whether it is the one you want.
+        let subtitle = NSTextField(
+            labelWithString: item.workspaces.joined(separator: "  ·  "))
+        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.textColor = PaletteStyle.tertiaryText
+        subtitle.lineBreakMode = .byTruncatingTail
+        subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let text = NSStackView(views: [name, contents])
+        let text = NSStackView(views: [name, subtitle])
         text.orientation = .vertical
         text.alignment = .leading
-        text.spacing = 2
+        text.spacing = 3
 
+        // No activity here. This is a map of where things are, and ⌘K is where
+        // you go to find out what any of them is doing — putting "working" on a
+        // window makes the overview a second status board reporting a summary
+        // of a summary.
         let cluster = NSStackView()
         cluster.orientation = .horizontal
         cluster.spacing = 6
-        cluster.addArrangedSubview(Chip(text: item.workspaces.count == 1
-            ? "1 workspace"
-            : "\(item.workspaces.count) workspaces"))
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
         }
