@@ -43,11 +43,21 @@ if [ "${1:-}" = --check ]; then
   SLICE="macos-$(uname -m)"
   if [ "$TARGET" = universal ]; then SLICE=macos-arm64_x86_64; fi
   FRAMEWORK="$GHOSTTY_DIR/macos/GhosttyKit.xcframework"
+  INDEX=0
+  LIBRARY=""
+  while IDENTIFIER="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$INDEX:LibraryIdentifier" "$FRAMEWORK/Info.plist" 2>/dev/null)"; do
+    if [ "$IDENTIFIER" = "$SLICE" ]; then
+      LIBRARY="$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$INDEX:LibraryPath" "$FRAMEWORK/Info.plist")"
+      break
+    fi
+    INDEX=$((INDEX + 1))
+  done
+  [ -n "$LIBRARY" ] || { echo "error: missing Ghostty framework slice $SLICE" >&2; exit 1; }
   cmp "$GHOSTTY_DIR/include/ghostty.h" "$FRAMEWORK/$SLICE/Headers/ghostty.h"
   if [ "$TARGET" = universal ]; then
-    lipo "$FRAMEWORK/$SLICE/libghostty-internal.a" -verify_arch arm64 x86_64
+    lipo "$FRAMEWORK/$SLICE/$LIBRARY" -verify_arch arm64 x86_64
   else
-    lipo "$FRAMEWORK/$SLICE/libghostty-internal.a" -verify_arch "$(uname -m)"
+    lipo "$FRAMEWORK/$SLICE/$LIBRARY" -verify_arch "$(uname -m)"
   fi
   (cd "$GHOSTTY_DIR" && shasum -a 256 --check --status --strict zig-out/rune-build-checksums) || {
     echo "error: Ghostty artifacts changed or are incomplete; rebuild libghostty" >&2; exit 1;
