@@ -18,11 +18,10 @@ GHOSTTY_DIR="$REPO_ROOT/vendor/ghostty"
 MODE="${MODE:-ReleaseFast}"
 TARGET="${TARGET:-native}"
 
-if [ ! -d "$GHOSTTY_DIR" ]; then
-  "$REPO_ROOT/scripts/fetch-ghostty.sh"
-fi
+"$REPO_ROOT/scripts/fetch-ghostty.sh"
 
 command -v zig >/dev/null || { echo "error: zig not on PATH (brew install zig)" >&2; exit 1; }
+BUILD_INFO="$(MODE="$MODE" TARGET="$TARGET" bash "$REPO_ROOT/scripts/ghostty-provenance.sh")"
 
 # Ghostty compiles its Metal shaders via `xcrun -sdk macosx metal`. Since Xcode 26
 # the Metal compiler ships as a separately downloaded component, and on some Xcode
@@ -40,6 +39,9 @@ if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
 fi
 
 echo "==> building libghostty ($MODE, $TARGET)"
+# Never leave a success stamp or obsolete slices/resources after a failed rebuild.
+rm -f "$GHOSTTY_DIR/zig-out/rune-build-info" "$GHOSTTY_DIR/zig-out/rune-build-checksums"
+rm -rf "$GHOSTTY_DIR/macos/GhosttyKit.xcframework" "$GHOSTTY_DIR/zig-out/share"
 (
   cd "$GHOSTTY_DIR"
   zig build \
@@ -51,4 +53,11 @@ echo "==> building libghostty ($MODE, $TARGET)"
 
 XCFRAMEWORK="$GHOSTTY_DIR/macos/GhosttyKit.xcframework"
 [ -d "$XCFRAMEWORK" ] || { echo "error: expected $XCFRAMEWORK" >&2; exit 1; }
+[ -d "$GHOSTTY_DIR/zig-out/share/ghostty/themes" ] && [ -d "$GHOSTTY_DIR/zig-out/share/terminfo" ]
+(
+  cd "$GHOSTTY_DIR"
+  find macos/GhosttyKit.xcframework zig-out/share -type f -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 > zig-out/rune-build-checksums
+)
+printf '%s\n' "$BUILD_INFO" > "$GHOSTTY_DIR/zig-out/rune-build-info"
+MODE="$MODE" TARGET="$TARGET" bash "$REPO_ROOT/scripts/ghostty-provenance.sh" --check
 echo "==> $XCFRAMEWORK"

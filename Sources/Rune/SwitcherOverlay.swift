@@ -14,14 +14,13 @@ import Cocoa
 /// Nothing snaps. The panel goes exactly where it is dropped; a guide only
 /// brightens to say you have lined up with it, and stays dashed while it does,
 /// so it reads as a hint rather than a thing that has grabbed you.
-/// Something the overlay can float: the ⌘K switcher, or the todo list.
+/// Something the overlay can float: a workspace, window or session picker.
 ///
 /// Both are the same panel showing a different list, so they share the backdrop,
 /// the dragging and the remembered position rather than each growing its own.
 @MainActor
 protocol OverlayPanel where Self: NSView {
-    /// What should hold the keyboard right now. Not fixed: the todo list
-    /// hands it between its own list and its field as you type.
+    /// What should hold the keyboard right now, including during text editing.
     var focusView: NSView { get }
     /// Escape, or a click on the backdrop.
     func cancel()
@@ -31,7 +30,7 @@ protocol OverlayPanel where Self: NSView {
 final class SwitcherOverlay: NSView {
     let panel: NSView
 
-    /// The switcher, when the panel is one. Nil while the todo list is up,
+    /// The switcher, when the panel is one. Nil while another picker is up,
     /// which is what keeps ⌘W and ⌘P from acting on workspaces that aren't on
     /// screen.
     var palette: SwitcherPalette? { panel as? SwitcherPalette }
@@ -39,6 +38,7 @@ final class SwitcherOverlay: NSView {
     /// What should hold the keyboard while this panel is up, asked afresh each
     /// time: a panel can move it around while it is open.
     var panelFocusView: NSView { panelRef.focusView }
+    func cancel() { panelRef.cancel() }
 
     private let panelRef: any OverlayPanel
 
@@ -133,7 +133,7 @@ final class SwitcherOverlay: NSView {
     /// waiting for anyone.
     private var panelSize: CGSize {
         CGSize(
-            width: SwitcherPalette.width,
+            width: panel.fittingSize.width,
             height: panel.frame.height > 0 ? panel.frame.height : panel.fittingSize.height)
     }
 

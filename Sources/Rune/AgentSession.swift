@@ -24,9 +24,8 @@ import SQLite3
 /// Codex has no equivalent, so it still reads its rollout log, which at least
 /// records explicit `task_started` / `task_complete` events.
 ///
-/// opencode has no equivalent either, but it keeps its sessions in a SQLite
-/// database and stamps every assistant message with a completion time — so the
-/// question "is it still going" is a column rather than an inference.
+/// opencode reports live status through Rune's plugin. Its SQLite database is
+/// a fallback only: completing a message does not necessarily end a turn.
 ///
 /// Nothing here reads the terminal, and nothing here runs on the main thread.
 enum AgentSession {}
@@ -189,7 +188,7 @@ final class AgentMonitor: @unchecked Sendable {
         }
 
         // Codex: the title says whether it is generating *right now*; the
-        // rollout log fills in the words. See `CodexTitle` for why the title
+        // rollout log supplies turn boundaries. See `CodexTitle` for why the title
         // gets the final say on both answers.
         if agent == .codex {
             let logged = probe.directory
@@ -213,13 +212,15 @@ final class AgentMonitor: @unchecked Sendable {
                 agent: agent,
                 directory: paneDirectory,
                 activity: activity,
-                detail: spinning ? logged?.detail : nil,
+                // Rollout tool names are historical, not live activity. Use the
+                // shared working label, as Claude does, rather than "Running exec".
+                detail: nil,
                 sessionName: nil)
         }
 
-        // opencode: its database says outright whether the turn is still going.
-        if agent == .openCode, let directory = probe.directory,
-           let state = openCodeState(directory: directory) {
+        // opencode: prefer its live session.status hook over database history.
+        if agent == .openCode, let directory = paneDirectory ?? probe.directory,
+           let state = openCodeState(directory: directory, pids: Set(candidates)) {
             return AgentVerdict(
                 surface: probe.surface,
                 agent: agent,
@@ -243,12 +244,13 @@ final class AgentMonitor: @unchecked Sendable {
 
     // MARK: - opencode
 
-    private func openCodeState(directory: String) -> OpenCodeStore.State? {
+    private func openCodeState(directory: String, pids: Set<pid_t>) -> OpenCodeStore.State? {
         if Date().timeIntervalSince(openCodeIndexedAt) >= Self.codexIndexInterval {
-            openCodeByDirectory = OpenCodeStore.index()
+            openCodeByDirectory = OpenCodeStore.databaseIndex()
             openCodeIndexedAt = Date()
         }
-        return openCodeByDirectory[directory]
+        return OpenCodeStore.index(
+            databaseFallback: openCodeByDirectory, preferredPIDs: pids)[directory]
     }
 
     // MARK: - Codex
@@ -417,11 +419,8 @@ enum ClaudeSessionFile {
 
 /// opencode's SQLite database, at `~/.local/share/opencode/opencode.db`.
 ///
-/// Nicer to read than a log: every message row carries `role`, and an assistant
-/// message gains a `time.completed` the moment its turn ends. So the state is a
-/// field rather than something reconstructed from the order of events — an
-/// assistant message without a completion time is a turn still running, and one
-/// with a completion time is your move.
+/// Live hook state takes precedence. The database only records messages: a
+/// completed tool-call message can be followed by more work in the same turn.
 ///
 /// Read-only, and deliberately not held open: opencode writes this database
 /// while Rune reads it, and the index is only rebuilt every 15 seconds, so
@@ -453,9 +452,11 @@ enum OpenCodeStore {
     /// `Resources/opencode-plugin.js` reports `session.status` as opencode
     /// publishes it, so when it's installed the state is stated rather than
     /// reconstructed, and it lands the moment it changes.
-    static func index() -> [String: State] {
-        let live = hookIndex()
-        return live.isEmpty ? databaseIndex() : live
+    static func index(
+        databaseFallback: [String: State]? = nil, preferredPIDs: Set<pid_t> = []
+    ) -> [String: State] {
+        let live = hookIndex(preferredPIDs: preferredPIDs)
+        return (databaseFallback ?? databaseIndex()).merging(live) { _, hook in hook }
     }
 
     // MARK: - The hook
@@ -470,30 +471,76 @@ enum OpenCodeStore {
     }
 
     /// What the plugin last wrote, for sessions whose server is still alive.
-    private static func hookIndex() -> [String: State] {
-        guard let data = try? Data(contentsOf: hookURL),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sessions = root["sessions"] as? [String: [String: Any]]
-        else { return [:] }
+    private static func hookIndex(preferredPIDs: Set<pid_t>) -> [String: State] {
+        let writers = hookURL.deletingPathExtension().appendingPathExtension("d")
+        let files = ((try? FileManager.default.contentsOfDirectory(
+            at: writers, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }
+        var records: [[String: Any]] = []
+        var upgradedPIDs = Set<Int32>()
+        // New plugins never touch the legacy file. Ignore its stale snapshot
+        // once the same server has published the new format, even if empty.
+        for url in files + [hookURL] {
+            guard let data = try? Data(contentsOf: url),
+                  let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sessions = root["sessions"] as? [String: [String: Any]]
+            else { continue }
+            if url != hookURL, let pid = root["pid"] as? Int32 {
+                guard pid > 0, isRunning(pid) else { continue }
+                upgradedPIDs.insert(pid)
+            }
+            for (id, var session) in sessions {
+                if url == hookURL, let pid = session["pid"] as? Int32,
+                   upgradedPIDs.contains(pid) { continue }
+                session["id"] = id
+                records.append(session)
+            }
+        }
 
-        // Newest session per directory, same rule the database index uses.
-        var newest: [String: (at: Int, state: State)] = [:]
-        for (_, session) in sessions {
+        // Older installed hooks did not record parentID. Resolve their child
+        // sessions from the database rather than letting a subtask's idle event
+        // replace the main turn's busy state.
+        var children = Set<String>()
+        if records.contains(where: { $0["parentID"] == nil }), let db = open(databaseURL) {
+            forEachRow(db, "SELECT id FROM session WHERE parent_id IS NOT NULL") {
+                if let id = text($0, 0) { children.insert(id) }
+            }
+            sqlite3_close(db)
+        }
+        var newest: [String: (at: Double, matched: Bool, state: State)] = [:]
+        var seen = Set<String>()
+        for session in records.sorted(by: {
+            ($0["at"] as? Double ?? 0) > ($1["at"] as? Double ?? 0)
+        }) {
             guard let directory = session["directory"] as? String,
-                  let status = session["status"] as? String
+                  let status = session["status"] as? String,
+                  ["busy", "retry", "idle"].contains(status),
+                  session["parentID"] as? String == nil,
+                  !children.contains(session["id"] as? String ?? "")
             else { continue }
 
             // opencode's server is detached — its parent is launchd — so it
             // outlives the terminal that started it, and a crashed one would
             // otherwise leave a "working" on screen that never ends.
-            if let pid = session["pid"] as? Int32, !isRunning(pid) { continue }
+            guard let pid = session["pid"] as? Int32, pid > 0, isRunning(pid) else { continue }
+            guard seen.insert(session["id"] as? String ?? "").inserted else { continue }
 
-            let at = session["at"] as? Int ?? 0
-            if let existing = newest[directory], existing.at >= at { continue }
+            let activity: Activity = status == "idle" ? .waiting : .working
+            let at = session["at"] as? Double ?? 0
+            let matched = preferredPIDs.contains(pid)
+            // Prefer a server in this terminal's process group. Detached servers
+            // may not match; then report ongoing root work in this directory.
+            if let existing = newest[directory] {
+                if existing.matched && !matched { continue }
+                if existing.matched == matched {
+                    if existing.state.activity == .working && activity != .working { continue }
+                    if existing.state.activity == activity && existing.at >= at { continue }
+                }
+            }
             newest[directory] = (
-                at,
+                at, matched,
                 State(
-                    activity: status == "busy" ? .working : .waiting,
+                    activity: activity,
                     detail: session["detail"] as? String))
         }
         return newest.mapValues(\.state)
@@ -507,7 +554,7 @@ enum OpenCodeStore {
 
     // MARK: - The database, for when the hook isn't installed
 
-    private static func databaseIndex() -> [String: State] {
+    static func databaseIndex() -> [String: State] {
         guard FileManager.default.fileExists(atPath: databaseURL.path),
               let db = open(databaseURL) else { return [:] }
         defer { sqlite3_close(db) }
@@ -516,12 +563,13 @@ enum OpenCodeStore {
         // guard against a database with years of history in it, not a guess
         // about how many terminals are open.
         let sql = """
-            SELECT s.directory, s.id, m.data
+            SELECT s.directory, s.id, m.data, m.time_updated
             FROM session s
             JOIN message m ON m.id = (
                 SELECT id FROM message WHERE session_id = s.id
                 ORDER BY time_created DESC LIMIT 1
             )
+            WHERE s.parent_id IS NULL
             ORDER BY s.time_updated DESC
             LIMIT 128
             """
@@ -537,15 +585,22 @@ enum OpenCodeStore {
             let role = message["role"] as? String
             let time = message["time"] as? [String: Any]
             let completed = time?["completed"] != nil
+            // A database has no liveness signal. Old interrupted messages must
+            // not claim ongoing work indefinitely when no hook can confirm it.
+            let recent = Date().timeIntervalSince1970
+                - Double(sqlite3_column_int64(statement, 3)) / 1000 < 120
+            let finish = message["finish"] as? String
+            let continuing = finish == "tool-calls" || finish == "unknown"
 
             // A user message means the turn has just been handed over, so the
             // agent owns it even though it hasn't written anything yet.
             switch role {
-            case "assistant" where completed:
+            case "assistant" where completed && !continuing:
                 result[directory] = State(activity: .waiting, detail: nil)
             case "assistant", "user":
                 result[directory] = State(
-                    activity: .working, detail: runningTool(db, session: sessionID))
+                    activity: recent ? .working : .idle,
+                    detail: recent ? runningTool(db, session: sessionID) : nil)
             default:
                 break
             }

@@ -16,6 +16,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${CONFIG:-release}"
 ARCH="${ARCH:-native}"
 APP="$REPO_ROOT/build/Rune.app"
+case "$ARCH" in native|universal) ;; *) echo "error: invalid ARCH" >&2; exit 1 ;; esac
 
 XCFRAMEWORK="$REPO_ROOT/vendor/ghostty/macos/GhosttyKit.xcframework"
 if [ ! -d "$XCFRAMEWORK" ]; then
@@ -23,6 +24,7 @@ if [ ! -d "$XCFRAMEWORK" ]; then
   TARGET="$([ "$ARCH" = universal ] && echo universal || echo native)" \
     "$REPO_ROOT/scripts/build-libghostty.sh"
 fi
+TARGET="$ARCH" bash "$REPO_ROOT/scripts/ghostty-provenance.sh" --check
 
 # Bash 3.2 — which is what macOS ships — treats expanding an empty array under
 # `set -u` as an unbound variable, so every reference below uses the
@@ -75,9 +77,10 @@ if [ -d "$GHOSTTY_SHARE/ghostty" ] && [ -d "$GHOSTTY_SHARE/terminfo" ]; then
   cp -R "$GHOSTTY_SHARE/terminfo" "$APP/Contents/Resources/terminfo"
   echo "==> bundled $(ls "$APP/Contents/Resources/ghostty/themes" | wc -l | tr -d ' ') ghostty themes"
 else
-  echo "warning: no ghostty resources at $GHOSTTY_SHARE — themes will not resolve" >&2
-  echo "warning: run ./scripts/build-libghostty.sh to produce them" >&2
+  echo "error: missing ghostty resources at $GHOSTTY_SHARE" >&2
+  exit 1
 fi
+cp "$REPO_ROOT/vendor/ghostty/zig-out/rune-build-info" "$APP/Contents/Resources/ghostty-build-info.txt"
 
 cp "$REPO_ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
 cp -R "$REPO_ROOT/licenses" "$APP/Contents/Resources/licenses"

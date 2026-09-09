@@ -376,8 +376,6 @@ final class SettingsWindowController: NSWindowController {
     private let preview = GhosttyPreview()
     /// The ⌘K panel as these settings will draw it.
     private let switcherPreview = SwitcherPreview()
-    private let todosEnabled = NSButton(
-        checkboxWithTitle: "", target: nil, action: nil)
 
     private func makeAppearancePane() -> NSView {
         accentWell.onChange = { [weak self] color in
@@ -395,10 +393,6 @@ final class SettingsWindowController: NSWindowController {
         appearance.controlSize = .small
         appearance.translatesAutoresizingMaskIntoConstraints = false
         appearance.widthAnchor.constraint(equalToConstant: 176).isActive = true
-
-        todosEnabled.target = self
-        todosEnabled.action = #selector(todosEnabledToggled)
-        todosEnabled.title = ""
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -449,13 +443,6 @@ final class SettingsWindowController: NSWindowController {
                     title: "Backdrop", symbol: "square.stack.3d.down.right",
                     caption: "How much of the terminal behind the panel is dimmed away.",
                     control: dim),
-            ]),
-            section("Todo list", symbol: "checklist", [
-                SettingsRow(
-                    title: "⌘J opens a todo list", symbol: "list.bullet.indent",
-                    caption: "In the list: a adds, o adds a sub-task, ⌘R renames, c copies, "
-                        + "d deletes, space ticks off.",
-                    control: todosEnabled),
             ]),
             section("Terminal", symbol: "terminal", [
                 SettingsRow(
@@ -510,7 +497,6 @@ final class SettingsWindowController: NSWindowController {
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
         appearance.selectItem(at: Settings.Appearance.allCases
             .firstIndex(of: settings.appearance) ?? 0)
-        todosEnabled.state = settings.todosEnabled ? .on : .off
         refreshPreviews()
     }
 
@@ -527,10 +513,6 @@ final class SettingsWindowController: NSWindowController {
         guard let choice = Settings.Appearance.allCases[safe: index] else { return }
         Settings.shared.appearance = choice
         refreshPreviews()
-    }
-
-    @objc private func todosEnabledToggled() {
-        Settings.shared.todosEnabled = todosEnabled.state == .on
     }
 
     @objc private func systemAccentToggled() {

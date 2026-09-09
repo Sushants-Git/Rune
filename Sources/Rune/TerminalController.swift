@@ -194,6 +194,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     private let tabBar = TabBar()
 
     private(set) var overlay: SwitcherOverlay?
+    private var pickerWindow: WindowPickerPanel?
 
     private var activityTimer: Timer?
 
@@ -457,14 +458,14 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     // MARK: - Making terminals
 
     /// Create a surface, wired up to keep the chrome in sync.
-    private func makeSurface(workingDirectory: String?) -> GhosttySurfaceView? {
+    private func makeSurface(workingDirectory: String?, command: String? = nil) -> GhosttySurfaceView? {
         // Inherit the cwd of the terminal you were in, which is what you almost
         // always want when opening a sibling.
         let cwd = workingDirectory ?? activeSurface?.pwd
 
         let view: GhosttySurfaceView
         do {
-            view = try GhosttySurfaceView(app: ghostty, workingDirectory: cwd)
+            view = try GhosttySurfaceView(app: ghostty, command: command, workingDirectory: cwd)
         } catch {
             log.error("failed to create surface: \(String(describing: error), privacy: .public)")
             FileHandle.standardError.write(
@@ -606,6 +607,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     func closeActiveSurface() {
+        hideSwitcher()
         guard let activeSurface else { return }
         closeSurface(activeSurface)
     }
@@ -623,6 +625,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘⇧W closes the whole window; ⌘W only ever closes one terminal.
     func closeWindow() {
+        hideSwitcher()
         window?.performClose(nil)
     }
 
@@ -642,12 +645,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// Move the keyboard to a specific pane within the visible tab.
     func focus(_ surface: GhosttySurfaceView) {
+        hideSwitcher()
         guard let tab = activeTab, tab.contains(surface) else { return }
         // Already settled — and the guard matters, because making a surface
         // first responder calls back in here through `becomeFirstResponder`.
         guard tab.focused !== surface || window?.firstResponder !== surface else { return }
 
-        hideSwitcher()
         tab.focus(surface)
         surface.clearAttention()
         window?.makeFirstResponder(surface)
@@ -659,6 +662,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘K commits: switch to a workspace and take the keyboard with you.
     func selectWorkspace(_ workspace: Workspace) {
+        hideSwitcher()
         guard workspaces.contains(where: { $0 === workspace }) else { return }
         setActiveWorkspace(workspace)
         guard let tab = workspace.activeTab ?? workspace.tabs.first else { return }
@@ -732,12 +736,14 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘1–⌘9 index the strip.
     func selectTab(at index: Int) {
+        hideSwitcher()
         guard tabs.indices.contains(index) else { return }
         select(tabs[index])
     }
 
     /// ⌘⇧[ / ⌘⇧] cycle the strip, wrapping at both ends.
     func selectRelativeTab(offset: Int) {
+        hideSwitcher()
         let tabs = self.tabs
         guard !tabs.isEmpty else { return }
         guard let activeTab, let current = tabs.firstIndex(where: { $0 === activeTab }) else {
@@ -752,6 +758,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘⌥arrows: move the keyboard to the pane in that direction.
     func focusSplit(_ direction: SplitDirection) {
+        hideSwitcher()
         guard let tab = activeTab, let surface = tab.focused,
               let target = tab.neighbor(of: surface, direction: direction)
         else { return }
@@ -760,6 +767,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// ⌘⌥[ / ⌘⌥] cycle panes in layout order.
     func focusRelativeSplit(offset: Int) {
+        hideSwitcher()
         guard let tab = activeTab, let surface = tab.focused,
               let target = tab.relativeSurface(from: surface, offset: offset)
         else { return }
@@ -767,11 +775,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     func resizeSplit(_ direction: SplitDirection, amount: CGFloat) {
+        hideSwitcher()
         guard let tab = activeTab, let surface = tab.focused else { return }
         tab.resize(surface, direction: direction, amount: amount)
     }
 
     func equalizeSplits() {
+        hideSwitcher()
         activeTab?.equalize()
     }
 
@@ -1010,67 +1020,157 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         window?.makeFirstResponder(panel.focusView)
     }
 
-    // MARK: - Todos
+    // MARK: - Windows
 
-    var isTodosVisible: Bool { overlay?.panel is TodoPalette }
-
-    /// ⌘J, when it's switched on in Settings.
-    ///
-    /// Opening it takes the switcher down if that was up, because they share
-    /// the one panel — and because they are two answers to the same question at
-    /// different scopes, so wanting both at once is not a state worth having.
-    /// ⌘L: the windows, and what each one is holding.
+    /// Preview windows without ever handing their terminals the keyboard.
     func showWindows() {
         guard overlay == nil else {
-            closeSwitcher()
+            dismissSwitcher()
             return
         }
         let all = (NSApp.delegate as? AppDelegate)?.windows ?? [self]
         guard !all.isEmpty else { return }
 
-        let items = all.map { controller in
+        let origins = all.map { ($0, $0.activeWorkspace, $0.workspaces.map { ($0, $0.activeTab) }) }
+        let restoreOrigins = {
+            for (controller, workspace, tabs) in origins {
+                for (workspace, tab) in tabs {
+                    if let tab, workspace.contains(tab) { workspace.activeTab = tab }
+                }
+                if let workspace { controller.previewWorkspace(workspace) }
+            }
+        }
+        let entries = all.map { controller in
+            controller.orderedWorkspaces.flatMap { workspace in
+                workspace.tabs.map { (workspace, $0) }
+            }
+        }
+        let items = all.enumerated().map { index, controller in
             WindowPalette.Item(
                 number: controller.windowNumber,
                 title: "Window \(controller.windowNumber)",
                 workspaces: controller.orderedWorkspaces.map(\.title),
-                isCurrent: controller === self)
+                isCurrent: controller === self,
+                entries: entries[index].map { workspace, tab in
+                    WindowPalette.Entry(title: workspace.title, subtitle: tab.title,
+                                        isCurrent: workspace === controller.activeWorkspace && tab === controller.activeTab)
+                })
         }
 
-        present(WindowPalette(
+        let palette = WindowPalette(
             items: items,
-            onCommit: { [weak self] index in
+            onPreview: { index, entry in
+                guard let target = all[safe: index], target.window?.isVisible == true else { return }
+                if let entry, let (workspace, tab) = entries[index][safe: entry], workspace.contains(tab),
+                   target.workspaces.contains(where: { $0 === workspace }) {
+                    workspace.activeTab = tab
+                    target.previewWorkspace(workspace)
+                }
+                target.window?.orderFront(nil)
+            },
+            onCommit: { [weak self] index, entry in
                 guard let self else { return }
+                // Capture the destination before undoing every preview, including
+                // other workspaces in the destination window.
+                let target = all[safe: index]
+                let tab = entry.flatMap { entries[safe: index]?[safe: $0]?.1 }
+                    ?? target?.activeTab
+                restoreOrigins()
                 self.closeSwitcher()
-                guard let target = all[safe: index] else { return }
-                // Raising rather than moving anything: this is a map, and
-                // picking a place on a map takes you there.
+                guard let target, !target.workspaces.isEmpty else { return }
+                if let tab { target.select(tab) }
                 NSApp.activate(ignoringOtherApps: true)
                 target.window?.makeKeyAndOrderFront(nil)
             },
+            onCancel: { [weak self] in
+                guard let self else { return }
+                let restoreFocus = self.pickerWindow?.isKeyWindow == true
+                restoreOrigins()
+                self.closeSwitcher()
+                if restoreFocus, NSApp.isActive { self.window?.makeKeyAndOrderFront(nil) }
+            })
+        guard let window else { return }
+        let host = WindowPickerPanel(contentRect: window.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        host.owner = self
+        host.isReleasedWhenClosed = false
+        host.isOpaque = false
+        host.backgroundColor = .clear
+        host.level = .floating
+        host.hidesOnDeactivate = true
+        let overlay = SwitcherOverlay(panel: palette)
+        host.contentView = overlay
+        self.overlay = overlay
+        pickerWindow = host
+        host.makeKeyAndOrderFront(nil)
+        host.makeFirstResponder(palette.focusView)
+    }
+
+    /// What this window is called in ⌘J.
+    var windowNumber: Int { (NSApp.delegate as? AppDelegate)?.number(of: self) ?? 1 }
+
+    func showSessions() {
+        if isSwitcherVisible { dismissSwitcher(); return }
+        present(SessionPalette(
+            sessions: liveSessionSnapshot(),
+            onSelect: { [weak self] in self?.openSession($0) },
             onCancel: { [weak self] in self?.closeSwitcher() }))
     }
 
-    /// What this window is called in ⌘L.
-    var windowNumber: Int { (NSApp.delegate as? AppDelegate)?.number(of: self) ?? 1 }
-
-    func toggleTodos() {
-        guard Settings.shared.todosEnabled else { return }
-        if isTodosVisible {
-            closeSwitcher()
-            return
+    /// Snapshot only already-known agent state; opening a picker never polls processes.
+    func liveSessionSnapshot() -> [AgentHistory.Session] {
+        let all = (NSApp.delegate as? AppDelegate)?.windows ?? [self]
+        return all.flatMap { controller in
+            controller.allSurfaces.compactMap { surface in
+                guard let agent = surface.agent else { return nil }
+                let kind: AgentHistory.Agent = switch agent {
+                case .claude: .claude
+                case .codex: .codex
+                case .openCode: .openCode
+                }
+                return AgentHistory.Session.live(target: surface.id, title: surface.title,
+                                                 directory: surface.pwd ?? "", agent: kind)
+            }
         }
-        if isSwitcherVisible { dismissSwitcher() }
-        present(TodoPalette(onDismiss: { [weak self] in self?.closeSwitcher() }))
     }
 
-    /// ⌘W with the todo list up: delete the highlighted one.
-    func deleteTodoSelection() {
-        (overlay?.panel as? TodoPalette)?.deleteSelected()
+    func openSession(_ session: AgentHistory.Session) {
+        // SessionPalette has stopped its tasks before calling us, even when the
+        // selected surface disappeared or a new terminal cannot be created.
+        closeSwitcher()
+        if let target = session.liveTarget {
+            if !openLiveSession(surfaceID: target) { NSSound.beep() }
+            return
+        }
+        guard let resume = session.resume else { NSSound.beep(); return }
+        // Launch only validated history metadata, in a fresh terminal. Never
+        // inject a command into an existing shell or a running agent's input.
+        guard let surface = makeSurface(workingDirectory: resume.directory, command: resume.shellCommand) else { return }
+        let workspace = Workspace(first: Tab(first: surface))
+        workspaces.append(workspace)
+        selectWorkspace(workspace)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Resolve IDs at selection time: a surface may have closed or moved since opening.
+    @discardableResult
+    func openLiveSession(surfaceID: UUID) -> Bool {
+        let all = (NSApp.delegate as? AppDelegate)?.windows ?? [self]
+        for controller in all {
+            guard let surface = controller.allSurfaces.first(where: { $0.id == surfaceID }),
+                  let workspace = controller.workspaces.first(where: { $0.tab(owning: surface) != nil }),
+                  let tab = workspace.tab(owning: surface) else { continue }
+            closeSwitcher()
+            controller.select(tab)
+            controller.focus(surface)
+            controller.window?.makeKeyAndOrderFront(nil)
+            return true
+        }
+        return false
     }
 
     /// Close the switcher without selecting, returning to where it was opened.
     func dismissSwitcher() {
-        overlay?.palette?.cancel()
+        overlay?.cancel()
     }
 
     /// ⌘W in the switcher: close the highlighted workspace, stay open.
@@ -1088,7 +1188,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// rewind to where ⌘K was opened from: you asked for the new thing while
     /// looking at the previewed workspace, so that's where it belongs.
     func hideSwitcher() {
-        closeSwitcher()
+        if pickerWindow != nil { dismissSwitcher() } else { closeSwitcher() }
     }
 
     /// Tear the overlay down. Selection and restore are the caller's business.
@@ -1097,6 +1197,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         overlay.removeFromSuperview()
         self.overlay = nil
         switcherOrigin = nil
+        let host = pickerWindow
+        pickerWindow = nil
+        host?.orderOut(nil)
+        host?.close()
         if let surface = activeSurface { window?.makeFirstResponder(surface) }
     }
 
@@ -1118,13 +1222,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// isn't up it opens first — the name lives in that list, so that's where
     /// you should be looking while you change it.
     func renameWorkspace() {
-        // ⌘R renames the row you are looking at, whichever list that is. With
-        // the todo list up it would otherwise reach a switcher that isn't on
-        // screen and do nothing at all.
-        if let todos = overlay?.panel as? TodoPalette {
-            todos.beginRename()
-            return
-        }
+        if pickerWindow != nil { dismissSwitcher() }
         if overlay == nil { showSwitcher() }
         overlay?.palette?.beginRename()
     }
@@ -1173,6 +1271,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// ⌘F. Opens the bar on the pane you are in, or re-focuses it if it is
     /// already there so the next thing typed replaces the last needle.
     func toggleSearch() {
+        hideSwitcher()
         activeTab?.focusedPane?.showSearch()
     }
 
@@ -1180,6 +1279,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// results you cannot see, with no count and no way out, is worse than the
     /// key doing nothing at all.
     func navigateSearch(next: Bool) {
+        hideSwitcher()
         guard let pane = activeTab?.focusedPane, pane.searchBar != nil else { return }
         pane.surface.navigateSearch(next: next)
     }
@@ -1201,6 +1301,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     func performSurfaceAction(_ action: String) {
+        hideSwitcher()
         guard let surface = activeSurface?.surface else { return }
         _ = action.withCString { ptr in
             ghostty_surface_binding_action(surface, ptr, UInt(strlen(ptr)))
@@ -1269,6 +1370,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     // MARK: - NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
+        dismissSwitcher()
         activityTimer?.invalidate()
         activityTimer = nil
         for surface in allSurfaces {
@@ -1282,6 +1384,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        guard pickerWindow == nil else { return }
         activeSurface?.setFocus(true)
 
         // Whichever panel is up owns the keyboard for as long as it's on
@@ -1290,10 +1393,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // terminal — so without this the panel stayed up while ↑ and ↓ went to
         // the pane behind it, which reads as the app ignoring the keys.
         //
-        // Asked of the panel rather than of the switcher specifically. It was
-        // written when the switcher was the only panel there could be, and the
-        // todo list came back from a trip to another app with no caret and its
-        // typing going into the terminal underneath.
+        // Ask the panel rather than assuming every overlay has a search field.
         if let field = overlay?.panelFocusView {
             // A rename owns its own field; the search field must not take it
             // back mid-edit. Only the switcher has renames.
@@ -1372,4 +1472,3 @@ final class TerminalWindow: NSWindow {
         return super.performKeyEquivalent(with: event)
     }
 }
-

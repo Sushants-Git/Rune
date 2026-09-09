@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     private var controllers: [TerminalController] = []
     private var tabKeyMonitor: Any?
 
-    /// Every open window, in the order they were opened. What ⌘L lists.
+    /// Every open window, in the order they were opened. What ⌘J lists.
     var windows: [TerminalController] { controllers }
 
     /// The number a window is known by: its position, so closing the first one
@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     }
 
     private var keyController: TerminalController? {
+        if let panel = NSApp.keyWindow as? WindowPickerPanel { return panel.owner }
         if let window = NSApp.keyWindow as? TerminalWindow, let c = window.controller { return c }
         if let window = NSApp.mainWindow as? TerminalWindow, let c = window.controller { return c }
         return controllers.last
@@ -50,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // `rune <path>` on a cold launch says where the first window belongs.
         let controller = newWindow(workingDirectory: CLI.startupDirectory)
         NSApp.activate(ignoringOtherApps: true)
+
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["RUNE_TEST_PICKER"] == "1", let controller {
+            DispatchQueue.main.async { WindowPickerRegression.run(controller, delegate: self) }
+            return
+        }
+        #endif
 
         // Deliberately after the window is up. The check is a network round
         // trip that has nothing to do with Rune being ready to type into, and
@@ -126,7 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     private func installTabShortcuts() {
         tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) {
             [weak self] event in
-            guard let self, NSApp.keyWindow is TerminalWindow,
+            guard let self,
+                  NSApp.keyWindow is TerminalWindow || NSApp.keyWindow is WindowPickerPanel,
                   let controller = self.keyController
             else { return event }
 
@@ -139,21 +148,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
             // they stay Close Terminal and whatever the terminal wants.
             if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                controller.isSwitcherVisible {
-                // The todo list borrows the same panel, so ⌘W has to be told
-                // which list it is closing a row out of. ⌘P means nothing there
-                // and is swallowed rather than reaching the terminal behind.
-                if controller.isTodosVisible {
-                    switch event.charactersIgnoringModifiers?.lowercased() {
-                    case "w":
-                        controller.deleteTodoSelection()
-                        return nil
-                    case "p":
-                        return nil
-                    default:
-                        break
-                    }
-                    return event
-                }
                 switch event.charactersIgnoringModifiers?.lowercased() {
                 case "w":
                     // Swallowed even mid-rename, where it does nothing. Letting
@@ -363,7 +357,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     /// A new window inherits the cwd of the terminal you were in, same as a new
     /// tab or workspace does.
     @objc private func newWindowAction(_ sender: Any?) {
-        newWindow(workingDirectory: keyController?.activeSurface?.pwd)
+        let controller = keyController
+        controller?.hideSwitcher()
+        newWindow(workingDirectory: controller?.activeSurface?.pwd)
     }
 
     @objc private func newTabAction(_ sender: Any?) { keyController?.newTab() }
@@ -400,7 +396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func checkForUpdatesAction(_ sender: Any?) { Updater.shared.checkNow() }
     @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
-    @objc private func toggleTodosAction(_ sender: Any?) { keyController?.toggleTodos() }
+    @objc private func showSessionsAction(_ sender: Any?) { keyController?.showSessions() }
     @objc private func showWindowsAction(_ sender: Any?) { keyController?.showWindows() }
 
     /// ⌘⇧, — re-read everything Rune is configured by, the way Ghostty does.
@@ -523,7 +519,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // appears and disappears from under the pointer is worse than one that
         // is always there and does nothing until you enable it, and the action
         // itself is what checks the setting.
-        bind(.toggleTodos, to: tabsMenu, #selector(toggleTodosAction(_:)))
+        bind(.showSessions, to: tabsMenu, #selector(showSessionsAction(_:)))
         bind(.showWindows, to: tabsMenu, #selector(showWindowsAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))

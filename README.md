@@ -78,15 +78,15 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `⌘⌥=` | equalize splits |
 | `⌘⇧N` / `⌘⇧W` | new / close window |
 | `←` | in `⌘K`, twice: detach this workspace into its own window |
-| `⌘L` | every window, and what each is holding |
-| `⌘J` | todo list |
+| `⌘J` | windows on the left, workspaces and tabs on the right |
+| `⌘L` | agent sessions |
 | `⌘⇧,` | reload the Ghostty config and Rune's settings |
 
-Rebind any of them in **Settings → Shortcuts**. `⌘J` opens a list of what you
-have to do in the same panel, as a tree; turn it off in **Settings →
-Appearance** if you don't want it. In the list `a` adds, `o` adds a sub-task,
-`⌘R` renames in place as it does in `⌘K`, `c` copies, `d` deletes and `space`
-ticks off.
+Rebind any of them in **Settings → Shortcuts**. In `⌘J`, `←` / `→` chooses
+the pane and `↑` / `↓` chooses a row. Windows, workspaces and tabs preview
+behind the picker. `Enter` commits; `Escape` restores where you started.
+Existing custom window shortcuts are retained. If a custom binding already
+uses `⌘L`, assign Agent Sessions a free shortcut in Settings.
 
 ## The `rune` command
 
@@ -118,7 +118,7 @@ git clone https://github.com/Sushants-Git/Rune.git && cd Rune
 
 If it stops on `cannot execute tool 'metal'`, run
 `xcodebuild -downloadComponent MetalToolchain` and try again. Releases are cut
-by pushing a tag: `git tag v0.24.0 && git push origin v0.24.0`.
+by pushing a tag: `git tag v0.25.0 && git push origin v0.25.0`.
 
 [**Design notes**](docs/design-notes.md) cover why it's built this way, and the
 parts that cost real debugging time.

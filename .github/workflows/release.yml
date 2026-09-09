@@ -5,8 +5,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # The expensive step is libghostty (a full Zig build of ghostty's core), so the
-# resulting xcframework is cached keyed on GHOSTTY_COMMIT — releases that don't
-# bump ghostty skip it entirely. That cache is written by warm-cache.yml on
+# resulting xcframework is cached by source, build scripts and toolchain. That
+# cache is written by warm-cache.yml on
 # `main`, and has to be: GitHub scopes caches by ref, so a cache written by one
 # tag is invisible to the next. Only the default branch's caches are readable
 # from everywhere. Builds are universal (arm64 + x86_64) so one
@@ -35,6 +35,24 @@ jobs:
       - name: Select latest Xcode
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
 
+      - name: Fetch pinned Ghostty
+        run: ./scripts/fetch-ghostty.sh
+
+      - name: Read required Zig version
+        id: zig-version
+        run: echo "version=$(sed -n 's/.*\.minimum_zig_version = "\([^"]*\)".*/\1/p' vendor/ghostty/build.zig.zon)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.zig-version.outputs.version }}
+
+      - name: Ghostty build provenance
+        id: ghostty-inputs
+        run: |
+          TARGET=universal bash scripts/ghostty-provenance.sh > "$RUNNER_TEMP/ghostty-inputs"
+          echo "key=$(shasum -a 256 "$RUNNER_TEMP/ghostty-inputs" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
       - name: Cache GhosttyKit.xcframework
         id: ghostty-cache
         uses: actions/cache@v4
@@ -46,20 +64,19 @@ jobs:
           path: |
             vendor/ghostty/macos/GhosttyKit.xcframework
             vendor/ghostty/zig-out/share
+            vendor/ghostty/zig-out/rune-build-info
+            vendor/ghostty/zig-out/rune-build-checksums
           # 'universal' is part of the key: a cached arm64-only xcframework
           # would fail the x86_64 link, and an artefact that can't be rebuilt
           # from its own key is worse than a cache miss.
-          key: ghostty-${{ hashFiles('GHOSTTY_COMMIT') }}-universal
-
-      - name: Set up Zig
-        if: steps.ghostty-cache.outputs.cache-hit != 'true'
-        uses: mlugg/setup-zig@v2
-        with:
-          version: 0.16.0
+          key: ghostty-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.ghostty-inputs.outputs.key }}
 
       - name: Build libghostty
         if: steps.ghostty-cache.outputs.cache-hit != 'true'
         run: TARGET=universal ./scripts/build-libghostty.sh
+
+      - name: Validate Ghostty outputs
+        run: TARGET=universal bash scripts/ghostty-provenance.sh --check
 
       # macOS files the permissions a user grants under the app's designated
       # requirement, and an ad-hoc signature's requirement is the cdhash of

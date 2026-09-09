@@ -83,23 +83,6 @@ final class Settings {
         }
     }
 
-    /// Whether `⌘J` opens a todo list in the switcher's panel.
-    ///
-    /// On by default, and switchable off — the other way round from where it
-    /// started. It shares the switcher's panel and costs nothing when unused,
-    /// and a key that did nothing until you found a setting was a feature most
-    /// people never discovered they had.
-    var todosEnabled: Bool {
-        // On unless turned off. `defaults.bool` reads a missing key as false,
-        // which is the wrong default for a list that is one keystroke away and
-        // costs nothing when unused.
-        get { defaults.object(forKey: Keys.todosEnabled) as? Bool ?? true }
-        set {
-            defaults.set(newValue, forKey: Keys.todosEnabled)
-            notify(.appearance)
-        }
-    }
-
     enum Defaults {
         /// The dark panel. Near-black rather than pure black: a #000 panel over
         /// a #000 terminal has no edge at all.
@@ -124,7 +107,12 @@ final class Settings {
     /// The chord bound to an action — the override if there is one, the
     /// shipped default otherwise.
     func chord(for action: ShortcutAction) -> KeyChord {
-        overrides[action] ?? action.default
+        if let override = overrides[action] { return override }
+        // An explicit old Cmd-L window binding wins over the new default.
+        if action == .showSessions, overrides.values.contains(action.default) {
+            return KeyChord("")
+        }
+        return action.default
     }
 
     func setChord(_ chord: KeyChord?, for action: ShortcutAction) {
@@ -181,7 +169,6 @@ final class Settings {
         static let panelBackground = "RunePanelBackground"
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
-        static let todosEnabled = "RuneTodosEnabled"
         static let appearance = "RuneAppearance"
         static let shortcuts = "RuneShortcuts"
     }

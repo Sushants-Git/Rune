@@ -83,7 +83,11 @@ final class GhosttyApp {
             close_surface_cb: runeCloseSurface
         )
 
-        guard let app = ghostty_app_new(&runtime, cfg) else { throw GhosttyError.appFailed }
+        guard let app = ghostty_app_new(&runtime, cfg) else {
+            ghostty_config_free(cfg)
+            self.config = nil
+            throw GhosttyError.appFailed
+        }
         self.app = app
 
         ghostty_app_set_focus(app, NSApp.isActive)
@@ -194,19 +198,19 @@ final class GhosttyApp {
     /// The configured terminal background. Rune paints its own chrome with
     /// this so the title bar doesn't sit as a grey band above the terminal.
     var backgroundColor: NSColor {
-        guard let config else { return .black }
-        var color = ghostty_config_color_s()
-        let key = "background"
-        guard ghostty_config_get(config, &color, key, UInt(key.utf8.count)) else { return .black }
-        return NSColor(ghostty: color)
+        color("background") ?? .black
     }
 
-    /// Any colour the config names, or nil when it does not name one.
+    /// A supported config colour, or nil for an unsupported or unset key.
     ///
     /// Same shape as `backgroundColor`, but nil-returning: a preview that drew
     /// black text because it asked for a key the theme leaves unset would be
     /// showing something the terminal will never do.
     func color(_ key: String) -> NSColor? {
+        // ghostty_config_get is untyped: a valid non-color key can overwrite
+        // this three-byte buffer. Only admit keys with a verified Color ABI.
+        // Synthetic palette:N keys aren't supported by the embedding API.
+        guard key == "background" || key == "foreground" else { return nil }
         guard let config else { return nil }
         var value = ghostty_config_color_s()
         guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)) else { return nil }
@@ -232,14 +236,13 @@ final class GhosttyApp {
     /// What it cannot do from inside the surface is make the window behind it
     /// stop being opaque, which is the other half of a translucent terminal.
     ///
-    /// Read from the config file rather than through `ghostty_config_get`.
-    /// Asking libghostty for this key by name kills the process — no message,
-    /// no crash report, exit code 6 from inside window creation — so the value
-    /// comes from the same file the settings pane reads and writes.
+    /// The C getter writes an f64 (not font-size's f32). Read the effective
+    /// config so themes and recursive config files agree with the renderer.
     var backgroundOpacity: Double {
-        guard let raw = GhosttyConfigFile(url: GhosttyConfigFile.location)
-            .value(for: "background-opacity"),
-            let value = Double(raw)
+        guard let config else { return 1 }
+        var value: Double = 1
+        let key = "background-opacity"
+        guard ghostty_config_get(config, &value, key, UInt(key.utf8.count)), value.isFinite
         else { return 1 }
         return max(0, min(1, value))
     }

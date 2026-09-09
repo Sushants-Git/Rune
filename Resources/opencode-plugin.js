@@ -18,10 +18,13 @@
 import { mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
 
-const STATE = join(homedir(), ".local", "state", "rune", "opencode.json");
-
-export const Rune = async () => {
+export const Rune = async ({ client, directory } = {}) => {
+  // A server can load multiple project instances in one process. Neither a
+  // shared file nor a pid-only filename gives those writers separate ownership.
+  const state = join(homedir(), ".local", "state", "rune", "opencode.d",
+    `${process.pid}-${randomUUID()}.json`);
   // sessionID -> what that session is doing, and where.
   const sessions = new Map();
 
@@ -34,12 +37,12 @@ export const Rune = async () => {
   function flush() {
     const payload = { pid, sessions: Object.fromEntries(sessions) };
     try {
-      mkdirSync(dirname(STATE), { recursive: true });
+      mkdirSync(dirname(state), { recursive: true });
       // Written beside and renamed over: Rune polls this file, and a reader
       // that catches a half-written one gets nothing rather than nonsense.
-      const temporary = `${STATE}.${pid}.tmp`;
+      const temporary = `${state}.tmp`;
       writeFileSync(temporary, JSON.stringify(payload));
-      renameSync(temporary, STATE);
+      renameSync(temporary, state);
     } catch {
       // A terminal indicator is not worth breaking someone's session over.
     }
@@ -51,57 +54,89 @@ export const Rune = async () => {
       ...previous,
       ...changes,
       pid,
-      at: Math.floor(Date.now() / 1000),
+      at: Date.now() / 1000,
     });
     flush();
   }
 
-  return {
-    event: async ({ event }) => {
-      const { type, properties: p = {} } = event;
-
-      switch (type) {
-        // Where a session lives, which is how Rune matches it to a terminal.
-        case "session.created":
-        case "session.updated":
-          if (p.info?.id && p.info?.directory) {
-            remember(p.info.id, { directory: p.info.directory });
-          }
-          break;
-
-        // The whole point: opencode says so itself.
-        case "session.status":
-          if (p.sessionID && p.status?.type) {
-            remember(p.sessionID, {
-              status: p.status.type,
-              // A new turn's detail belongs to that turn, not the last one.
-              detail: p.status.type === "busy" ? undefined : null,
-            });
-          }
-          break;
-
-        case "session.idle":
-          if (p.sessionID) remember(p.sessionID, { status: "idle", detail: null });
-          break;
-
-        case "session.deleted":
-          if (p.sessionID) {
-            sessions.delete(p.sessionID);
-            flush();
-          }
-          break;
-
-        // What the turn is doing right now, when it's doing something with a
-        // name. Rune shows this instead of the bare word "working".
-        case "message.part.updated":
-          if (p.sessionID && p.part?.type === "tool" && p.part?.tool) {
-            const running = p.part.state?.status === "running";
-            remember(p.sessionID, {
-              detail: running ? `Running ${p.part.tool}` : null,
-            });
-          }
-          break;
+  async function metadata(sessionID) {
+    if (sessions.get(sessionID)?.parentID !== undefined) return;
+    try {
+      const response = await client?.session.get({ path: { id: sessionID } });
+      const info = response?.data;
+      if (info?.id) {
+        remember(sessionID, {
+          directory: info.directory ?? directory,
+          parentID: info.parentID ?? null,
+        });
       }
+    } catch {
+      // Retry on the next event. Without parent metadata, don't publish an
+      // unverified child as a root session just because its directory is known.
+    }
+  }
+
+  // SDK lookups are asynchronous. Keep a slow metadata request from committing
+  // an older busy event after a later idle event has already been published.
+  let pending = Promise.resolve();
+  flush();
+  return {
+    event: ({ event }) => {
+      pending = pending.then(async () => {
+        const { type, properties: p = {} } = event;
+
+        switch (type) {
+          // Where a session lives, which is how Rune matches it to a terminal.
+          case "session.created":
+          case "session.updated":
+            if (p.info?.id && p.info?.directory) {
+              remember(p.info.id, {
+                directory: p.info.directory,
+                parentID: p.info.parentID ?? null,
+              });
+            }
+            break;
+
+          // The whole point: opencode says so itself.
+          case "session.status":
+            if (p.sessionID && p.status?.type) {
+              await metadata(p.sessionID);
+              remember(p.sessionID, {
+                status: p.status.type,
+                // A new turn's detail belongs to that turn, not the last one.
+                detail: null,
+              });
+            }
+            break;
+
+          case "session.idle":
+            if (p.sessionID) {
+              await metadata(p.sessionID);
+              remember(p.sessionID, { status: "idle", detail: null });
+            }
+            break;
+
+          case "session.deleted":
+            if (p.info?.id ?? p.sessionID) {
+              sessions.delete(p.info?.id ?? p.sessionID);
+              flush();
+            }
+            break;
+
+          // Tool events enrich the detail but never end the overall turn.
+          case "message.part.updated":
+            if (p.part?.sessionID && p.part?.type === "tool" && p.part?.tool) {
+              const running = p.part.state?.status === "running";
+              remember(p.part.sessionID, {
+                detail: running ? `Running ${p.part.tool}` : null,
+              });
+            }
+            break;
+        }
+      }).catch(() => {
+        // Indicator failures must not reject the agent's event handler.
+      });
+      return pending;
     },
   };
 };
