@@ -49,12 +49,53 @@ enum AgentHistory {
         /// title/preview or an interpolated ID, to a NEW terminal. `&&` prevents
         /// resuming in the wrong project if its directory has disappeared.
         /// The controller decides whether/how to append the terminal's return.
+        ///
+        /// Run through the user's **login shell, interactively**, and that is
+        /// the whole reason ⌘L used to open a dead terminal. libghostty runs a
+        /// surface command as `login -fp … /bin/bash --noprofile --norc -c
+        /// "exec -l <this>"`, so the process inherits whatever `PATH` the app
+        /// was launched with — from the Dock, that is `/usr/bin:/bin:/usr/sbin:
+        /// /sbin` and nothing else. Every one of these agents installs
+        /// somewhere that only a shell startup file knows about
+        /// (`~/.local/bin`, `~/.bun/bin`, Homebrew), so `exec claude` was
+        /// `command not found` every time, and because a surface with a command
+        /// implies `wait-after-command`, what you got was a terminal sitting
+        /// there having already failed.
+        ///
+        /// `-l -i` is what loads the files that set `PATH`: login for
+        /// `.zprofile`/`.bash_profile`, interactive for `.zshrc`/`.bashrc`,
+        /// which is where most people actually put it. The script stays two
+        /// words of POSIX — `cd … && exec …` — so it means the same thing in
+        /// sh, bash, zsh and fish alike.
         var shellCommand: String {
             let script = "cd -- \(Self.quote(directory)) && exec "
                 + arguments.map(Self.quote).joined(separator: " ")
             // The outer exec needs an executable, not the shell builtin `cd`.
             // Quote the entire script again for that outer shell's parse.
-            return "/bin/sh -c " + Self.quote(script)
+            return Self.quote(Self.loginShell) + " -l -i -c " + Self.quote(script)
+        }
+
+        /// The shell whose startup files hold the user's `PATH`.
+        ///
+        /// `RUNE_RESUME_SHELL` first, as an escape hatch and so the launch
+        /// check can pin one; then `SHELL`, because that is what the user chose
+        /// and what a terminal is expected to honour; then the account record,
+        /// for the launch contexts that don't set it; `/bin/zsh` last, which is
+        /// the macOS default and exists on every machine Rune runs on. Anything
+        /// that isn't an absolute path to a real file is not a shell.
+        static var loginShell: String {
+            func usable(_ path: String?) -> String? {
+                guard let path, path.hasPrefix("/"),
+                      FileManager.default.isExecutableFile(atPath: path)
+                else { return nil }
+                return path
+            }
+            let environment = ProcessInfo.processInfo.environment
+            if let shell = usable(environment["RUNE_RESUME_SHELL"]) { return shell }
+            if let shell = usable(environment["SHELL"]) { return shell }
+            if let record = getpwuid(getuid())?.pointee.pw_shell,
+               let shell = usable(String(cString: record)) { return shell }
+            return "/bin/zsh"
         }
 
         private static func quote(_ value: String) -> String {
@@ -238,27 +279,84 @@ enum AgentHistory {
         }
     }
 
-    /// Metadata-only fuzzy matching; all whitespace-separated terms must match.
+    /// Metadata-only matching; all whitespace-separated terms must match.
+    ///
+    /// Field by field, and not across the whole record run together. That
+    /// concatenation was the bug behind "searching shows me everything": a term
+    /// was accepted as a subsequence of title + full path + agent + session id,
+    /// with no limit on how far apart the letters could be, so `rune` matched
+    /// almost every session on the machine by picking an r, a u, an n and an e
+    /// out of forty characters of `/Users/…/Workspace/…`. Every row came back,
+    /// merely reordered, which is not a search.
+    ///
+    /// A term now has to be a substring of one field, or a *tight* subsequence
+    /// of the name — one that starts at a word boundary and doesn't spread more
+    /// than about three times its own length, so `sphr` still finds
+    /// `Sapphire parser` and nothing finds everything.
     static func filter(_ sessions: [Session], query: String) -> [Session] {
         let terms = display(query, limit: 512).lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
         guard !terms.isEmpty else { return sessions }
         return sessions.compactMap { session -> (Session, Int)? in
             guard !Task.isCancelled else { return nil }
-            let haystack = display("\(session.title) \(session.directory) \(session.agent?.name ?? "terminal") \(session.resume?.sessionID ?? "") \(session.isLive ? "live" : "saved")", limit: 4096).lowercased()
-            var score = 0
+            let title = display(session.title, limit: 512).lowercased()
+            let directory = display(session.directory, limit: 1024).lowercased()
+            let project = String(directory.split(separator: "/").last ?? "")
+            let agent = (session.agent?.name ?? "terminal").lowercased()
+            let identifier = (session.resume?.sessionID ?? session.id).lowercased()
+            let state = session.isLive ? "live" : "saved"
+
+            var total = 0
             for term in terms {
-                if haystack.contains(term) { score += 100 + term.count; continue }
-                var cursor = haystack.startIndex
-                var gaps = 0
-                for char in term {
-                    guard cursor < haystack.endIndex, let found = haystack[cursor...].firstIndex(of: char) else { return nil }
-                    gaps += haystack.distance(from: cursor, to: found)
-                    cursor = haystack.index(after: found)
-                }
-                score += max(1, 50 - gaps)
+                // Most specific field first: what a session is called beats
+                // where it happens to live, which beats which agent ran it.
+                let score: Int?
+                if title.contains(term) { score = 140 + term.count }
+                else if project.contains(term) { score = 110 }
+                else if directory.contains(term) { score = 80 }
+                else if identifier.contains(term) { score = 90 }
+                else if agent.contains(term) { score = 60 }
+                else if state == term { score = 40 }
+                else if let gaps = tight(term, in: title) { score = max(1, 55 - gaps) }
+                else if let gaps = tight(term, in: project) { score = max(1, 45 - gaps) }
+                else { score = nil }
+                guard let score else { return nil }
+                total += score
             }
-            return (session, score)
+            return (session, total)
         }.sorted { $0.1 == $1.1 ? ordered($0.0, $1.0) : $0.1 > $1.1 }.map(\.0)
+    }
+
+    /// `term` as a subsequence of `haystack`, anchored at a word boundary and
+    /// held to a span, or nil. Returns how many characters it had to skip, so a
+    /// closer match can outrank a looser one.
+    private static func tight(_ term: String, in haystack: String) -> Int? {
+        let needle = Array(term), hay = Array(haystack)
+        guard needle.count > 1, hay.count <= 512 else { return nil }
+        // Three times the term's own length is roughly "inside one or two
+        // words". Beyond that the letters are no longer a spelling of anything
+        // — they are four letters that happen to appear in a sentence.
+        let budget = needle.count * 3 + 2
+        var best: Int?
+        for start in hay.indices where hay[start] == needle[0] && boundary(hay, start) {
+            var cursor = start
+            var index = 0
+            while index < needle.count, cursor < hay.count {
+                if hay[cursor] == needle[index] { index += 1 }
+                cursor += 1
+            }
+            guard index == needle.count else { continue }
+            let span = cursor - start
+            guard span <= budget else { continue }
+            let gaps = span - needle.count
+            if best == nil || gaps < best! { best = gaps }
+        }
+        return best
+    }
+
+    private static func boundary(_ hay: [Character], _ index: Int) -> Bool {
+        guard index > 0 else { return true }
+        let previous = hay[index - 1]
+        return !previous.isLetter && !previous.isNumber
     }
 
     static func merge(_ supplied: [Session], with saved: [Session]) -> [Session] {

@@ -5,6 +5,13 @@ import Cocoa
 /// - liveTarget != nil: focus that exact surface, without launching anything.
 /// - otherwise: launch resume.shellCommand in a new terminal.
 /// Discovery, search and preview never read terminal surfaces or run commands.
+///
+/// Laid out as a picker rather than as a form. What was here before was a
+/// search box, two bordered AppKit push buttons, a status line, a short list, a
+/// heading, and a grey wall of monospace — six stacked strips, none of which
+/// looked like the ⌘K panel it opens next to. It is now the same panel: one
+/// bare field at the top, rows on the left, what the row *is* on the right, and
+/// the keys along the bottom.
 @MainActor
 final class SessionPalette: NSView, OverlayPanel {
     private let supplied: [AgentHistory.Session]
@@ -26,16 +33,28 @@ final class SessionPalette: NSView, OverlayPanel {
     private var searchTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
 
-    private let field = NSSearchField()
+    private let field = NSTextField()
+    private let modeChip = Chip(text: "transcripts", emphasised: true)
     private let table = NSTableView()
     private let listScroll = NSScrollView()
+    private let listEmpty = NSTextField(labelWithString: "")
     private let previewScroll = NSScrollView()
     private let previewText = NSTextView()
-    private let status = NSTextField(labelWithString: "Discovering saved sessions...")
-    private let previewHeading = NSTextField(labelWithString: "Transcript Preview")
-    private let searchButton = NSButton(title: "Search Content", target: nil, action: nil)
-    private let resetButton = NSButton(title: "Metadata", target: nil, action: nil)
-    private let hints = NSTextField(labelWithString: "Return: focus / resume    Control-F: search content    Esc: close")
+    private let status = NSTextField(labelWithString: "Discovering saved sessions…")
+    private let previewHeading = NSTextField(labelWithString: "")
+    private let previewIcon = NSImageView()
+    private var contentHint: HintPair!
+    private var commitHint: HintPair!
+
+    private static let width: CGFloat = 760
+    private static let listWidth: CGFloat = 330
+    private static let rowHeight: CGFloat = 46
+    private static let visibleRows = 7
+    /// Whole rows, plus the scroll view's own padding. An arbitrary height
+    /// leaves a row sliced through the middle at the bottom of the list, which
+    /// reads as a rendering fault rather than as "there is more below".
+    private static let bodyHeight: CGFloat = CGFloat(visibleRows) * rowHeight + 12
+    private static let cornerRadius: CGFloat = 12
 
     var focusView: NSView { field }
 
@@ -94,15 +113,19 @@ final class SessionPalette: NSView, OverlayPanel {
         if window == nil, superview == nil { stop() }
     }
 
+    // MARK: - Chrome
+
     private func build() {
         wantsLayer = true
-        layer?.cornerRadius = 12
+        layer?.cornerRadius = Self.cornerRadius
         layer?.cornerCurve = .continuous
-        let backdrop = SwitcherPalette.makeBackdrop(cornerRadius: 12)
+
+        let backdrop = SwitcherPalette.makeBackdrop(cornerRadius: Self.cornerRadius)
         let scrim = NSView()
         scrim.wantsLayer = true
         scrim.layer?.backgroundColor = PaletteStyle.scrim.cgColor
-        scrim.layer?.cornerRadius = 12
+        scrim.layer?.cornerRadius = Self.cornerRadius
+        scrim.layer?.cornerCurve = .continuous
         scrim.layer?.borderColor = PaletteStyle.border.cgColor
         scrim.layer?.borderWidth = 1
         for view in [backdrop, scrim] {
@@ -116,41 +139,35 @@ final class SessionPalette: NSView, OverlayPanel {
             ])
         }
 
-        field.placeholderString = "Search sessions by title, agent, or directory"
-        field.font = .systemFont(ofSize: 13)
+        // The same field ⌘K has: big, bare, and the only thing in the header.
+        field.font = .systemFont(ofSize: 15, weight: .regular)
+        field.textColor = PaletteStyle.primaryText
+        field.isBordered = false
+        field.drawsBackground = false
         field.focusRingType = .none
         field.delegate = self
-        field.sendsSearchStringImmediately = true
+        field.placeholderAttributedString = NSAttributedString(
+            string: "Search sessions by title, agent, or directory…",
+            attributes: [
+                .foregroundColor: PaletteStyle.tertiaryText,
+                .font: NSFont.systemFont(ofSize: 15),
+            ])
         field.setAccessibilityLabel("Search agent sessions")
 
-        searchButton.target = self
-        searchButton.action = #selector(searchContent)
-        searchButton.bezelStyle = .rounded
-        searchButton.controlSize = .small
-        searchButton.keyEquivalent = "f"
-        searchButton.keyEquivalentModifierMask = .control
-        searchButton.toolTip = "Search saved conversation text for the current query (Control-F)."
-        resetButton.target = self
-        resetButton.action = #selector(resetMetadata)
-        resetButton.bezelStyle = .rounded
-        resetButton.controlSize = .small
-        resetButton.isHidden = true
-
-        for label in [status, previewHeading, hints] {
-            label.font = .systemFont(ofSize: 11)
-            label.textColor = PaletteStyle.tertiaryText
-            label.lineBreakMode = .byTruncatingTail
-        }
-        previewHeading.font = .systemFont(ofSize: 11, weight: .semibold)
-        previewHeading.textColor = PaletteStyle.secondaryText
+        // Says which corpus the list is answering from. Only up during a
+        // content search, because metadata is the resting state and a chip
+        // that is always there says nothing.
+        modeChip.isHidden = true
+        modeChip.toolTip = "Showing sessions whose saved transcript contains the query."
 
         table.headerView = nil
-        table.rowHeight = 46
+        table.rowHeight = Self.rowHeight
         table.style = .plain
         table.backgroundColor = .clear
         table.intercellSpacing = .zero
         table.allowsMultipleSelection = false
         table.refusesFirstResponder = true
+        table.selectionHighlightStyle = .regular
         table.dataSource = self
         table.delegate = self
         table.target = self
@@ -159,10 +176,28 @@ final class SessionPalette: NSView, OverlayPanel {
         column.resizingMask = .autoresizingMask
         table.addTableColumn(column)
         table.setAccessibilityLabel("Live and saved sessions")
+
         listScroll.documentView = table
         listScroll.hasVerticalScroller = true
+        listScroll.scrollerStyle = .overlay
         listScroll.drawsBackground = false
         listScroll.autohidesScrollers = true
+        listScroll.automaticallyAdjustsContentInsets = false
+        listScroll.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+
+        listEmpty.font = .systemFont(ofSize: 12)
+        listEmpty.textColor = PaletteStyle.tertiaryText
+        listEmpty.alignment = .center
+        listEmpty.isHidden = true
+
+        // What Return will do to the highlighted row, stated as a heading over
+        // the thing it will do it to.
+        previewHeading.font = .systemFont(ofSize: 11, weight: .semibold)
+        previewHeading.textColor = PaletteStyle.secondaryText
+        previewHeading.lineBreakMode = .byTruncatingTail
+        previewIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
+        previewIcon.contentTintColor = PaletteStyle.tertiaryText
+        previewIcon.setContentHuggingPriority(.required, for: .horizontal)
 
         previewText.isEditable = false
         previewText.isSelectable = true
@@ -172,56 +207,103 @@ final class SessionPalette: NSView, OverlayPanel {
         previewText.drawsBackground = false
         previewText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         previewText.textColor = PaletteStyle.secondaryText
-        previewText.textContainerInset = NSSize(width: 8, height: 8)
+        previewText.textContainerInset = NSSize(width: 2, height: 4)
         previewText.isVerticallyResizable = true
         previewText.isHorizontallyResizable = false
         previewText.autoresizingMask = [.width]
         previewText.textContainer?.widthTracksTextView = true
-        previewText.textContainer?.containerSize = NSSize(width: 520, height: CGFloat.greatestFiniteMagnitude)
+        previewText.textContainer?.containerSize = NSSize(
+            width: Self.width - Self.listWidth, height: .greatestFiniteMagnitude)
         previewText.setAccessibilityLabel("Plain text transcript preview")
         previewScroll.documentView = previewText
         previewScroll.drawsBackground = false
         previewScroll.hasVerticalScroller = true
+        previewScroll.scrollerStyle = .overlay
         previewScroll.autohidesScrollers = true
 
-        let divider = Divider()
-        for view in [field, searchButton, resetButton, status, listScroll, divider, previewHeading, previewScroll, hints] {
+        status.font = .systemFont(ofSize: 10.5)
+        status.textColor = PaletteStyle.tertiaryText
+        status.lineBreakMode = .byTruncatingTail
+        status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        commitHint = HintPair(keys: ["⏎"], label: "Resume")
+        contentHint = HintPair(keys: ["⌃F"], label: "Search transcripts") { [weak self] in
+            self?.toggleContentSearch()
+        }
+        let hints = NSStackView(views: [
+            commitHint, contentHint, HintPair(keys: ["esc"], label: "Dismiss"),
+        ])
+        hints.orientation = .horizontal
+        hints.spacing = 14
+        hints.setContentHuggingPriority(.required, for: .horizontal)
+
+        let headerDivider = Divider()
+        let bodyDivider = Divider(vertical: true)
+        let footerDivider = Divider()
+
+        for view in [field, modeChip, headerDivider, listScroll, listEmpty, bodyDivider,
+                     previewIcon, previewHeading, previewScroll, footerDivider, status, hints] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+
+        let inset = SwitcherPalette.contentInset
+        let previewLeading = bodyDivider.trailingAnchor
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: SwitcherPalette.width),
-            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            widthAnchor.constraint(equalToConstant: Self.width),
+
+            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             field.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            field.heightAnchor.constraint(equalToConstant: 26),
-            searchButton.leadingAnchor.constraint(equalTo: field.leadingAnchor),
-            searchButton.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 8),
-            resetButton.leadingAnchor.constraint(equalTo: searchButton.trailingAnchor, constant: 8),
-            resetButton.centerYAnchor.constraint(equalTo: searchButton.centerYAnchor),
-            status.leadingAnchor.constraint(equalTo: field.leadingAnchor),
-            status.trailingAnchor.constraint(equalTo: field.trailingAnchor),
-            status.topAnchor.constraint(equalTo: searchButton.bottomAnchor, constant: 6),
-            listScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: SwitcherPalette.rowInset),
-            listScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -SwitcherPalette.rowInset),
-            listScroll.topAnchor.constraint(equalTo: status.bottomAnchor, constant: 8),
-            listScroll.heightAnchor.constraint(equalToConstant: 184),
-            divider.topAnchor.constraint(equalTo: listScroll.bottomAnchor, constant: 6),
-            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
-            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
-            previewHeading.leadingAnchor.constraint(equalTo: field.leadingAnchor),
-            previewHeading.trailingAnchor.constraint(equalTo: field.trailingAnchor),
-            previewHeading.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 10),
-            previewScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            previewScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            previewScroll.topAnchor.constraint(equalTo: previewHeading.bottomAnchor, constant: 4),
-            previewScroll.heightAnchor.constraint(equalToConstant: 132),
-            hints.leadingAnchor.constraint(equalTo: field.leadingAnchor),
-            hints.trailingAnchor.constraint(equalTo: field.trailingAnchor),
-            hints.topAnchor.constraint(equalTo: previewScroll.bottomAnchor, constant: 8),
-            hints.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            field.trailingAnchor.constraint(
+                lessThanOrEqualTo: modeChip.leadingAnchor, constant: -8),
+            modeChip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            modeChip.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+
+            headerDivider.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 15),
+            headerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            headerDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            listScroll.leadingAnchor.constraint(
+                equalTo: leadingAnchor, constant: SwitcherPalette.rowInset),
+            listScroll.widthAnchor.constraint(equalToConstant: Self.listWidth),
+            listScroll.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
+            listScroll.heightAnchor.constraint(equalToConstant: Self.bodyHeight),
+            listEmpty.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
+            listEmpty.centerYAnchor.constraint(equalTo: listScroll.centerYAnchor),
+
+            bodyDivider.leadingAnchor.constraint(
+                equalTo: listScroll.trailingAnchor, constant: SwitcherPalette.rowInset),
+            bodyDivider.topAnchor.constraint(equalTo: listScroll.topAnchor),
+            bodyDivider.bottomAnchor.constraint(equalTo: listScroll.bottomAnchor),
+
+            previewIcon.leadingAnchor.constraint(equalTo: previewLeading, constant: inset),
+            previewIcon.centerYAnchor.constraint(equalTo: previewHeading.centerYAnchor),
+            previewHeading.leadingAnchor.constraint(
+                equalTo: previewIcon.trailingAnchor, constant: 6),
+            previewHeading.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            previewHeading.topAnchor.constraint(equalTo: listScroll.topAnchor, constant: 14),
+
+            previewScroll.leadingAnchor.constraint(equalTo: previewLeading, constant: inset - 2),
+            previewScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            previewScroll.topAnchor.constraint(
+                equalTo: previewHeading.bottomAnchor, constant: 8),
+            previewScroll.bottomAnchor.constraint(
+                equalTo: listScroll.bottomAnchor, constant: -8),
+
+            footerDivider.topAnchor.constraint(equalTo: listScroll.bottomAnchor),
+            footerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            footerDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            status.centerYAnchor.constraint(equalTo: hints.centerYAnchor),
+            status.trailingAnchor.constraint(lessThanOrEqualTo: hints.leadingAnchor, constant: -12),
+            hints.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            hints.topAnchor.constraint(equalTo: footerDivider.bottomAnchor, constant: 9),
+            hints.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
         ])
     }
+
+    // MARK: - Filtering
 
     private func filterMetadata() {
         generation += 1
@@ -232,7 +314,8 @@ final class SessionPalette: NSView, OverlayPanel {
         contentQuery = nil
         contentIncomplete = false
         excerpts = [:]
-        resetButton.isHidden = true
+        modeChip.isHidden = true
+        contentHint.setLabel("Search transcripts")
         let query = field.stringValue
         let corpus = sessions
         // Metadata itself can be large. Debounce and score on a worker too.
@@ -247,9 +330,12 @@ final class SessionPalette: NSView, OverlayPanel {
         updateStatus()
     }
 
-    @objc private func searchContent() {
+    /// ⌃F, and the footer hint that says so. One key rather than two buttons:
+    /// it turns transcript search on, and turns it back off.
+    private func toggleContentSearch() {
+        if contentQuery != nil { filterMetadata(); return }
         let query = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return }
+        guard !query.isEmpty else { NSSound.beep(); return }
         runContentSearch(query)
     }
 
@@ -262,7 +348,8 @@ final class SessionPalette: NSView, OverlayPanel {
         searching = true
         filtering = false
         excerpts = [:]
-        resetButton.isHidden = false
+        modeChip.isHidden = false
+        contentHint.setLabel("Metadata only")
         apply([])
         let corpus = sessions
         searchTask = Task { [weak self] in
@@ -274,8 +361,6 @@ final class SessionPalette: NSView, OverlayPanel {
             self.apply(result.sessions)
         }
     }
-
-    @objc private func resetMetadata() { filterMetadata() }
 
     private func apply(_ matches: [AgentHistory.Session]) {
         let oldID = visible.indices.contains(table.selectedRow) ? visible[table.selectedRow].id : nil
@@ -291,19 +376,30 @@ final class SessionPalette: NSView, OverlayPanel {
     }
 
     private func updateStatus() {
-        if filtering { status.stringValue = "Filtering session metadata..." }
-        else if searching { status.stringValue = "Searching conversation text..." }
+        if filtering { status.stringValue = "Filtering session metadata…" }
+        else if searching { status.stringValue = "Searching conversation text…" }
         else if let contentQuery {
-            status.stringValue = "\(visible.count) content matches for \(AgentHistory.display(contentQuery, limit: 60))"
-                + (contentIncomplete ? " (partial scan)" : "")
+            status.stringValue = "\(visible.count) transcript "
+                + (visible.count == 1 ? "match" : "matches")
+                + " for “\(AgentHistory.display(contentQuery, limit: 40))”"
+                + (contentIncomplete ? " · partial scan" : "")
         } else {
             status.stringValue = "\(visible.count) of \(sessions.count) sessions"
-                + (discovering ? " - discovering saved history..." : "")
-                + (discoveryNotes.isEmpty ? "" : " - some history unavailable")
+                + (discovering ? " · reading saved history…" : "")
+                + (discoveryNotes.isEmpty ? "" : " · some history unavailable")
         }
         status.toolTip = contentIncomplete
             ? "Search reached a time/size limit or encountered unreadable records. Some matches may be missing. " + discoveryNotes
             : discoveryNotes
+
+        // The empty list has to say *why* it is empty: still looking, nothing
+        // matched, or nothing found at all.
+        listEmpty.isHidden = !visible.isEmpty
+        if visible.isEmpty {
+            listEmpty.stringValue = searching || filtering || discovering
+                ? "Looking…"
+                : (field.stringValue.isEmpty ? "No sessions found" : "No sessions match")
+        }
     }
 
     private func loadPreview() {
@@ -311,13 +407,24 @@ final class SessionPalette: NSView, OverlayPanel {
         let version = previewGeneration
         previewTask?.cancel()
         guard visible.indices.contains(table.selectedRow) else {
-            previewHeading.stringValue = "Transcript Preview"
-            previewText.string = searching ? "Searching saved transcripts..." : "No matching sessions."
+            previewIcon.image = nil
+            previewHeading.stringValue = ""
+            previewText.string = ""
+            commitHint.setLabel("Resume")
             return
         }
         let session = visible[table.selectedRow]
-        previewHeading.stringValue = session.isLive ? "Live Terminal - Return to Focus" : "Saved Session - Return to Resume"
-        previewText.string = "Loading preview..."
+        let live = session.isLive
+        previewIcon.image = NSImage(
+            systemSymbolName: live ? "bolt.horizontal.circle" : "clock.arrow.circlepath",
+            accessibilityDescription: nil)
+        previewHeading.stringValue = live
+            ? "Live terminal — Return jumps to it"
+            : (session.resume == nil
+                ? "Saved session — no transcript to resume from"
+                : "Saved session — Return resumes it in a new workspace")
+        commitHint.setLabel(live ? "Focus" : "Resume")
+        previewText.string = "Loading preview…"
         let excerpt = excerpts[session.id]
         previewTask = Task { [weak self] in
             let body = await AgentHistory.preview(session)
@@ -327,8 +434,16 @@ final class SessionPalette: NSView, OverlayPanel {
         }
     }
 
+    /// Return.
+    ///
+    /// `filtering` is deliberately not a blocker. It is set for the 90ms the
+    /// metadata debounce is in flight, and a Return that lands inside that
+    /// window used to be swallowed — you typed a query, saw the row you wanted
+    /// already highlighted, pressed Return and nothing at all happened. The
+    /// highlighted row is a real row either way; only a content search, which
+    /// empties the list while it runs, has nothing to commit.
     @objc private func commit() {
-        guard !dismissed, !searching, !filtering, visible.indices.contains(table.selectedRow) else { return }
+        guard !dismissed, !searching, visible.indices.contains(table.selectedRow) else { return }
         let session = visible[table.selectedRow]
         guard session.isLive || session.resume != nil else { NSSound.beep(); return }
         stop()
@@ -355,15 +470,34 @@ final class SessionPalette: NSView, OverlayPanel {
     override func cancelOperation(_ sender: Any?) { cancel() }
 }
 
-extension SessionPalette: NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
+extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     func controlTextDidChange(_ obj: Notification) { filterMetadata() }
+
+    /// The panel is dark whatever the terminal's theme is, and the shared field
+    /// editor inherits the *window's* appearance — so on a light colourscheme
+    /// both the caret and the selection have to be stated or they come out
+    /// black on black. Same reasoning as ⌘K.
+    func controlTextDidBeginEditing(_ notification: Notification) {
+        guard let editor = field.currentEditor() as? NSTextView else { return }
+        editor.insertionPointColor = PaletteStyle.primaryText
+        editor.selectedTextAttributes = [
+            .backgroundColor: Settings.shared.effectiveAccent.withAlphaComponent(0.5),
+            .foregroundColor: PaletteStyle.primaryText,
+        ]
+    }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.moveUp(_:)): move(-1)
         case #selector(NSResponder.moveDown(_:)): move(1)
-        case #selector(NSResponder.insertNewline(_:)): commit()
+        case #selector(NSResponder.insertNewline(_:)),
+             #selector(NSResponder.insertLineBreak(_:)): commit()
         case #selector(NSResponder.cancelOperation(_:)): cancel()
+        // ⌃F. The field editor turns it into forward-one-character, which is
+        // the one emacs binding worth spending here: this field is a query, not
+        // a document, and transcript search needs a key that isn't already ⌘F
+        // in the terminal underneath.
+        case #selector(NSResponder.moveForward(_:)): toggleContentSearch()
         default: return false
         }
         return true
@@ -378,23 +512,49 @@ extension SessionPalette: NSSearchFieldDelegate, NSTableViewDataSource, NSTableV
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard visible.indices.contains(row) else { return nil }
         let session = visible[row]
-        let name = NSTextField(labelWithString: AgentHistory.display(session.title, limit: 180).replacingOccurrences(of: "\n", with: " "))
+
+        let name = NSTextField(labelWithString: AgentHistory
+            .display(session.title, limit: 180)
+            .replacingOccurrences(of: "\n", with: " "))
         name.font = .systemFont(ofSize: 13, weight: .medium)
         name.textColor = PaletteStyle.primaryText
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let directory = AgentHistory.display(session.directory, limit: 300).replacingOccurrences(of: "\n", with: " ")
-        let date = session.updatedAt == .distantPast ? "" : session.updatedAt.formatted(date: .abbreviated, time: .omitted)
-        let subtitle = NSTextField(labelWithString: "\(session.agent?.name ?? "Terminal")  \(directory)  \(date)")
+
+        // Agent, directory and date on one line, in that order — what it was,
+        // where it was, when it was. The path is abbreviated at the front
+        // because the tail is the part that identifies the project.
+        let directory = AgentHistory
+            .display(session.directory, limit: 300)
+            .replacingOccurrences(of: "\n", with: " ")
+        let detail = [session.agent?.name ?? "Terminal", Self.abbreviate(directory), Self.when(session.updatedAt)]
+            .filter { !$0.isEmpty }
+            .joined(separator: "  ·  ")
+        let subtitle = NSTextField(labelWithString: detail)
         subtitle.font = .systemFont(ofSize: 11)
         subtitle.textColor = PaletteStyle.tertiaryText
         subtitle.lineBreakMode = .byTruncatingMiddle
         subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
         let text = NSStackView(views: [name, subtitle])
         text.orientation = .vertical
         text.alignment = .leading
         text.spacing = 3
-        let cluster = NSStackView(views: [Chip(text: session.isLive ? "live" : "saved", emphasised: session.isLive)])
+
+        // Only live rows are chipped. "saved" on every other row was a label
+        // saying what the list is, repeated once per line; live is the one that
+        // changes what Return does.
+        let cluster = NSStackView()
+        cluster.orientation = .horizontal
+        cluster.alignment = .centerY
+        cluster.spacing = 6
+        if session.isLive {
+            cluster.addArrangedSubview(Chip(text: "live", emphasised: true))
+        } else if session.resume == nil {
+            cluster.addArrangedSubview(
+                Chip(symbol: "slash.circle", hint: "No transcript to resume from"))
+        }
+
         let image: NSImage?
         switch session.agent {
         case .claude: image = AgentIcon.claude.image
@@ -405,5 +565,28 @@ extension SessionPalette: NSSearchFieldDelegate, NSTableViewDataSource, NSTableV
         let view = PaletteRow(icon: IconTile(image: image, symbol: "terminal"), text: text, cluster: cluster)
         view.toolTip = "\(name.stringValue)\n\(directory)\n\(session.resume?.sessionID ?? session.id)"
         return view
+    }
+
+    /// `~` for home, and no more of the path than a row can show.
+    private static func abbreviate(_ path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
+
+    /// Today and yesterday by name, this week by weekday, older by date. A
+    /// column of identical "11 Sep 2026"s tells you nothing about which session
+    /// is the one you were just in.
+    private static func when(_ date: Date) -> String {
+        guard date != .distantPast else { return "" }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return date.formatted(date: .omitted, time: .shortened)
+        }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        if let week = calendar.date(byAdding: .day, value: -6, to: Date()), date > week {
+            return date.formatted(.dateTime.weekday(.wide))
+        }
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 }

@@ -201,7 +201,11 @@ final class SwitcherPalette: NSView, OverlayPanel {
     /// `NSGlassEffectView` is macOS 26 and later; Rune runs on 13. The fallback
     /// is the same idea one generation earlier, and because the scrim carries
     /// the contrast either way, the two look closer than they otherwise would.
-    static func makeBackdrop(cornerRadius: CGFloat) -> NSView {
+    /// - Parameter behindWindow: whether the panel is a window of its own. ⌘J
+    ///   floats in a borderless panel over every terminal window, so the thing
+    ///   worth sampling is genuinely behind the *window*; ⌘K and ⌘L are views
+    ///   inside the terminal window and sample within it.
+    static func makeBackdrop(cornerRadius: CGFloat, behindWindow: Bool = false) -> NSView {
         if #available(macOS 26, *) {
             let glass = NSGlassEffectView()
             glass.cornerRadius = cornerRadius
@@ -212,7 +216,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
         // `.withinWindow`, not `.behindWindow`: the thing worth sampling is the
         // terminal underneath the panel, which is a sibling view in this same
         // window, not the desktop behind the whole thing.
-        vibrancy.blendingMode = .withinWindow
+        vibrancy.blendingMode = behindWindow ? .behindWindow : .withinWindow
         vibrancy.material = .hudWindow
         vibrancy.state = .active
         vibrancy.wantsLayer = true
@@ -447,10 +451,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
     /// particular to Rune harder to pick out for being in a crowd. The keys
     /// themselves are unchanged; it's the sentence that was redundant.
     private static func hintBar() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 14
-        for (keys, label) in [
+        PaletteHints.bar([
             (["⌘R"], "Rename"),
             (["⌘P"], "Pin"),
             (["→"], "Notify"),
@@ -460,21 +461,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
             // esc closes the panel. Two rows both labelled Close would be a
             // riddle in the one place that exists to answer them.
             (["esc"], "Dismiss"),
-        ] {
-            let text = NSTextField(labelWithString: label)
-            text.font = .systemFont(ofSize: 10.5)
-            text.textColor = PaletteStyle.tertiaryText
-
-            let caps = NSStackView(views: keys.map { Keycap($0) })
-            caps.orientation = .horizontal
-            caps.spacing = 2
-
-            let pair = NSStackView(views: [caps, text])
-            pair.orientation = .horizontal
-            pair.spacing = 5
-            stack.addArrangedSubview(pair)
-        }
-        return stack
+        ])
     }
 
     // MARK: - Filtering
@@ -939,6 +926,21 @@ final class PaletteRow: NSView {
 /// the list is scanned constantly, and a saturated bar under every keypress is
 /// tiring.
 final class PaletteRowView: NSTableRowView {
+    /// A selected row in a list that does *not* hold the arrow keys.
+    ///
+    /// ⌘J has two of them side by side, and it has to be obvious which one is
+    /// listening. Fading the whole inactive table to 65% was the old answer and
+    /// it faded the text along with everything else, so the column you weren't
+    /// in became the column you couldn't read. Now both lists stay legible and
+    /// only the highlight says which is live: a filled pill here, a thin
+    /// outline there.
+    var isDimmed = false {
+        didSet {
+            guard isDimmed != oldValue else { return }
+            needsDisplay = true
+        }
+    }
+
     override var isEmphasized: Bool {
         get { false }
         set { _ = newValue }
@@ -946,8 +948,16 @@ final class PaletteRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        PaletteStyle.selection.setFill()
-        NSBezierPath(roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7).fill()
+        let pill = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7)
+        guard isDimmed else {
+            PaletteStyle.selection.setFill()
+            pill.fill()
+            return
+        }
+        PaletteStyle.border.setStroke()
+        pill.lineWidth = 1
+        pill.stroke()
     }
 }
 
@@ -980,13 +990,128 @@ final class PanelGrip: NSView {
 
 /// A hairline that reads as a seam rather than as a system separator.
 final class Divider: NSView {
+    private let vertical: Bool
+
+    init(vertical: Bool = false) {
+        self.vertical = vertical
+        super.init(frame: .zero)
+        // A hairline has to *insist* on being a hairline. A vertical one sits
+        // between two panes with nothing else fixing the split, so at the
+        // default hugging priority Auto Layout is free to solve the ambiguity
+        // by handing the divider a third of the panel — which it does, and what
+        // you get is a grey slab where a seam was meant to be.
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
     override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: 1)
+        vertical
+            ? NSSize(width: 1, height: NSView.noIntrinsicMetric)
+            : NSSize(width: NSView.noIntrinsicMetric, height: 1)
     }
 
     override func draw(_ dirtyRect: NSRect) {
         PaletteStyle.divider.setFill()
         bounds.fill()
+    }
+}
+
+/// One `⌘R Rename`-shaped hint: the key drawn as a key, then what it does.
+///
+/// A view rather than a pair of loose labels because some of them are also
+/// buttons — ⌃F in the session picker is a hint you can click — and a hint that
+/// responds needs somewhere to put the hover.
+@MainActor
+final class HintPair: NSView {
+    private let action: (() -> Void)?
+    private let label = NSTextField(labelWithString: "")
+    private var hovering = false { didSet { refresh() } }
+
+    init(keys: [String], label text: String, action: (() -> Void)? = nil) {
+        self.action = action
+        super.init(frame: .zero)
+
+        wantsLayer = true
+        layer?.cornerRadius = 5
+        layer?.cornerCurve = .continuous
+
+        label.stringValue = text
+        label.font = .systemFont(ofSize: 10.5)
+        label.textColor = PaletteStyle.tertiaryText
+
+        let caps = NSStackView(views: keys.map { Keycap($0) })
+        caps.orientation = .horizontal
+        caps.spacing = 2
+
+        let pair = NSStackView(views: [caps, label])
+        pair.orientation = .horizontal
+        pair.spacing = 5
+        pair.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pair)
+
+        // Only a clickable hint takes padding; a plain one has to line up with
+        // its neighbours, which are bare.
+        let inset: CGFloat = action == nil ? 0 : 5
+        NSLayoutConstraint.activate([
+            pair.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            pair.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            pair.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            pair.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    /// Say what the hint does now, for the ones whose meaning toggles.
+    func setLabel(_ text: String) {
+        guard label.stringValue != text else { return }
+        label.stringValue = text
+    }
+
+    private func refresh() {
+        layer?.backgroundColor = (hovering && action != nil ? PaletteStyle.chip : .clear).cgColor
+        label.textColor = hovering && action != nil
+            ? PaletteStyle.secondaryText : PaletteStyle.tertiaryText
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        guard action != nil else { return }
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .inVisibleRect, .activeInActiveApp],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { action?() }
+    override func resetCursorRects() {
+        guard action != nil else { return }
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+/// The row of hints along the bottom of a picker.
+///
+/// Every panel gets the same bar built the same way, so ⌘K, ⌘J and ⌘L teach
+/// their keys in one voice instead of three — one of them used to be a
+/// sentence of grey prose sitting beside the title.
+@MainActor
+enum PaletteHints {
+    static func bar(_ items: [(keys: [String], label: String)]) -> NSStackView {
+        let stack = NSStackView(views: items.map { HintPair(keys: $0.keys, label: $0.label) })
+        stack.orientation = .horizontal
+        stack.spacing = 14
+        return stack
     }
 }
 

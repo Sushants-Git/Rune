@@ -442,13 +442,25 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// Height reserved at the top of the window. The title bar is transparent
     /// and the content is full-size, so the terminal has to keep clear of the
     /// window controls itself.
-    private static let titlebarInset: CGFloat = 28
+    private static let titlebarInset: CGFloat = TabBar.height
 
-    /// The area a terminal surface occupies, below the window controls.
+    /// The area a terminal surface occupies: a card inset from the window's
+    /// edges, below the strip.
+    ///
+    /// The inset is the whole visual change. A terminal that runs to the
+    /// window's edges has no edges of its own, so every piece of chrome is
+    /// something sitting *on* the terminal; held off by a margin, the terminal
+    /// becomes a thing in a window and the strip above it becomes the window's
+    /// rather than the terminal's hat. The margin above is larger because the
+    /// strip's own bottom padding is already part of it.
     private var terminalFrame: NSRect {
-        var frame = container.bounds
-        frame.size.height = max(0, frame.size.height - Self.titlebarInset)
-        return frame
+        let inset = Chrome.cardInset
+        let frame = container.bounds
+        return NSRect(
+            x: inset,
+            y: inset,
+            width: max(0, frame.width - inset * 2),
+            height: max(0, frame.height - Self.titlebarInset - inset * 2))
     }
 
     private func layoutContent() {
@@ -526,6 +538,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tab.split(surface, with: view, direction: direction)
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
+        // Splitting is the moment pane headers appear, so they need the
+        // terminal's colour now — `syncChrome` won't send it, because as far as
+        // it is concerned nothing about the colour has changed.
+        tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
         focus(view)
         syncTabBar()
         overlay?.palette?.reload()
@@ -705,6 +721,14 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         if tab.view.superview !== container {
             container.addSubview(tab.view, positioned: .below, relativeTo: tabBar)
         }
+        // Here rather than only in `syncChrome`, which short-circuits when the
+        // colour hasn't moved — a tab made after the last theme change would
+        // otherwise come up with no edge at all.
+        tab.applyCardEdge(cardEdge)
+        tab.applyDividerTint(dividerColor)
+        tab.applyInactiveWash(inactivePaneWash)
+        tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
+        tab.refreshPaneHeaders()
         tab.view.frame = terminalFrame
         tab.view.layoutSubtreeIfNeeded()
 
@@ -806,6 +830,9 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             active: activeTab,
             workspaceName: activeWorkspace?.customName,
             isZoomed: activeTab?.isZoomed ?? false)
+        // Pane headers say what each split is running, so they go stale for the
+        // same reasons the strip does and are refreshed alongside it.
+        activeTab?.refreshPaneHeaders()
     }
 
     /// What an idle split pane is washed with: the terminal's own background,
@@ -820,6 +847,18 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         let background = activeSurface?.backgroundColor ?? ghostty.backgroundColor
         let sunk = background.blended(withFraction: 0.35, of: .black) ?? .black
         return sunk.withAlphaComponent(0.3)
+    }
+
+    /// The hairline around the terminal card.
+    ///
+    /// Light over a dark theme, dark over a light one, and faint either way:
+    /// the ground already differs from the card, so the line only has to make
+    /// the corner legible, not draw a box.
+    private var cardEdge: NSColor {
+        let background = activeSurface?.backgroundColor ?? ghostty.backgroundColor
+        return background.isDark
+            ? NSColor.white.withAlphaComponent(0.14)
+            : NSColor.black.withAlphaComponent(0.12)
     }
 
     /// Split dividers are a seam in the terminal, not window chrome, so they're
@@ -854,11 +893,21 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // sheet of this colour, so a renderer faithfully drawing at 70% alpha
         // still comes out looking like 100%. The window has to be told.
         let translucent = opacity < 0.999
-        let sheet = translucent ? color.withAlphaComponent(opacity) : color
+        // The ground the card sits on, not the terminal's own colour. The two
+        // used to be the same, which is what made the strip read as part of the
+        // terminal rather than as the window around it.
+        let terminal = translucent ? color.withAlphaComponent(opacity) : color
+        let sheet = Chrome.ground(for: terminal)
         window?.isOpaque = !translucent
         window?.backgroundColor = sheet
         container.layer?.backgroundColor = sheet.cgColor
-        tabBar.backgroundColor = sheet
+        // The strip is handed the terminal's colour, not the ground: it paints
+        // itself on the ground but mixes its chips from this, so the active tab
+        // matches the card below it.
+        tabBar.backgroundColor = terminal
+        for workspace in workspaces {
+            for tab in workspace.tabs { tab.applyCardEdge(cardEdge) }
+        }
         activeTab?.applyDividerTint(dividerColor)
         activeTab?.applyInactiveWash(inactivePaneWash)
         activeTab?.applySearchTint(color)
@@ -1051,9 +1100,23 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 title: "Window \(controller.windowNumber)",
                 workspaces: controller.orderedWorkspaces.map(\.title),
                 isCurrent: controller === self,
+                // A window is worth recognising by what it is showing, the same
+                // way a ⌘K row is. `macwindow` on every line made three windows
+                // look like three of the same thing.
+                icon: controller.activeWorkspace.flatMap(Self.icon(for:)),
                 entries: entries[index].map { workspace, tab in
-                    WindowPalette.Entry(title: workspace.title, subtitle: tab.title,
-                                        isCurrent: workspace === controller.activeWorkspace && tab === controller.activeTab)
+                    // The second line says which *tab* this is, but only where
+                    // there is more than one — repeating a one-tab workspace's
+                    // own name underneath itself said nothing twice. Where it
+                    // says nothing useful, it says where the workspace is.
+                    let position = workspace.tabs.firstIndex { $0 === tab }
+                    let subtitle = workspace.tabs.count > 1
+                        ? "tab \((position ?? 0) + 1) · \(tab.title)"
+                        : Self.subtitle(for: workspace)
+                    return WindowPalette.Entry(
+                        title: workspace.title, subtitle: subtitle,
+                        isCurrent: workspace === controller.activeWorkspace && tab === controller.activeTab,
+                        icon: Self.icon(for: tab))
                 })
         }
 
@@ -1097,6 +1160,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         host.backgroundColor = .clear
         host.level = .floating
         host.hidesOnDeactivate = true
+        // ⌘J is the one picker that lives in a window of its own, and a window
+        // Rune never gave an appearance to follows *macOS*. So on a Mac set to
+        // Light it came up as white glass while ⌘K and ⌘L, which are views
+        // inside the terminal window, stayed dark — three pickers, two themes.
+        // The panel's own colours already answer this question; the window has
+        // to be told the same answer.
+        host.appearance = NSAppearance(named: PaletteStyle.isLight ? .aqua : .darkAqua)
         let overlay = SwitcherOverlay(panel: palette)
         host.contentView = overlay
         self.overlay = overlay
@@ -1241,11 +1311,23 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// every project icon in the list with the same fish — a row that used to
     /// tell you *which* project you were looking at would stop doing so.
     private static func icon(for workspace: Workspace) -> NSImage? {
-        let surface = workspace.activeTab?.focused
-        if let agent = surface?.agent { return agent.image }
-        let program = surface?.program
+        guard let tab = workspace.activeTab else { return nil }
+        return icon(for: tab)
+    }
+
+    /// The same question asked of one tab, for the lists that show tabs rather
+    /// than workspaces — ⌘J's right-hand column, and the tab strip.
+    static func icon(for tab: Tab) -> NSImage? {
+        guard let surface = tab.focused ?? tab.surfaces.first else { return nil }
+        return mark(for: surface)
+    }
+
+    /// And of one terminal, for a split pane's own header.
+    static func mark(for surface: GhosttySurfaceView) -> NSImage? {
+        if let agent = surface.agent { return agent.image }
+        let program = surface.program
         if let program, !program.isAmbient { return program.image }
-        if let project = workspace.directory.flatMap(ProjectIcon.image(forDirectory:)) {
+        if let project = surface.workingDirectory.flatMap(ProjectIcon.image(forDirectory:)) {
             return project
         }
         return program?.image

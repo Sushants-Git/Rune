@@ -47,7 +47,9 @@ updates itself after that.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
-down.
+down. Split panes get a header naming what each one is running, with the
+controls that act on that pane — split, zoom, close — on it. A single pane
+doesn't: there is nothing to tell apart, so it keeps the row.
 
 Every row says what its agent is doing: `working` with a clock, `your turn` when
 it stops, nothing when there's nothing worth saying. If you'd rather not watch
@@ -87,6 +89,11 @@ the pane and `↑` / `↓` chooses a row. Windows, workspaces and tabs preview
 behind the picker. `Enter` commits; `Escape` restores where you started.
 Existing custom window shortcuts are retained. If a custom binding already
 uses `⌘L`, assign Agent Sessions a free shortcut in Settings.
+
+`⌘L` lists every agent session it can find, live ones first. `Enter` jumps to a
+live one, or resumes a saved one in a new workspace. Typing filters on title,
+agent and directory; `⌃F` searches the saved transcripts themselves, and `⌃F`
+again comes back.
 
 ## The `rune` command
 

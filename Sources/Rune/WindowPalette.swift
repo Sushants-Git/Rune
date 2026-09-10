@@ -175,6 +175,9 @@ final class WindowPalette: NSView, OverlayPanel {
         /// The workspaces in it, in the order that window lists them.
         let workspaces: [String]
         let isCurrent: Bool
+        /// What that window is showing, so a row can be recognised rather than
+        /// counted. Same mark ⌘K puts on the workspace.
+        var icon: NSImage? = nil
         var entries: [Entry] = []
     }
 
@@ -182,13 +185,14 @@ final class WindowPalette: NSView, OverlayPanel {
         let title: String
         let subtitle: String
         let isCurrent: Bool
+        var icon: NSImage? = nil
     }
 
     private let panel = NSView()
-    private let backdrop = NSVisualEffectView()
+    private let backdrop: NSView
     private let scrim = NSView()
-    private let title = NSTextField(labelWithString: "Windows / Workspaces & Tabs")
-    private let subtitle = NSTextField(labelWithString: "")
+    private let windowsHeader = NSTextField(labelWithString: "Windows")
+    private let entriesHeader = NSTextField(labelWithString: "Workspaces & tabs")
     private let tableView = WindowPickerTable()
     private let scrollView = NSScrollView()
     private let detailTable = WindowPickerTable()
@@ -207,6 +211,7 @@ final class WindowPalette: NSView, OverlayPanel {
     /// rows whose contents sit slightly wrong — which is most of why this
     /// looked off beside the switcher it is supposed to match.
     private static let width: CGFloat = 720
+    private static let listWidth: CGFloat = 268
     private static let rowHeight: CGFloat = 44
     private static let maxVisibleRows = 7
 
@@ -218,6 +223,10 @@ final class WindowPalette: NSView, OverlayPanel {
         self.onCommit = onCommit
         self.onPreview = onPreview
         self.onCancel = onCancel
+        // A window of its own, so what is worth sampling really is behind the
+        // whole window rather than inside it.
+        self.backdrop = SwitcherPalette.makeBackdrop(
+            cornerRadius: Self.cornerRadius, behindWindow: true)
         super.init(frame: .zero)
         build()
     }
@@ -239,17 +248,14 @@ final class WindowPalette: NSView, OverlayPanel {
         panel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(panel)
 
-        backdrop.material = .hudWindow
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
-        backdrop.wantsLayer = true
-        backdrop.layer?.cornerRadius = Self.cornerRadius
-        backdrop.layer?.cornerCurve = .continuous
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(backdrop)
 
+        // The same scrim ⌘K and ⌘L use, rather than an opaque slab. It was the
+        // one picker that painted itself solid, which is why it read as a
+        // different piece of software from the other two.
         scrim.wantsLayer = true
-        scrim.layer?.backgroundColor = PaletteStyle.background.cgColor
+        scrim.layer?.backgroundColor = PaletteStyle.scrim.cgColor
         scrim.layer?.cornerRadius = Self.cornerRadius
         scrim.layer?.cornerCurve = .continuous
         scrim.layer?.borderWidth = 1
@@ -257,61 +263,74 @@ final class WindowPalette: NSView, OverlayPanel {
         scrim.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(scrim, positioned: .above, relativeTo: backdrop)
 
-        title.font = .systemFont(ofSize: 13, weight: .semibold)
-        title.textColor = PaletteStyle.primaryText
-        title.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(title)
+        // One header per column, each sitting over its own rows. There used to
+        // be a single "Windows / Workspaces & Tabs" title over both of them,
+        // which named the two lists in the one place that could not show you
+        // where either began.
+        for header in [windowsHeader, entriesHeader] {
+            header.font = .systemFont(ofSize: 11, weight: .semibold)
+            header.textColor = PaletteStyle.tertiaryText
+            header.translatesAutoresizingMaskIntoConstraints = false
+            panel.addSubview(header)
+        }
 
-        subtitle.font = .systemFont(ofSize: 11)
-        subtitle.textColor = PaletteStyle.tertiaryText
-        subtitle.stringValue = "← → pane   ↑ ↓ preview   Return open   Esc cancel"
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(subtitle)
-
-        tableView.headerView = nil
-        tableView.rowHeight = Self.rowHeight
-        tableView.backgroundColor = .clear
-        tableView.selectionHighlightStyle = .regular
-        // The same as ⌘K, and it has to be: `.inset` adds AppKit's own
-        // horizontal padding on top of the row's, so the icons sat further in
-        // than the header above them, and the trailing chips further out.
-        tableView.style = .plain
-        tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView.dataSource = self
-        tableView.delegate = self
-        tableView.target = self
-        tableView.doubleAction = #selector(commit)
+        for table in [tableView, detailTable] {
+            table.headerView = nil
+            table.rowHeight = Self.rowHeight
+            table.backgroundColor = .clear
+            // Stays `.regular` so rows are asked to draw a selection at all;
+            // PaletteRowView then replaces AppKit's full-bleed bar.
+            table.selectionHighlightStyle = .regular
+            // The same as ⌘K, and it has to be: `.inset` adds AppKit's own
+            // horizontal padding on top of the row's, so the icons sat further
+            // in than the header above them, and the trailing chips further out.
+            table.style = .plain
+            table.intercellSpacing = NSSize(width: 0, height: 0)
+            table.dataSource = self
+            table.delegate = self
+            table.target = self
+            table.doubleAction = #selector(commit)
+        }
         tableView.addTableColumn(NSTableColumn(identifier: .init("window")))
-
-        scrollView.documentView = tableView
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = items.count > Self.maxVisibleRows
-        scrollView.automaticallyAdjustsContentInsets = false
-        scrollView.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(scrollView)
-
-        detailTable.headerView = nil
-        detailTable.rowHeight = Self.rowHeight
-        detailTable.backgroundColor = .clear
-        detailTable.style = .plain
-        detailTable.intercellSpacing = .zero
-        detailTable.dataSource = self
-        detailTable.delegate = self
-        detailTable.target = self
-        detailTable.doubleAction = #selector(commit)
         detailTable.addTableColumn(NSTableColumn(identifier: .init("entry")))
-        detailScroll.documentView = detailTable
-        detailScroll.drawsBackground = false
-        detailScroll.hasVerticalScroller = true
-        detailScroll.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(detailScroll)
+
+        for (scroll, table) in [(scrollView, tableView), (detailScroll, detailTable)] {
+            scroll.documentView = table
+            scroll.drawsBackground = false
+            scroll.hasVerticalScroller = true
+            scroll.scrollerStyle = .overlay
+            scroll.autohidesScrollers = true
+            // The gap above the first row and the gap below the last both come
+            // from here, so they cannot drift apart.
+            scroll.automaticallyAdjustsContentInsets = false
+            scroll.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
+            scroll.translatesAutoresizingMaskIntoConstraints = false
+            panel.addSubview(scroll)
+        }
 
         let headerDivider = Divider()
-        headerDivider.translatesAutoresizingMaskIntoConstraints = false
-        panel.addSubview(headerDivider)
+        let columnDivider = Divider(vertical: true)
+        let footerDivider = Divider()
+        let hints = PaletteHints.bar([
+            (["←", "→"], "Pane"),
+            (["↑", "↓"], "Preview"),
+            (["⏎"], "Open"),
+            (["esc"], "Dismiss"),
+        ])
+        for view in [headerDivider, columnDivider, footerDivider, hints] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            panel.addSubview(view)
+        }
 
-        let rows = Self.maxVisibleRows
+        // The list is as tall as it needs to be, capped. Seven rows' worth of
+        // panel opened for two windows holding one workspace each, and most of
+        // what ⌘J showed was empty space with a hairline round it.
+        let deepest = items.map(\.entries.count).max() ?? 0
+        let rows = min(max(max(items.count, deepest), 1), Self.maxVisibleRows)
+        // Where a row's contents actually start, so a header can line up with
+        // the icons underneath it rather than with the panel's edge.
+        let rowText = SwitcherPalette.contentInset - SwitcherPalette.rowInset
+
         NSLayoutConstraint.activate([
             // The panel *is* this view's size. The overlay places this view by
             // its centre and its top and gives it nothing else, so anything
@@ -332,34 +351,52 @@ final class WindowPalette: NSView, OverlayPanel {
             scrim.topAnchor.constraint(equalTo: panel.topAnchor),
             scrim.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
 
-            title.leadingAnchor.constraint(
-                equalTo: panel.leadingAnchor, constant: SwitcherPalette.contentInset),
-            title.topAnchor.constraint(equalTo: panel.topAnchor, constant: 16),
+            windowsHeader.leadingAnchor.constraint(
+                equalTo: scrollView.leadingAnchor, constant: rowText),
+            windowsHeader.topAnchor.constraint(equalTo: panel.topAnchor, constant: 14),
+            entriesHeader.leadingAnchor.constraint(
+                equalTo: detailScroll.leadingAnchor, constant: rowText),
+            entriesHeader.firstBaselineAnchor.constraint(
+                equalTo: windowsHeader.firstBaselineAnchor),
 
-            headerDivider.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 15),
+            headerDivider.topAnchor.constraint(equalTo: windowsHeader.bottomAnchor, constant: 12),
             headerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
             headerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
-            subtitle.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
-            subtitle.firstBaselineAnchor.constraint(equalTo: title.firstBaselineAnchor),
 
             scrollView.leadingAnchor.constraint(
                 equalTo: panel.leadingAnchor, constant: SwitcherPalette.rowInset),
-            scrollView.widthAnchor.constraint(equalToConstant: 260),
-            detailScroll.leadingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: 8),
-            detailScroll.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -SwitcherPalette.rowInset),
-            detailScroll.topAnchor.constraint(equalTo: scrollView.topAnchor),
-            detailScroll.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
-            // No constant: the padding above the first row and below the last
-            // both come from the scroll view's own content inset, so they
-            // cannot drift apart.
+            scrollView.widthAnchor.constraint(equalToConstant: Self.listWidth),
             scrollView.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
             scrollView.heightAnchor.constraint(
                 equalToConstant: CGFloat(rows) * Self.rowHeight + 12),
-            scrollView.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+
+            columnDivider.leadingAnchor.constraint(
+                equalTo: scrollView.trailingAnchor, constant: SwitcherPalette.rowInset),
+            columnDivider.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            columnDivider.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+
+            detailScroll.leadingAnchor.constraint(
+                equalTo: columnDivider.trailingAnchor, constant: SwitcherPalette.rowInset),
+            detailScroll.trailingAnchor.constraint(
+                equalTo: panel.trailingAnchor, constant: -SwitcherPalette.rowInset),
+            detailScroll.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            detailScroll.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+
+            footerDivider.topAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            footerDivider.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            footerDivider.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            hints.topAnchor.constraint(equalTo: footerDivider.bottomAnchor, constant: 9),
+            hints.trailingAnchor.constraint(
+                equalTo: panel.trailingAnchor, constant: -SwitcherPalette.contentInset),
+            hints.leadingAnchor.constraint(
+                greaterThanOrEqualTo: panel.leadingAnchor,
+                constant: SwitcherPalette.contentInset),
+            hints.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -9),
         ])
 
         let current = items.firstIndex(where: \.isCurrent) ?? 0
         tableView.selectRowIndexes(IndexSet(integer: current), byExtendingSelection: false)
+        syncActivePane()
     }
 
     @objc private func commit() {
@@ -375,12 +412,29 @@ final class WindowPalette: NSView, OverlayPanel {
         table.scrollRowToVisible(next)
     }
 
+    /// Say which column the arrow keys are in, without making the other one
+    /// harder to read.
+    ///
+    /// This used to drop the idle table to 65% opacity, which faded its text
+    /// along with its highlight — the column you were not in became the column
+    /// you could not read, in a panel whose whole job is being read. Now the
+    /// live column keeps the filled pill, the idle one gets an outline, and the
+    /// header of whichever is live brightens.
+    private func syncActivePane() {
+        windowsHeader.textColor = rightPane ? PaletteStyle.tertiaryText : PaletteStyle.secondaryText
+        entriesHeader.textColor = rightPane ? PaletteStyle.secondaryText : PaletteStyle.tertiaryText
+        for (table, live) in [(tableView, !rightPane), (detailTable, rightPane)] {
+            table.enumerateAvailableRowViews { view, _ in
+                (view as? PaletteRowView)?.isDimmed = !live
+            }
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 123, 124:
             rightPane = event.keyCode == 124
-            tableView.alphaValue = rightPane ? 0.65 : 1
-            detailTable.alphaValue = rightPane ? 1 : 0.65
+            syncActivePane()
             onPreview(tableView.selectedRow, rightPane ? detailTable.selectedRow : nil)
         case 126: move(by: -1)          // up
         case 125: move(by: 1)           // down
@@ -412,14 +466,15 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
             rightPane = true
         }
         updating = false
-        tableView.alphaValue = rightPane ? 0.65 : 1
-        detailTable.alphaValue = rightPane ? 1 : 0.65
+        syncActivePane()
         window?.makeFirstResponder(self)
         onPreview(tableView.selectedRow, rightPane ? detailTable.selectedRow : nil)
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        PaletteRowView()
+        let view = PaletteRowView()
+        view.isDimmed = (tableView === detailTable) != rightPane
+        return view
     }
 
     func tableView(
@@ -431,15 +486,30 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
             name.font = .systemFont(ofSize: 13, weight: .medium)
             name.textColor = PaletteStyle.primaryText
             name.lineBreakMode = .byTruncatingTail
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let detail = NSTextField(labelWithString: entry.subtitle)
             detail.font = .systemFont(ofSize: 11)
             detail.textColor = PaletteStyle.tertiaryText
-            detail.lineBreakMode = .byTruncatingTail
+            detail.lineBreakMode = .byTruncatingHead
+            detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let text = NSStackView(views: [name, detail])
             text.orientation = .vertical
             text.alignment = .leading
             text.spacing = 3
-            return PaletteRow(icon: IconTile(image: nil as NSImage?, symbol: "terminal"), text: text, cluster: NSStackView())
+            let cluster = NSStackView()
+            cluster.orientation = .horizontal
+            cluster.alignment = .centerY
+            cluster.spacing = 6
+            if entry.isCurrent {
+                cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
+            }
+            // The same mark ⌘K puts on the row. Every tab in here used to be a
+            // grey terminal glyph, so the one column that says *what* is in a
+            // window said it in words only, and three rows of Claude looked
+            // exactly like three rows of shell.
+            return PaletteRow(
+                icon: IconTile(image: entry.icon, symbol: "terminal"),
+                text: text, cluster: cluster)
         }
         guard let item = items[safe: row] else { return nil }
 
@@ -479,12 +549,14 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         // of a summary.
         let cluster = NSStackView()
         cluster.orientation = .horizontal
+        cluster.alignment = .centerY
         cluster.spacing = 6
         if item.isCurrent {
             cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
         }
 
-        let icon = IconTile(image: nil as NSImage?, symbol: "macwindow")
-        return PaletteRow(icon: icon, text: text, cluster: cluster)
+        return PaletteRow(
+            icon: IconTile(image: item.icon, symbol: "macwindow"),
+            text: text, cluster: cluster)
     }
 }

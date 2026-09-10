@@ -61,8 +61,33 @@ between, so the title bar just names what's running, centred.
   thing a workspace has more than one of — tabs, or panes when it's a single
   split tab.
 
-The title bar is painted in the terminal's own background color, so the window
-reads as one surface rather than a terminal wearing a grey hat.
+## The window: a strip, and a card
+
+The terminal does not run to the window's edges. It is a card — inset by 8pt,
+rounded, with a hairline round it — sitting on a ground mixed from the
+terminal's own background colour, one step away from itself: lifted toward
+white under a dark theme, sunk toward black under a light one. A near-black
+theme cannot be made darker, which is why the ground moves *away* rather than
+down.
+
+This costs a couple of columns and a row, and it buys the thing both of the
+terminals worth copying have: every edge of the terminal is an edge Rune drew,
+so the chrome above it is the window's rather than something sitting on the
+terminal's face.
+
+The tab strip above it is unchanged: flush chips filling the strip's height,
+the active one painted the *terminal's* colour rather than the ground's, so it
+still reads as attached to the card below it even with a margin between them.
+A rounded-segment strip was tried and reverted — with the terminal already
+inset and rounded, a second set of rounded shapes above it was one shape too
+many.
+
+**Split panes get a header** — mark, title, and the controls that act on that
+pane: split right, split down, zoom, close. Only once a tab has more than one
+pane: a lone terminal has nothing to be told apart from, and no reason to give
+up a row for a title the strip above it is already showing. The header answers
+the question splitting creates and nothing else answered — *which of these is
+which* — since the strip names the tab, not the panes inside it.
 
 ## Knowing which agent wants you
 
@@ -197,6 +222,42 @@ None of it runs on the main thread. `AgentMonitor` polls on a background queue
 
 The tab strip carries the same state as a dot, since a chip has no room for
 words; hovering one spells it out.
+
+### Resuming one: the PATH problem
+
+`⌘L` lists saved sessions and `⏎` resumes the highlighted one in a new
+workspace, by handing libghostty a command for a fresh surface. For a long time
+that command was `/bin/sh -c 'cd … && exec claude --resume <id>'`, and from the
+Dock it opened a dead terminal every single time.
+
+The reason is worth writing down, because nothing about it is visible from the
+Swift side. libghostty runs a surface command as
+
+```
+/usr/bin/login -fp <user> /bin/bash --noprofile --norc -c "exec -l <command>"
+```
+
+— deliberately no profile, no rc — so the process inherits whatever `PATH` the
+*app* was launched with. Launched from a terminal that is your login shell's
+`PATH` and everything works, which is exactly why it survived so long. Launched
+from the Dock it is `/usr/bin:/bin:/usr/sbin:/sbin` and nothing else, and every
+one of these agents installs somewhere only a shell startup file knows about:
+`~/.local/bin`, `~/.bun/bin`, a Homebrew prefix. `command not found`, every
+time. And because a surface *with* a command implies `wait-after-command`, the
+terminal stayed open having already failed, which reads as "⌘L doesn't work"
+rather than as an error.
+
+So the resume runs through the user's login shell, interactively:
+`$SHELL -l -i -c 'cd … && exec …'`. Both flags are load-bearing — `-l` gets
+`.zprofile`, `-i` gets `.zshrc`, and on this machine `~/.local/bin` comes from
+the second one, so login alone still could not find `claude`. It also makes a
+resumed terminal start in the same environment as any other Rune terminal,
+which is what someone would assume anyway. The script itself stays two words of
+POSIX so it means the same thing in sh, bash, zsh and fish.
+
+`scripts/check-agent-history.swift` pins the shell with `RUNE_RESUME_SHELL` for
+that check — otherwise it resolves `claude` to whatever the developer running it
+has installed instead of to its own mock.
 
 ## Keybindings
 

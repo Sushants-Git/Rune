@@ -9,6 +9,51 @@ import Cocoa
 enum Chrome {
     static let controlHeight: CGFloat = 19
     static let cornerRadius: CGFloat = 5
+
+    /// How far the terminal card is held off the window's edges, and the radius
+    /// of its corners.
+    ///
+    /// The terminal is a card on the window's ground rather than the window's
+    /// entire content, so the chrome above it has something to be chrome *on*.
+    /// It costs a couple of columns and a row; what it buys is that every edge
+    /// of the terminal is an edge Rune drew, which is the difference between
+    /// the two reference terminals and a black rectangle with buttons on top.
+    static let cardInset: CGFloat = 8
+    static let cardRadius: CGFloat = 10
+
+    /// Ink of the right polarity for whatever it is being drawn over: white
+    /// over a dark terminal theme, black over a light one.
+    ///
+    /// The chrome takes its colours from the terminal, and the terminal can be
+    /// any colour at all — so nothing up here may name a fixed grey. Returns a
+    /// function so a caller mixes several weights from one decision.
+    static func ink(over background: NSColor) -> (CGFloat) -> NSColor {
+        let dark = background.isDark
+        return { alpha in
+            dark
+                ? NSColor(white: 1, alpha: alpha)
+                // Black reads heavier than white at the same alpha, so a light
+                // theme gets a little less of it.
+                : NSColor(white: 0, alpha: alpha * 0.85)
+        }
+    }
+
+    /// The ground the terminal card sits on: the terminal's own colour, moved
+    /// one step away from itself.
+    ///
+    /// Away from, not darker. A near-black theme cannot get darker, which is
+    /// why this lifts a dark ground toward white and sinks a light one toward
+    /// black — either way the card reads as sitting in a well rather than
+    /// dissolving into the window.
+    static func ground(for terminal: NSColor) -> NSColor {
+        let dark = terminal.isDark
+        let blended = terminal.blended(
+            withFraction: dark ? 0.13 : 0.09, of: dark ? .white : .black) ?? terminal
+        // Blending resolves through a colour space and does not promise to
+        // carry the alpha through, and a translucent terminal has to stay
+        // translucent all the way out to the window's edge.
+        return blended.withAlphaComponent(terminal.alphaComponent)
+    }
 }
 
 /// A title-bar control that lifts slightly under the pointer.

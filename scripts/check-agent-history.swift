@@ -79,6 +79,11 @@ struct CheckAgentHistory {
         precondition(discovery.sessions.first { $0.agent == .codex }?.title == "Amber regression")
         precondition(AgentHistory.filter(discovery.sessions, query: "sphr claud").map(\.id) == [saved.id])
         precondition(AgentHistory.filter(discovery.sessions, query: "HiddenNeedle").isEmpty)
+        // Letters that appear in order somewhere across a whole record are not
+        // a match. Matching a subsequence of title + full path + agent + id run
+        // together, with no bound on the gaps, meant nearly every query
+        // returned nearly every session in a different order.
+        precondition(AgentHistory.filter(discovery.sessions, query: "arst").isEmpty)
 
         let preview = await AgentHistory.preview(saved)
         precondition(preview.contains("Fix the sapphire parser") && preview.contains("Recent answer"))
@@ -111,6 +116,30 @@ struct CheckAgentHistory {
 
         // Real, harmless executables survive both shell execs; shell functions
         // would not. Exercise the exact Ghostty .shell wrapper, not a plain -c.
+        //
+        // Pinned to a stand-in shell. The wrapper runs a resume through the
+        // user's *login* shell, interactively, because that is where `PATH`
+        // comes from — which is the whole point of it, and also means that left
+        // to itself this check would resolve `claude` to whatever the developer
+        // running it happens to have installed, and `opencode` to Homebrew's,
+        // rather than to the mocks below. The stand-in takes the same `-l -i -c
+        // <script>` the real thing is handed and runs the script without
+        // touching the environment, so everything this check is actually about
+        // — the quoting, Ghostty's outer `exec -l`, the `cd`, the argument
+        // splitting, resolution through `PATH` rather than a shell function —
+        // is exercised against a `PATH` the test controls.
+        let standIn = home.appendingPathComponent("stand-in shell")
+        try write(standIn, Data("""
+            #!/bin/sh
+            while [ "$1" != "-c" ]; do shift; done
+            exec /bin/sh -c "$2"
+            """.utf8))
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: standIn.path)
+        setenv("RUNE_RESUME_SHELL", standIn.path, 1)
+        precondition(
+            AgentHistory.Resume(agent: .claude, sessionID: claudeID, directory: cwd)!
+                .shellCommand.hasPrefix("'\(standIn.path)' -l -i -c "),
+            "Resume must run through a login, interactive shell")
         let launchCwd = home.appendingPathComponent("project 'quoted' \"double\" $(touch SHOULD_NOT_EXIST) `touch SHOULD_NOT_EXIST` ; &").path
         try FileManager.default.createDirectory(atPath: launchCwd, withIntermediateDirectories: true)
         let bin = home.appendingPathComponent("mock 'CLI' bin")

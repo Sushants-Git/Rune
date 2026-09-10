@@ -19,12 +19,14 @@ final class TabBar: NSView {
     private static let leadingInset: CGFloat = 78
     private static let maxChipWidth: CGFloat = 160
 
-    /// Painted to match the terminal below, so the title bar reads as part of
-    /// the same surface rather than as a separate strip of chrome.
+    /// The terminal's own colour. The strip itself is painted on the ground the
+    /// terminal card sits on — a step away from this — but the chips are mixed
+    /// from *this*, so the active one comes out the same colour as the card
+    /// below it and still reads as attached to what it is showing.
     var backgroundColor: NSColor = .clear {
         didSet {
             guard backgroundColor != oldValue else { return }
-            layer?.backgroundColor = backgroundColor.cgColor
+            layer?.backgroundColor = Chrome.ground(for: backgroundColor).cgColor
             // Chips are mixed from this colour, so they have to be re-mixed —
             // but only the colour, not the whole strip. Rebuilding here as well
             // meant every chrome sync built the strip twice.
