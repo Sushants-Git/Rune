@@ -576,6 +576,38 @@ to a GitHub Release — a zip and a disk image:
 git tag v0.2.0 && git push origin v0.2.0
 ```
 
+### One install at a time
+
+"Restart to Update" used to install the update **twice at once**, and with a
+real-sized bundle that destroyed the app every time. `install()` launched the
+swap script and then quit Rune; quitting runs `installIfStagedOnQuit()` (so that
+quitting with an update waiting takes it); and nothing told the second that the
+first had already happened, so it launched another copy of the script. Two
+scripts renaming the same bundle interleave badly: one moves the new app *into*
+the other's half-deleted backup directory — `mv` onto an existing directory
+moves inside it — and that directory is then moved back into place as the app.
+What was left at `/Applications/Rune.app` was a folder with the real app nested
+inside it, which macOS cannot open. A test running two copies against a real
+bundle broke it 15 times out of 15; the race had only ever been won by luck.
+
+Three fixes, any one of which prevents it: `install()` forgets the staged copy
+once it has handed it to the script, so quitting finds nothing to install; the
+script takes a lock (`Rune.app.rune-installing`, created with `mkdir`, which is
+atomic) and a second copy leaves at once, with a lock older than ten minutes
+treated as abandoned; and no `mv` in the script is allowed to target a path
+that exists. The first two can only protect updates *installed by* a fixed
+version — the running app performs the install, so updating away from a broken
+one still uses its code. `rune update` was never affected: it calls the script
+once.
+
+If an install has already been broken this way, the app is intact one level
+down:
+
+```sh
+cd /Applications && mv Rune.app Rune.app.broken \
+  && mv Rune.app.broken/Rune.app Rune.app && rmdir Rune.app.broken
+```
+
 ### Signing, and why it is not ad-hoc
 
 Releases are signed with one self-signed certificate, reused for every build.

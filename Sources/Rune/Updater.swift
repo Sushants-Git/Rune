@@ -459,6 +459,13 @@ final class Updater {
             return
         }
 
+        // Handed off: the script owns the swap now. Forgetting the staged copy
+        // is what stops quitting — which is how this method ends — from
+        // starting a second install of the same update. It used to: quitting
+        // runs `installIfStagedOnQuit`, which found the update still staged and
+        // launched another copy of the script, and two copies renaming the same
+        // bundle at once left `/Applications/Rune.app` with no app in it.
+        self.staged = nil
         NSApp.terminate(nil)
     }
 
@@ -507,9 +514,26 @@ final class Updater {
     # Written by Rune's updater; safe to delete.
     while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
 
+    # One install of an app at a time. A second copy of this script for the
+    # same app used to run alongside the first, and two scripts renaming the
+    # same bundle at once destroy it: one moves the new app *into* the other's
+    # half-deleted backup directory, and that directory is then moved back into
+    # place as the app. `mkdir` is atomic, so whoever makes the lock owns the
+    # install and anyone else leaves. A lock older than ten minutes belongs to
+    # an install that was killed and is cleared rather than blocking updates
+    # for ever.
+    lock="$3.rune-installing"
+    find "$lock" -maxdepth 0 -mmin +10 -exec rmdir {} + 2>/dev/null
+    mkdir "$lock" 2>/dev/null || exit 0
+    trap 'rmdir "$lock" 2>/dev/null' EXIT
+
     backup="$3.rune-previous"
     incoming="$3.rune-incoming"
     rm -rf "$backup" "$incoming"
+    # `mv` onto an existing directory moves *into* it rather than replacing it,
+    # which is how a bundle ends up nested inside another. Nothing below may
+    # rename onto a path that exists, so if the clear-out left anything, stop.
+    [ -e "$backup" ] || [ -e "$incoming" ] && exit 1
 
     # The slow part, with the installed app untouched and openable.
     if ! /usr/bin/ditto "$2" "$incoming"; then
@@ -526,8 +550,9 @@ final class Updater {
     # Two renames. Between them there is no app at "$3", and that is the whole
     # window a launch can fall into.
     mv "$3" "$backup" || { rm -rf "$incoming"; exit 1; }
-    if ! mv "$incoming" "$3"; then
-      mv "$backup" "$3"
+    if [ -e "$3" ] || ! mv "$incoming" "$3"; then
+      [ -e "$3" ] || mv "$backup" "$3"
+      rm -rf "$incoming"
       [ "$5" = 1 ] && /usr/bin/open "$3"
       exit 1
     fi
