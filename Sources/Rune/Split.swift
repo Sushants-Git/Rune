@@ -452,14 +452,7 @@ final class Tab {
 
     init(first surface: GhosttySurfaceView) {
         view.autoresizingMask = [.width, .height]
-        // The tab *is* the card: rounded, clipped, and edged. Clipping here
-        // rather than around each pane is what gives a split layout one outer
-        // corner radius instead of four.
         view.wantsLayer = true
-        view.layer?.cornerRadius = Chrome.cardRadius
-        view.layer?.cornerCurve = .continuous
-        view.layer?.masksToBounds = true
-        view.layer?.borderWidth = 1
 
         let pane = SplitPane(surface: surface)
         pane.frame = view.bounds
@@ -800,13 +793,15 @@ final class Tab {
     /// may not exist yet at the moment it is created — the container is
     /// layer-backed and hands one down when the view joins it — so a radius
     /// written in `init` can land on nothing and leave a square card.
-    func applyCardEdge(_ color: NSColor) {
-        guard let layer = view.layer else { return }
-        layer.cornerRadius = Chrome.cardRadius
-        layer.cornerCurve = .continuous
-        layer.masksToBounds = true
-        layer.borderWidth = 1
-        layer.borderColor = color.cgColor
+    /// Paint the terminal's own colour behind the surface.
+    ///
+    /// A surface that has not drawn its first frame yet is transparent, and
+    /// what shows through is the window's ground — which is lighter than the
+    /// terminal. That was the flash when a tab opened: not a redraw, but two
+    /// frames of the wrong colour in the shape of the terminal.
+    func applyBackground(_ fill: NSColor) {
+        view.layer?.backgroundColor = fill.cgColor
+        for pane in panes { pane.layer?.backgroundColor = fill.cgColor }
     }
 
     /// Re-read each pane's header. Titles and agent marks change constantly;

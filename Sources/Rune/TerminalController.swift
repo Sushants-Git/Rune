@@ -7,14 +7,18 @@ import GhosttyKit
 final class Workspace {
     let id = UUID()
 
+    /// How many tabs one workspace will hold.
+    ///
+    /// Not a resource limit — it is what the strip can still be read at. Past
+    /// this the tabs are bare icons with no room for a title, and a workspace
+    /// is the wrong container for the next one anyway: that is what ⌘N is for.
+    static let tabLimit = 16
+
     /// The tabs in this workspace, in creation order. The strip never reorders.
     private(set) var tabs: [Tab] = []
     /// The tab currently on screen when this workspace is the visible one.
     var activeTab: Tab?
 
-    /// Tab IDs most-recently-used first. Only used to pick a survivor when a
-    /// tab closes — nothing user-visible is ordered by it.
-    private var mruOrder: [UUID] = []
 
     init(first tab: Tab) {
         add(tab)
@@ -23,12 +27,6 @@ final class Workspace {
 
     func add(_ tab: Tab) {
         tabs.append(tab)
-        touch(tab)
-    }
-
-    func touch(_ tab: Tab) {
-        mruOrder.removeAll { $0 == tab.id }
-        mruOrder.insert(tab.id, at: 0)
     }
 
     func contains(_ tab: Tab) -> Bool {
@@ -41,11 +39,22 @@ final class Workspace {
     }
 
     /// Remove `tab` and return the one that should take its place, if any.
+    ///
+    /// Its neighbour to the right, or the new last tab when it was the last —
+    /// which is where every browser leaves you, and what the strip makes you
+    /// expect: the tabs are in a row, so closing one should move you one step
+    /// along it.
+    ///
+    /// It used to be the most recently *used* surviving tab, which is a
+    /// perfectly good rule for workspaces and a baffling one for tabs. Closing
+    /// the third of seven could land you on the first, because "the one you
+    /// were on before this one" is invisible — nothing on screen says what it
+    /// was, so the jump looks random.
     func remove(_ tab: Tab) -> Tab? {
-        tabs.removeAll { $0 === tab }
-        mruOrder.removeAll { $0 == tab.id }
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return nil }
+        tabs.remove(at: index)
         if activeTab === tab { activeTab = nil }
-        return mruOrder.first.flatMap { id in tabs.first { $0.id == id } } ?? tabs.last
+        return tabs[safe: index] ?? tabs.last
     }
 
     var isEmpty: Bool { tabs.isEmpty }
@@ -246,6 +255,16 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // Deliberately NOT movableByWindowBackground: the terminal needs click
         // and drag for text selection.
         window.tabbingMode = .disallowed
+        // An empty toolbar in the compact style, for what it does to the window
+        // rather than for anything in it: it is what gives a window macOS's
+        // rounder corners and sets the traffic lights 20pt down, the way
+        // Ghostty's are. Nothing is ever added to it; the tab strip is drawn
+        // over the same space and lines itself up with the lights.
+        let toolbar = NSToolbar(identifier: "RuneWindow")
+        toolbar.allowsUserCustomization = false
+        toolbar.showsBaselineSeparator = false
+        window.toolbar = toolbar
+        window.toolbarStyle = .unifiedCompact
         window.center()
 
         container.autoresizingMask = [.width, .height]
@@ -444,23 +463,13 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     /// window controls itself.
     private static let titlebarInset: CGFloat = TabBar.height
 
-    /// The area a terminal surface occupies: a card inset from the window's
-    /// edges, below the strip.
-    ///
-    /// The inset is the whole visual change. A terminal that runs to the
-    /// window's edges has no edges of its own, so every piece of chrome is
-    /// something sitting *on* the terminal; held off by a margin, the terminal
-    /// becomes a thing in a window and the strip above it becomes the window's
-    /// rather than the terminal's hat. The margin above is larger because the
-    /// strip's own bottom padding is already part of it.
+    /// The area a terminal surface occupies: everything below the strip.
     private var terminalFrame: NSRect {
-        let inset = Chrome.cardInset
         let frame = container.bounds
         return NSRect(
-            x: inset,
-            y: inset,
-            width: max(0, frame.width - inset * 2),
-            height: max(0, frame.height - Self.titlebarInset - inset * 2))
+            x: 0, y: 0,
+            width: frame.width,
+            height: max(0, frame.height - Self.titlebarInset))
     }
 
     private func layoutContent() {
@@ -509,8 +518,25 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     @discardableResult
     func newTab(workingDirectory: String? = nil) -> Tab? {
         hideSwitcher()
+        // Holding ⌘T is not a request for thirty terminals. A held key
+        // equivalent repeats at the system rate, and every repeat used to cost
+        // a pty, a shell and a Metal surface — enough of them to bring the
+        // whole window to its knees, from one key nobody meant to lean on.
+        // Asked of the event only when it is a key at all: `isARepeat` raises
+        // for every other kind, and the current event is very often a mouse
+        // click or, in the picker regression, nothing that came from a key.
+        if let event = NSApp.currentEvent, event.type == .keyDown, event.isARepeat {
+            return activeTab
+        }
         guard let workspace = activeWorkspace else {
             return newWorkspace(workingDirectory: workingDirectory)?.activeTab
+        }
+        // A strip can only show so many before they are icons in a row, and
+        // past that they are neither findable nor closeable. ⌘N puts the next
+        // one in a workspace of its own, which is what the second axis is for.
+        guard workspace.tabs.count < Workspace.tabLimit else {
+            NSSound.beep()
+            return activeTab
         }
         guard let view = makeSurface(workingDirectory: workingDirectory) else { return nil }
         let tab = Tab(first: view)
@@ -612,7 +638,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             } else {
                 selectWorkspace(next)
             }
-        } else if workspace === activeWorkspace, let successor {
+        // Only when the tab that closed was the one on screen. Clicking the
+        // close button on some *other* tab used to move you off the tab you
+        // were working in, because a successor is worked out either way.
+        } else if workspace === activeWorkspace, workspace.activeTab == nil, let successor {
             if isSwitcherVisible {
                 workspace.activeTab = successor
                 showTab(successor)
@@ -652,7 +681,6 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         hideSwitcher()
         guard let workspace = workspaces.first(where: { $0.contains(tab) }) else { return }
         workspace.activeTab = tab
-        workspace.touch(tab)
 
         if workspace !== activeWorkspace { setActiveWorkspace(workspace) }
         showTab(tab)
@@ -724,7 +752,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // Here rather than only in `syncChrome`, which short-circuits when the
         // colour hasn't moved — a tab made after the last theme change would
         // otherwise come up with no edge at all.
-        tab.applyCardEdge(cardEdge)
+        tab.applyBackground(terminalColor)
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
         tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
@@ -849,16 +877,11 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         return sunk.withAlphaComponent(0.3)
     }
 
-    /// The hairline around the terminal card.
-    ///
-    /// Light over a dark theme, dark over a light one, and faint either way:
-    /// the ground already differs from the card, so the line only has to make
-    /// the corner legible, not draw a box.
-    private var cardEdge: NSColor {
-        let background = activeSurface?.backgroundColor ?? ghostty.backgroundColor
-        return background.isDark
-            ? NSColor.white.withAlphaComponent(0.14)
-            : NSColor.black.withAlphaComponent(0.12)
+    /// The terminal's own colour, at whatever opacity is configured.
+    private var terminalColor: NSColor {
+        let color = activeSurface?.backgroundColor ?? ghostty.backgroundColor
+        let opacity = ghostty.backgroundOpacity
+        return opacity < 0.999 ? color.withAlphaComponent(opacity) : color
     }
 
     /// Split dividers are a seam in the terminal, not window chrome, so they're
@@ -906,7 +929,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         // matches the card below it.
         tabBar.backgroundColor = terminal
         for workspace in workspaces {
-            for tab in workspace.tabs { tab.applyCardEdge(cardEdge) }
+            for tab in workspace.tabs { tab.applyBackground(terminal) }
         }
         activeTab?.applyDividerTint(dividerColor)
         activeTab?.applyInactiveWash(inactivePaneWash)

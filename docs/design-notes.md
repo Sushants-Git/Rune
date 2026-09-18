@@ -33,8 +33,10 @@ Everything lives in the *same* macOS window — switching is instant and nothing
 moves on screen but the terminal itself. `⌘⇧N` is the escape hatch to a
 genuinely separate window when you want one on another display or Space.
 
-**A workspace with one tab shows no strip at all** — there's nothing to choose
-between, so the title bar just names what's running, centred.
+**A workspace with one tab still shows its tab.** It used to hide the strip
+and centre the terminal's name instead, but the active tab is joined to the
+terminal below it, and a strip that vanished at one tab would change the
+terminal's outline every time a second tab came or went.
 
 `⌘K` is the switcher:
 
@@ -61,26 +63,103 @@ between, so the title bar just names what's running, centred.
   thing a workspace has more than one of — tabs, or panes when it's a single
   split tab.
 
-## The window: a strip, and a card
+## The window: a strip, and the terminal
 
-The terminal does not run to the window's edges. It is a card — inset by 8pt,
-rounded, with a hairline round it — sitting on a ground mixed from the
-terminal's own background colour, one step away from itself: lifted toward
-white under a dark theme, sunk toward black under a light one. A near-black
-theme cannot be made darker, which is why the ground moves *away* rather than
-down.
+The terminal fills the window below the tab strip — no margin, no corners of its
+own, no hairline. It was a *card* for a while: inset by 8pt, rounded, with a
+faint edge, sitting on a ground mixed from its own colour. The margin turned out
+to be three strips of wasted window, and the hairline along its top read as a
+stray white line across the terminal.
 
-This costs a couple of columns and a row, and it buys the thing both of the
-terminals worth copying have: every edge of the terminal is an edge Rune drew,
-so the chrome above it is the window's rather than something sitting on the
-terminal's face.
+What the card was for survives without it. The ground still exists, and still
+shows in the one place it has to: behind the strip. It is a *shade* of the
+terminal's own background — a little brighter under a dark theme, a little
+deeper under a light one, with hue and saturation held — so an inactive tab has
+something to be inactive against, and the active tab has somewhere to come out
+of. Mixing toward white instead of shifting brightness washes the colour out: a
+blue-black terminal sat under a flat grey strip that looked borrowed from
+another app.
 
-The tab strip above it is unchanged: flush chips filling the strip's height,
-the active one painted the *terminal's* colour rather than the ground's, so it
-still reads as attached to the card below it even with a margin between them.
-A rounded-segment strip was tried and reverted — with the terminal already
-inset and rounded, a second set of rounded shapes above it was one shape too
-many.
+The window carries an empty toolbar in the compact style. Nothing is ever put in
+it: it is there because it is what gives a macOS window its rounder corners
+(Ghostty's, in practice) and sets the traffic lights 20pt down. The strip lines
+its controls up with them by measurement — the lights sit at 16pt in a window
+without a toolbar, and an assumed 14pt had every control a few points off.
+
+The tab strip is drawn the way Chrome draws one. The active tab is the
+terminal's colour, with rounded top corners and bottom corners that curve
+*outwards* into the terminal, so tab and terminal are one shape; the terminal
+starts exactly where the strip ends for that reason. Inactive tabs have no fill
+until hovered, and a hairline divides neighbours except beside the active or
+hovered tab. Each tab carries its icon, with the activity state as a badge on
+it, and a close button.
+
+(A rounded-segment strip with a workspace pill was tried before this and
+reverted: floating pills over an inset card were one set of rounded shapes too
+many. So was a chevron listing the tabs, Chrome's tab search, which earned less
+than the space it took. What makes Chrome's strip work is that the active tab
+isn't floating — it grows out of the content.)
+
+**How wide a tab is comes from Chromium's own layout**, read out of
+`chrome/browser/ui/tabs/tab_style.cc` and
+`chrome/browser/ui/views/tabs/tab_strip_layout.cc`:
+
+- Tabs are the standard width, 232pt, until the strip runs out of room. Corner
+  radii are Chromium's: 10 at the top, 12 at the flare. Separators are 16 tall.
+- Past that there are two regimes. While the tabs still fit comfortably, every
+  tab is the same width. Once the strip is crowded, the **active tab keeps a
+  larger minimum** — icon, a few characters of title, its close button — and
+  the inactive ones keep narrowing to bare icons. The first version here had a
+  single rule, every tab the width of the first, so the tab you were using was
+  squeezed exactly as hard as every other and each ⌘T took a slice off the one
+  you were looking at.
+- **Closing with the mouse freezes the strip** (`EnterTabClosingMode`). Close a
+  tab by its button and the others do not widen to fill the gap until the
+  pointer leaves the strip: the tabs to its right slide one place left, so the
+  next tab's close button lands where the pointer already is, and a run of tabs
+  can be closed without chasing a button that moves after every click. ⌘W does
+  not freeze anything — there is no pointer to keep still for.
+- Closing a tab lands on its neighbour to the right, or the new last tab. It
+  used to be the most recently *used* survivor — a good rule for workspaces and
+  a baffling one for tabs, since the tab you were on before is shown nowhere,
+  so the jump looked random. Closing a tab you were *not* on no longer moves
+  you at all.
+
+**A workspace holds sixteen tabs, and a held ⌘T opens one.** A held key
+equivalent repeats at the system rate, and each repeat used to cost a pty, a
+shell and a Metal surface — enough to bring the window to its knees from one key
+nobody meant to lean on. Past sixteen, tabs are bare icons with no room for a
+title, and the next one belongs in a workspace of its own (⌘N) anyway. If the
+strip is still too narrow even then, the row is clipped at its edge rather than
+drawn off the side of the window.
+
+**The strip stands in for the title bar**, because it is drawn over it: a click
+in that space never reaches the title bar behind, so dragging the window and
+double-clicking to zoom are the strip's job now. Dragging used to work by
+accident — `hitTest` returned nil and the event was left to find the title bar,
+which it never did — and double-clicking did nothing at all, since that gesture
+is implemented in the title-bar view rather than in the window. The strip now
+asks for the drag outright and reads System Settings' own
+`AppleActionOnDoubleClick` rather than assuming zoom.
+
+**What animates, and what does not.** A tab opening or closing does, over
+160ms, in two steps: the tabs already there make room, then the new one grows
+into the gap from its own left edge — done in one pass, its left edge travelled
+as the others shrank, and it looked like it had swept in from further up the
+strip. Its title and icon appear only once it is fully open. Closing is the
+same in reverse. Hovers fade over 100ms. Everything asked for with a keystroke
+lands instantly — the pickers, switching tab or workspace, splitting a pane —
+since there the animation would sit between you and the thing you asked for.
+
+Two things were flickering, and neither was a redraw. A tab's fill is a layer
+property, so Core Animation faded it by default: clicking a tab left it a grey
+ghost of the tab you clicked off for a quarter of a second, and a deselected tab
+*morphed* from a full-size, terminal-coloured shape into a small clear one,
+which read as the terminal sliding from one tab into another. And a terminal
+surface is transparent until it has drawn its first frame, so opening a tab
+showed two frames of the window's ground in the shape of the terminal. Fills
+and deselection now switch with animations off, and the terminal's own colour
+is painted behind the surface, so an undrawn frame looks like a drawn one.
 
 **Split panes get a header** — mark, title, and the controls that act on that
 pane: split right, split down, zoom, close. Only once a tab has more than one

@@ -139,6 +139,25 @@ enum WindowPickerRegression {
         precondition(origin.activeWorkspace === workspaces[0][0])
         precondition(origin.activeTab === tabs[0][0][1], "Relative action used preview rather than origin")
 
+        // Closing a tab steps one along the row, and closing some *other* tab
+        // leaves you where you are. Both used to be wrong: the survivor was the
+        // most recently used tab, so closing the third of several could land
+        // you on the first, and a successor was chosen even when the tab that
+        // closed was not the one you were in.
+        origin.selectWorkspace(at: 0)
+        guard let workspace = origin.activeWorkspace else { fatalError("No workspace") }
+        while workspace.tabs.count < 4 { origin.newTab() }
+        origin.selectTab(at: 1)
+        let neighbour = workspace.tabs[2]
+        origin.closeTab(workspace.tabs[1])
+        precondition(origin.activeTab === neighbour, "Closing a tab should step one along the row")
+        origin.selectTab(at: workspace.tabs.count - 1)
+        let last = workspace.tabs[workspace.tabs.count - 1]
+        origin.closeTab(workspace.tabs[0])
+        precondition(origin.activeTab === last, "Closing another tab moved the active one")
+        origin.closeTab(last)
+        precondition(origin.activeTab === workspace.tabs.last, "Closing the last tab should land on the new last")
+
         origin.showSessions()
         precondition(origin.overlay != nil)
         origin.openSession(.live(target: UUID(), title: "Closed", directory: "/tmp"))
@@ -146,7 +165,7 @@ enum WindowPickerRegression {
         origin.showSessions()
         origin.openSession(AgentHistory.Session(id: "missing", title: "Missing resume", directory: "/tmp", updatedAt: Date()))
         precondition(origin.overlay == nil, "Missing resume left a stopped overlay")
-        print("PASS: picker editing isolation, preview rollback/commit, workspace and relative commands, session failure cleanup")
+        print("PASS: picker editing isolation, preview rollback/commit, workspace and relative commands, tab close succession, session failure cleanup")
         for controller in controllers {
             for surface in controller.allSurfaces { surface.close() }
         }
