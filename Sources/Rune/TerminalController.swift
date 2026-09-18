@@ -19,7 +19,6 @@ final class Workspace {
     /// The tab currently on screen when this workspace is the visible one.
     var activeTab: Tab?
 
-
     init(first tab: Tab) {
         add(tab)
         activeTab = tab
@@ -464,12 +463,15 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
     private static let titlebarInset: CGFloat = TabBar.height
 
     /// The area a terminal surface occupies: everything below the strip.
+    /// A card inset from the sides and bottom, starting exactly where the
+    /// strip ends so the active tab can run down into it.
     private var terminalFrame: NSRect {
+        let inset = Chrome.cardInset
         let frame = container.bounds
         return NSRect(
-            x: 0, y: 0,
-            width: frame.width,
-            height: max(0, frame.height - Self.titlebarInset))
+            x: inset, y: inset,
+            width: max(0, frame.width - inset * 2),
+            height: max(0, frame.height - Self.titlebarInset - inset))
     }
 
     private func layoutContent() {
@@ -564,10 +566,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tab.split(surface, with: view, direction: direction)
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
-        // Splitting is the moment pane headers appear, so they need the
-        // terminal's colour now — `syncChrome` won't send it, because as far as
-        // it is concerned nothing about the colour has changed.
-        tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
+tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
         focus(view)
         syncTabBar()
         overlay?.palette?.reload()
@@ -756,7 +755,6 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
         tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
-        tab.refreshPaneHeaders()
         tab.view.frame = terminalFrame
         tab.view.layoutSubtreeIfNeeded()
 
@@ -858,9 +856,6 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             active: activeTab,
             workspaceName: activeWorkspace?.customName,
             isZoomed: activeTab?.isZoomed ?? false)
-        // Pane headers say what each split is running, so they go stale for the
-        // same reasons the strip does and are refreshed alongside it.
-        activeTab?.refreshPaneHeaders()
     }
 
     /// What an idle split pane is washed with: the terminal's own background,
@@ -1345,7 +1340,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         return mark(for: surface)
     }
 
-    /// And of one terminal, for a split pane's own header.
+    /// And of one terminal.
     static func mark(for surface: GhosttySurfaceView) -> NSImage? {
         if let agent = surface.agent { return agent.image }
         let program = surface.program

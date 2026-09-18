@@ -11,10 +11,12 @@ import Cocoa
 /// beside the active and the hovered tab, where it would only be a stray line
 /// against a shape that already has an edge.
 ///
-/// There is always a tab. A single one used to hide the strip and centre the
-/// terminal's name in the title bar instead, but with the active tab joined to
-/// the card, a strip that vanished at one tab would leave the card with a flat
-/// top at one tab and a tab-shaped bite out of it at two.
+/// One tab is nothing to choose between, so a workspace with a single tab
+/// shows no tabs at all — just its name, centred where a title would go, the
+/// way 0.26 did. A lone Chrome-style tab joined to the terminal was tried, and
+/// a single tab sitting in the corner of an otherwise empty strip looked like
+/// a stray rather than a design; the tabs appear the moment there is a second
+/// one to tell apart from it.
 @MainActor
 final class TabBar: NSView {
     /// How far down the window the traffic lights are centred. Measured, not
@@ -69,6 +71,7 @@ final class TabBar: NSView {
             for chip in chips { chip.background = backgroundColor }
             let ink = Chrome.ink(over: ground)
             newButton.paint(tint: ink(0.7), resting: .clear, hover: ink(0.12))
+            titleLabel.textColor = ink(0.7)
             zoomButton.paint(tint: ink(0.7), resting: ink(0.08), hover: ink(0.15))
         }
     }
@@ -80,6 +83,8 @@ final class TabBar: NSView {
     var onResetZoom: (() -> Void)?
 
     private let stack = NSStackView()
+    /// What the strip shows instead of tabs when there is only one.
+    private let titleLabel = NSTextField(labelWithString: "")
     /// Holds the row and masks it. With enough tabs the row is wider than the
     /// space it has even after every tab has shrunk as far as it can, and
     /// something has to give: it is cut off here rather than drawn off the side
@@ -151,7 +156,12 @@ final class TabBar: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         clip.addSubview(stack)
 
-        for view in [clip, newButton, trailingCluster] {
+        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.alignment = .center
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        for view in [clip, newButton, trailingCluster, titleLabel] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -198,6 +208,18 @@ final class TabBar: NSView {
 
             trailingCluster.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             onControlLine(trailingCluster),
+
+            // Centred in the window, on the traffic lights' line, and clear of
+            // them and of anything at the trailing end, so a long name
+            // truncates instead of sliding underneath.
+            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            onControlLine(titleLabel),
+            titleLabel.leadingAnchor.constraint(
+                greaterThanOrEqualTo: leadingAnchor, constant: Self.leadingInset),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
+            titleLabel.trailingAnchor.constraint(
+                lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
         ])
     }
 
@@ -225,6 +247,17 @@ final class TabBar: NSView {
         self.tabs = tabs
         self.active = active
         zoomButton.isHidden = !isZoomed
+
+        // One tab: its name, centred, and no strip. The `+` goes with the
+        // strip, as it did in 0.26 — ⌘T is how the second tab gets made.
+        let single = tabs.count <= 1
+        clip.isHidden = single
+        newButton.isHidden = single
+        titleLabel.isHidden = !single
+        if single {
+            let title = workspaceName ?? active?.title ?? ""
+            if titleLabel.stringValue != title { titleLabel.stringValue = title }
+        }
 
         var leaving: [TabChip] = []
         for (id, chip) in chipForTab where !now.contains(id) {

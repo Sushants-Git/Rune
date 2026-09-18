@@ -10,14 +10,18 @@ enum Chrome {
     static let controlHeight: CGFloat = 19
     static let cornerRadius: CGFloat = 5
 
-    // The terminal fills the window under the strip: no margin, no corners of
-    // its own, no hairline. It was inset by 8pt with a rounded, hairlined edge
-    // for a while — a card on the window's ground — and the strip was built on
-    // top of that. The margin turned out to be three strips of wasted window,
-    // and the hairline read as a stray white line across the top of the
-    // terminal. What the card was for survives without it: the ground still
-    // shows *behind the strip*, which is all the active tab needs to look like
-    // it grew out of the terminal rather than sitting on it.
+    /// How far the terminal card is held off the window's sides and bottom,
+    /// and the radius of its corners.
+    ///
+    /// The terminal is a card on the window's ground, the way it was in 0.26,
+    /// and that is the look that stayed. What did not stay is the hairline it
+    /// had then: with the active tab joined to the card's top edge, a line
+    /// round the card ran straight under the tab and across the terminal, so
+    /// the card is edged by the ground around it and nothing else. There is no
+    /// margin above it — the strip ends where the card begins, which is what
+    /// lets the active tab grow out of it.
+    static let cardInset: CGFloat = 8
+    static let cardRadius: CGFloat = 10
 
     /// Ink of the right polarity for whatever it is being drawn over: white
     /// over a dark terminal theme, black over a light one.
@@ -36,21 +40,21 @@ enum Chrome {
         }
     }
 
-    /// What the tab strip is painted on: a lighter shade of the terminal's own
-    /// colour on a dark theme, a slightly deeper one on a light theme, so an
-    /// inactive tab has something to be inactive *against*.
+    /// The ground the terminal card and the strip sit on: the terminal's own
+    /// colour mixed a step toward white on a dark theme, toward black on a
+    /// light one — the frame 0.26 shipped with.
     ///
-    /// A *shade*, moved in brightness with the hue and saturation held, not a
-    /// mix toward white. Mixing toward white also washes the colour out, so a
-    /// blue-black terminal sat under a flat grey strip that looked like it
-    /// belonged to some other app. Held to a small step for the same reason:
-    /// the strip should read as the terminal's own surroundings.
+    /// A hue-preserving shade was tried in its place, a little brighter but
+    /// still tinted with the terminal's colour; the neutral frame was the one
+    /// that stayed, since it separates the card from the window more plainly.
     static func ground(for terminal: NSColor) -> NSColor {
-        guard let rgb = terminal.usingColorSpace(.sRGB) else { return terminal }
-        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0, alpha: CGFloat = 0
-        rgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        let shifted = terminal.isDark ? min(1, brightness + 0.06) : max(0, brightness - 0.05)
-        return NSColor(hue: hue, saturation: saturation, brightness: shifted, alpha: alpha)
+        let dark = terminal.isDark
+        let blended = terminal.blended(
+            withFraction: dark ? 0.13 : 0.09, of: dark ? .white : .black) ?? terminal
+        // Blending resolves through a colour space and does not promise to
+        // carry the alpha through, and a translucent terminal has to stay
+        // translucent all the way out to the window's edge.
+        return blended.withAlphaComponent(terminal.alphaComponent)
     }
 }
 

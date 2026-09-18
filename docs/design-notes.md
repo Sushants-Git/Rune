@@ -33,10 +33,11 @@ Everything lives in the *same* macOS window — switching is instant and nothing
 moves on screen but the terminal itself. `⌘⇧N` is the escape hatch to a
 genuinely separate window when you want one on another display or Space.
 
-**A workspace with one tab still shows its tab.** It used to hide the strip
-and centre the terminal's name instead, but the active tab is joined to the
-terminal below it, and a strip that vanished at one tab would change the
-terminal's outline every time a second tab came or went.
+**A workspace with one tab shows no tabs** — there's nothing to choose
+between, so the strip just names what's running, centred, and the tabs appear
+the moment there is a second one. (A lone Chrome-style tab joined to the
+terminal was tried in 0.27 and dropped: one tab sitting in the corner of an
+empty strip read as a stray, not a design.)
 
 `⌘K` is the switcher:
 
@@ -63,22 +64,21 @@ terminal's outline every time a second tab came or went.
   thing a workspace has more than one of — tabs, or panes when it's a single
   split tab.
 
-## The window: a strip, and the terminal
+## The window: a strip, and a card
 
-The terminal fills the window below the tab strip — no margin, no corners of its
-own, no hairline. It was a *card* for a while: inset by 8pt, rounded, with a
-faint edge, sitting on a ground mixed from its own colour. The margin turned out
-to be three strips of wasted window, and the hairline along its top read as a
-stray white line across the terminal.
+The terminal is a card on the window's ground: inset 8pt from the sides and
+bottom, with rounded corners, and no margin above — the strip ends exactly where
+the card begins, so the active tab can grow out of its top edge. The ground is
+the terminal's own colour mixed a step toward white under a dark theme, toward
+black under a light one. A hue-preserving shade — brighter, but still tinted
+with the terminal's colour — was tried in its place and dropped: the neutral
+frame separates the card from the window more plainly.
 
-What the card was for survives without it. The ground still exists, and still
-shows in the one place it has to: behind the strip. It is a *shade* of the
-terminal's own background — a little brighter under a dark theme, a little
-deeper under a light one, with hue and saturation held — so an inactive tab has
-something to be inactive against, and the active tab has somewhere to come out
-of. Mixing toward white instead of shifting brightness washes the colour out: a
-blue-black terminal sat under a flat grey strip that looked borrowed from
-another app.
+The card has no hairline. It had one in 0.26, and once the active tab was joined
+to the card's top edge the line ran straight under the tab and across the
+terminal. The ground around the card is edge enough. (0.27 dropped the card
+altogether and ran the terminal to the window's edges; 0.28 brought the card
+back, which is the version that stuck.)
 
 The window carries an empty toolbar in the compact style. Nothing is ever put in
 it: it is there because it is what gives a macOS window its rounder corners
@@ -161,12 +161,12 @@ showed two frames of the window's ground in the shape of the terminal. Fills
 and deselection now switch with animations off, and the terminal's own colour
 is painted behind the surface, so an undrawn frame looks like a drawn one.
 
-**Split panes get a header** — mark, title, and the controls that act on that
-pane: split right, split down, zoom, close. Only once a tab has more than one
-pane: a lone terminal has nothing to be told apart from, and no reason to give
-up a row for a title the strip above it is already showing. The header answers
-the question splitting creates and nothing else answered — *which of these is
-which* — since the strip names the tab, not the panes inside it.
+**Split panes have no header.** A strip naming each pane, with split, zoom and
+close buttons on it, was added in 0.26 and taken out in 0.28: once the tabs
+looked like Chrome's, a header appearing on ⌘D looked exactly like a new tab,
+and a split that seems to have made a tab is worse than a split with no title.
+The pane you are in is told apart the way it was before — the others recede
+slightly.
 
 ## Knowing which agent wants you
 
