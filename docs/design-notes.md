@@ -92,7 +92,16 @@ terminal's colour, with rounded top corners and bottom corners that curve
 starts exactly where the strip ends for that reason. Inactive tabs have no fill
 until hovered, and a hairline divides neighbours except beside the active or
 hovered tab. Each tab carries its icon, with the activity state as a badge on
-it, and a close button.
+it; the close button is shown only on the active tab and the one under the
+pointer — a × on every tab was a row of targets nobody was aiming at. Tabs are
+28pt deep, with 16pt marks and 12.5pt titles, the active one a weight heavier;
+at 24pt they read as a row of labels. A tab too narrow for its title is just
+its mark, centred. With a single tab there is no strip: its mark, badge and
+name sit centred where a title would go.
+
+This is direction 2 of three explored in September 2026 ("Chrome, done
+properly"), chosen over a quieter segmented strip and over a sidebar — the
+sidebar would have competed with ⌘K, which is where Rune's navigation lives.
 
 (A rounded-segment strip with a workspace pill was tried before this and
 reverted: floating pills over an inset card were one set of rounded shapes too
@@ -170,6 +179,14 @@ which* — since the strip names the tab, not the panes inside it. (0.28.0 took 
 out, on the grounds that a header appearing on ⌘D looked like a new tab; 0.28.2
 put it back, because losing it lost the one place a split says what each pane
 is.)
+
+The header is a 28pt band a step off the terminal's colour, holding a small
+tab: the focused pane's name sits in a tab of the terminal's own colour that
+flares into the pane below, the same shape as the strip's active tab at a
+smaller radius, so "the one you are in" is said the same way at both levels.
+Idle panes' names sit flat on the band, dimmed. The small tab is as wide as
+its title, within reason. The accent underline the header had in 0.26 went
+with this: the filled tab already says which pane is live.
 
 ## Knowing which agent wants you
 

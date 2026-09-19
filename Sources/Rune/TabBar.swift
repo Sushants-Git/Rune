@@ -24,12 +24,12 @@ final class TabBar: NSView {
     /// them here, and every control in the strip hangs off the same line.
     fileprivate static let controlCentre: CGFloat = 20
 
-    /// A tab's body, top edge to where it meets the card. Chrome's proportion:
-    /// a 12pt title in a body not much taller than twice that. A deeper tab
-    /// reads as a slab, and — since the body's middle is pinned to the lights —
-    /// every extra point of depth also pushes its top a point closer to the
-    /// window's edge.
-    fileprivate static let tabDepth: CGFloat = 24
+    /// A tab's body, top edge to where it meets the card. Deep enough for a
+    /// 16pt mark and a title with room around both — at 24 the tabs read as a
+    /// row of labels rather than tabs. Not deeper: since the body's middle is
+    /// pinned to the lights, every extra point of depth also pushes its top a
+    /// point closer to the window's edge, and 28 leaves six.
+    fileprivate static let tabDepth: CGFloat = 28
 
     /// Where a tab's body begins, measured down from the top of the strip.
     fileprivate static var tabTop: CGFloat { controlCentre - tabDepth / 2 }
@@ -45,7 +45,7 @@ final class TabBar: NSView {
     /// start to narrow.
     private static let maxChipWidth: CGFloat = 232
     /// How narrow a tab you are *not* using may get: its icon and padding.
-    private static let inactiveFloor: CGFloat = 34
+    private static let inactiveFloor: CGFloat = 40
     /// How narrow the tab you *are* using may get: still wide enough for its
     /// icon, a few characters of title and its close button. Chromium keeps a
     /// separate, larger minimum for the active tab for the same reason — when
@@ -72,6 +72,8 @@ final class TabBar: NSView {
             let ink = Chrome.ink(over: ground)
             newButton.paint(tint: ink(0.7), resting: .clear, hover: ink(0.12))
             titleLabel.textColor = ink(0.7)
+            titleDot.layer?.borderColor = ground.cgColor
+            if titleMark == nil { titleIcon.contentTintColor = ink(0.6) }
             zoomButton.paint(tint: ink(0.7), resting: ink(0.08), hover: ink(0.15))
         }
     }
@@ -83,8 +85,14 @@ final class TabBar: NSView {
     var onResetZoom: (() -> Void)?
 
     private let stack = NSStackView()
-    /// What the strip shows instead of tabs when there is only one.
+    /// What the strip shows instead of tabs when there is only one: the tab's
+    /// mark, with its status badge, and its name.
     private let titleLabel = NSTextField(labelWithString: "")
+    private let titleIcon = NSImageView()
+    private let titleDot = NSView()
+    private let titleRow = NSStackView()
+    private var titleMark: NSImage?
+    private var titleActivity: Activity = .idle
     /// Holds the row and masks it. With enough tabs the row is wider than the
     /// space it has even after every tab has shrunk as far as it can, and
     /// something has to give: it is cut off here rather than drawn off the side
@@ -156,12 +164,31 @@ final class TabBar: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         clip.addSubview(stack)
 
-        titleLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
         titleLabel.alignment = .center
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleIcon.imageScaling = .scaleProportionallyUpOrDown
+        titleDot.wantsLayer = true
+        titleDot.layer?.cornerRadius = 4
+        titleDot.layer?.borderWidth = 1.5
+        titleDot.isHidden = true
+        titleDot.translatesAutoresizingMaskIntoConstraints = false
+        titleRow.orientation = .horizontal
+        titleRow.alignment = .centerY
+        titleRow.spacing = 8
+        titleRow.setViews([titleIcon, titleLabel], in: .leading)
+        titleRow.addSubview(titleDot)
+        NSLayoutConstraint.activate([
+            titleIcon.widthAnchor.constraint(equalToConstant: 16),
+            titleIcon.heightAnchor.constraint(equalToConstant: 16),
+            titleDot.centerXAnchor.constraint(equalTo: titleIcon.trailingAnchor, constant: -1),
+            titleDot.centerYAnchor.constraint(equalTo: titleIcon.bottomAnchor, constant: -1),
+            titleDot.widthAnchor.constraint(equalToConstant: 8),
+            titleDot.heightAnchor.constraint(equalToConstant: 8),
+        ])
 
-        for view in [clip, newButton, trailingCluster, titleLabel] {
+        for view in [clip, newButton, trailingCluster, titleRow] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -212,13 +239,13 @@ final class TabBar: NSView {
             // Centred in the window, on the traffic lights' line, and clear of
             // them and of anything at the trailing end, so a long name
             // truncates instead of sliding underneath.
-            titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
-            onControlLine(titleLabel),
-            titleLabel.leadingAnchor.constraint(
+            titleRow.centerXAnchor.constraint(equalTo: centerXAnchor),
+            onControlLine(titleRow),
+            titleRow.leadingAnchor.constraint(
                 greaterThanOrEqualTo: leadingAnchor, constant: Self.leadingInset),
-            titleLabel.trailingAnchor.constraint(
+            titleRow.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingAnchor, constant: -Self.leadingInset),
-            titleLabel.trailingAnchor.constraint(
+            titleRow.trailingAnchor.constraint(
                 lessThanOrEqualTo: trailingCluster.leadingAnchor, constant: -8),
         ])
     }
@@ -253,10 +280,11 @@ final class TabBar: NSView {
         let single = tabs.count <= 1
         clip.isHidden = single
         newButton.isHidden = single
-        titleLabel.isHidden = !single
+        titleRow.isHidden = !single
         if single {
             let title = workspaceName ?? active?.title ?? ""
             if titleLabel.stringValue != title { titleLabel.stringValue = title }
+            syncTitleMark(for: active)
         }
 
         var leaving: [TabChip] = []
@@ -340,6 +368,30 @@ final class TabBar: NSView {
                     for chip in entering { chip.settle() }
                 }
             }
+        }
+    }
+
+    /// The lone tab's mark and badge, the same ones its tab would carry.
+    private func syncTitleMark(for tab: Tab?) {
+        let mark = tab.flatMap(TerminalController.icon(for:))
+        if titleMark !== mark || titleIcon.image == nil {
+            titleMark = mark
+            titleIcon.image = mark ?? NSImage(
+                systemSymbolName: "terminal", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+            titleIcon.contentTintColor = mark == nil
+                ? Chrome.ink(over: Chrome.ground(for: backgroundColor))(0.6) : nil
+        }
+        let activity = tab?.status.activity ?? .idle
+        guard activity != titleActivity else { return }
+        titleActivity = activity
+        if let color = activity.color {
+            titleDot.isHidden = false
+            titleDot.layer?.backgroundColor = color.cgColor
+            if activity.pulses { Pulse.apply(to: titleDot.layer) } else { Pulse.remove(from: titleDot.layer) }
+        } else {
+            titleDot.isHidden = true
+            Pulse.remove(from: titleDot.layer)
         }
     }
 
@@ -776,19 +828,18 @@ private final class TabChip: NSView {
     /// here so the circle is evenly inside the hover rather than close to one
     /// edge and clear of the other.
     private static let hoverInset: CGFloat = 3
-    private static let closeSide: CGFloat = 14
+    private static let closeSide: CGFloat = 16
 
     private let closeButton = StripButton(
         symbol: "xmark", pointSize: 8, weight: .bold,
         side: closeSide, radius: closeSide / 2, label: "Close Tab (⌘W)")
     private let divider = NSView()
 
-    /// A tab wide enough for a title, and one wide enough for a close button.
-    /// Below these it gives them up, the way Chrome's do — otherwise the row's
+    /// A tab wide enough for a title. Below this it gives the title up, and an
+    /// inactive tab its close button, the way Chrome's do — otherwise the row's
     /// smallest possible width is set by contents nobody can read anyway, and
     /// a dozen tabs push the strip past the edge of the window.
     private static let titleFloor: CGFloat = 78
-    private static let closeFloor: CGFloat = 116
 
     private var isActive = false
     /// What the shape was last painted as, so `refresh` can tell a hover
@@ -807,6 +858,8 @@ private final class TabChip: NSView {
     /// own edge for when there is no close button to pin it to.
     private var titleToClose: NSLayoutConstraint!
     private var titleToEdge: NSLayoutConstraint!
+    private var iconLeading: NSLayoutConstraint!
+    private var iconCentred: NSLayoutConstraint!
     /// The close button's place in the row, dropped when the tab is too narrow
     /// to hold one. Hiding it is not enough: a hidden view keeps its
     /// constraints, so the space would stay reserved.
@@ -814,6 +867,7 @@ private final class TabChip: NSView {
     private var hovering = false
     private var activity: Activity = .idle
     private var mark: NSImage?
+    private var paintedWeight: NSFont.Weight = .regular
 
     /// Re-mixed when the terminal theme changes.
     var background: NSColor = .clear {
@@ -844,7 +898,7 @@ private final class TabChip: NSView {
         dot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(dot)
 
-        label.font = .systemFont(ofSize: 12)
+        label.font = .systemFont(ofSize: 12.5)
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -863,17 +917,16 @@ private final class TabChip: NSView {
         // expressed as an offset from the chip's own middle. Positive is down.
         let line = TabBar.controlCentre - TabBar.height / 2
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor, constant: line),
-            icon.widthAnchor.constraint(equalToConstant: 14),
-            icon.heightAnchor.constraint(equalToConstant: 14),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
 
             dot.centerXAnchor.constraint(equalTo: icon.trailingAnchor, constant: -1),
             dot.centerYAnchor.constraint(equalTo: icon.bottomAnchor, constant: -1),
             dot.widthAnchor.constraint(equalToConstant: 8),
             dot.heightAnchor.constraint(equalToConstant: 8),
 
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             label.centerYAnchor.constraint(equalTo: centerYAnchor, constant: line),
 
             divider.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -885,6 +938,13 @@ private final class TabChip: NSView {
 
         // Measured to the circle rather than to the glyph, and inset from the
         // hover shape rather than from the tab, so the two are concentric.
+        // A tab too narrow for its title is just its mark, and a lone mark
+        // pinned to the leading edge looked like a tab with its title cut off
+        // rather than one meant to be an icon — so it moves to the middle.
+        iconLeading = icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12)
+        iconCentred = icon.centerXAnchor.constraint(equalTo: centerXAnchor)
+        iconLeading.isActive = true
+
         closeSlot = [
             closeButton.trailingAnchor.constraint(
                 equalTo: trailingAnchor, constant: -(Self.hoverInset + 2)),
@@ -899,12 +959,14 @@ private final class TabChip: NSView {
 
     /// Give up the title, then the close button, as the tab narrows.
     ///
-    /// The close button goes first on the tabs you are not using and last on
-    /// the one you are, so the tab you are most likely to want to close keeps
-    /// its button longest — which is what Chrome does too.
+    /// The tab you are in keeps its close button at any width, so the tab you
+    /// are most likely to want to close always has one.
     private func syncContents() {
         let width = bounds.width
-        let close = width >= Self.closeFloor || (isRaised && width >= Self.titleFloor)
+        // Only on the tab you are in and the one under the pointer. A × on
+        // every tab was a row of targets nobody was aiming at, and the one
+        // strong mark on the strip should be the tab you are in.
+        let close = isRaised && width >= (isActive ? 0 : Self.titleFloor)
         let title = width >= Self.titleFloor
 
         if close != showsClose {
@@ -921,6 +983,14 @@ private final class TabChip: NSView {
             }
         }
         if label.isHidden != !title { label.isHidden = !title }
+        // Centred only when it is alone in the tab: with a close button beside
+        // it, a centred mark would sit under the button's hover.
+        let centred = !title && !close
+        if iconCentred.isActive != centred {
+            iconLeading.isActive = false
+            iconCentred.isActive = false
+            (centred ? iconCentred : iconLeading).isActive = true
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -940,7 +1010,7 @@ private final class TabChip: NSView {
             mark = artwork
             icon.image = artwork ?? NSImage(
                 systemSymbolName: "terminal", accessibilityDescription: nil)?
-                .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
         }
 
         if activity != status.activity {
@@ -972,8 +1042,12 @@ private final class TabChip: NSView {
     }
 
     override func layout() {
-        super.layout()
+        // Before `super`, so the constraints it swaps are the ones this pass
+        // lays out. After it, a tab that had just become active kept its
+        // close button wherever it was last put until something else happened
+        // to lay the tab out again — which could be never.
         syncContents()
+        super.layout()
         let path = isActive ? activePath() : hoverPath()
 
         // A tab's shape is a path, not a rounded rectangle, so it does not come
@@ -1069,6 +1143,14 @@ private final class TabChip: NSView {
             : Chrome.ink(over: ground)(hovering ? 0.07 : 0).cgColor
         CATransaction.commit()
         label.textColor = ink(isActive ? 0.92 : (hovering ? 0.8 : 0.62))
+        // The tab you are in is set a weight heavier, the way the one you are
+        // on reads in any list: colour alone was a subtle difference on a
+        // strip where every other tab is the same grey.
+        let weight: NSFont.Weight = isActive ? .medium : .regular
+        if paintedWeight != weight {
+            paintedWeight = weight
+            label.font = .systemFont(ofSize: 12.5, weight: weight)
+        }
         closeButton.paint(tint: ink(isActive ? 0.7 : 0.5), resting: .clear, hover: ink(0.14))
         icon.contentTintColor = mark == nil ? ink(isActive ? 0.7 : 0.5) : nil
         // Ringed in the colour behind it, so the badge reads as sitting on the
