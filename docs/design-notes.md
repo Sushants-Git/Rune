@@ -397,8 +397,14 @@ the time sits on the right. A second account's sessions
 sit under their agent's tab rather than a tab of their own: the agent decides
 how a session resumes, and the account is a detail of that.
 
-`⌃F` searches transcripts with [fff](https://github.com/dmtrKovalenko/fff)'s C
-library: an in-memory index per transcript folder, a SIMD grep, and a fuzzy
+Typing searches transcripts as well as titles — no separate mode. Titles,
+folders and accounts filter at once; after a short pause the same query goes
+to [fff](https://github.com/dmtrKovalenko/fff)'s C library, and sessions found
+only by their contents are appended below the name matches, with the preview
+opening on the match. (It was a ⌃F mode that searched transcripts *instead* of
+titles until fff made the second search cheap enough to always run. Queries
+of one character skip it: they match nearly every transcript.) The indexes are
+built when ⌘L opens, so the first search doesn't wait for a scan. fff is an in-memory index per transcript folder, a SIMD grep, and a fuzzy
 retry when the plain search finds nothing. On this machine's 400 sessions it
 answers in under a second where reading every JSONL file took five, and finds
 everything the old scan did. Two settings matter: grep's own size limit, and

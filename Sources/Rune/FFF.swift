@@ -86,6 +86,17 @@ final class FFF: @unchecked Sendable {
         }
     }
 
+    /// Build the indexes ahead of the first search, off the main thread, so
+    /// the first thing typed into ⌘L doesn't wait for a scan.
+    static func warm(_ folders: [URL]) {
+        guard let fff = shared else { return }
+        DispatchQueue.global(qos: .utility).async {
+            fff.lock.lock()
+            defer { fff.lock.unlock() }
+            for folder in folders { _ = fff.instance(for: folder) }
+        }
+    }
+
     struct Hit: Sendable {
         /// Absolute path of the file that matched.
         let path: String

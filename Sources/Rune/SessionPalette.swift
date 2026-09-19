@@ -40,7 +40,6 @@ final class SessionPalette: NSView, OverlayPanel {
     private var previewTask: Task<Void, Never>?
 
     private let field = NSTextField()
-    private let modeChip = Chip(text: "transcripts", emphasised: true)
     private let table = NSTableView()
     private let listScroll = NSScrollView()
     private let listEmpty = NSTextField(labelWithString: "")
@@ -49,7 +48,6 @@ final class SessionPalette: NSView, OverlayPanel {
     private let status = NSTextField(labelWithString: "Discovering saved sessions…")
     private let previewHeading = NSTextField(labelWithString: "")
     private let previewIcon = NSImageView()
-    private var contentHint: HintPair!
     private var commitHint: HintPair!
 
     private static let width: CGFloat = 760
@@ -74,19 +72,15 @@ final class SessionPalette: NSView, OverlayPanel {
         super.init(frame: .zero)
         build()
         apply(self.sessions)
+        FFF.warm(AgentHistory.transcriptFolders(AgentHistory.Roots()))
         discoveryTask = Task { [weak self] in
             let result = await AgentHistory.discover()
             guard !Task.isCancelled, let self, !self.dismissed else { return }
             self.discovering = false
             self.discoveryNotes = result.notes.joined(separator: " ")
             self.sessions = AgentHistory.merge(self.supplied, with: result.sessions)
-            if let query = self.contentQuery {
-                // Content results were computed over an older corpus. Re-run
-                // only the explicitly requested query, never a new typed query.
-                self.runContentSearch(query)
-            } else {
-                self.filterMetadata()
-            }
+            // Anything already found was found in a smaller corpus.
+            self.search()
         }
     }
 
@@ -153,18 +147,13 @@ final class SessionPalette: NSView, OverlayPanel {
         field.focusRingType = .none
         field.delegate = self
         field.placeholderAttributedString = NSAttributedString(
-            string: "Search sessions by title, agent, or directory…",
+            string: "Search sessions and what was said in them…",
             attributes: [
                 .foregroundColor: PaletteStyle.tertiaryText,
                 .font: PaletteStyle.font(ofSize: 15),
             ])
         field.setAccessibilityLabel("Search agent sessions")
 
-        // Says which corpus the list is answering from. Only up during a
-        // content search, because metadata is the resting state and a chip
-        // that is always there says nothing.
-        modeChip.isHidden = true
-        modeChip.toolTip = "Showing sessions whose saved transcript contains the query."
 
         table.headerView = nil
         table.rowHeight = Self.rowHeight
@@ -233,11 +222,8 @@ final class SessionPalette: NSView, OverlayPanel {
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         commitHint = HintPair(keys: ["⏎"], label: "Resume")
-        contentHint = HintPair(keys: ["⌃F"], label: "Search transcripts") { [weak self] in
-            self?.toggleContentSearch()
-        }
         let hints = NSStackView(views: [
-            commitHint, HintPair(keys: ["←", "→"], label: "Agent"), contentHint,
+            commitHint, HintPair(keys: ["←", "→"], label: "Agent"),
             HintPair(keys: ["esc"], label: "Dismiss"),
         ])
         hints.orientation = .horizontal
@@ -252,7 +238,7 @@ final class SessionPalette: NSView, OverlayPanel {
 
         let prompt = PalettePrompt.make()
         addSubview(prompt)
-        for view in [field, modeChip, headerDivider, tabs, tabsDivider, listScroll, listEmpty, bodyDivider,
+        for view in [field, headerDivider, tabs, tabsDivider, listScroll, listEmpty, bodyDivider,
                      previewIcon, previewHeading, previewScroll, footerDivider, status, hints] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -267,10 +253,7 @@ final class SessionPalette: NSView, OverlayPanel {
             prompt.firstBaselineAnchor.constraint(equalTo: field.firstBaselineAnchor),
             field.leadingAnchor.constraint(equalTo: prompt.trailingAnchor, constant: 8),
             field.topAnchor.constraint(equalTo: topAnchor, constant: 16),
-            field.trailingAnchor.constraint(
-                lessThanOrEqualTo: modeChip.leadingAnchor, constant: -8),
-            modeChip.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-            modeChip.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
 
             headerDivider.topAnchor.constraint(equalTo: field.bottomAnchor, constant: 15),
             headerDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -325,62 +308,50 @@ final class SessionPalette: NSView, OverlayPanel {
 
     // MARK: - Filtering
 
-    private func filterMetadata() {
+    /// Every keystroke: the titles, folders and accounts straight away, then
+    /// — once typing pauses — the transcripts themselves, through fff.
+    ///
+    /// Sessions matched only by what was said in them are added below the
+    /// ones matched by name, so what you'd have found before stays on top, and
+    /// the preview opens on the matching lines. This replaced a ⌃F mode that
+    /// searched transcripts *instead* of titles: two searches you had to pick
+    /// between, when with fff the second costs well under a second.
+    private func search() {
         generation += 1
         let version = generation
         searchTask?.cancel()
-        searching = false
         filtering = true
-        contentQuery = nil
+        searching = false
         contentIncomplete = false
-        excerpts = [:]
-        modeChip.isHidden = true
-        contentHint.setLabel("Search transcripts")
         let query = field.stringValue
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One character matches nearly every transcript on the machine.
+        let content = needle.count >= 2 ? needle : nil
         let corpus = sessions
-        // Metadata itself can be large. Debounce and score on a worker too.
         searchTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(90)) } catch { return }
             let worker = Task.detached(priority: .userInitiated) { AgentHistory.filter(corpus, query: query) }
-            let matches = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
+            let titles = await withTaskCancellationHandler(operation: { await worker.value }, onCancel: { worker.cancel() })
             guard !Task.isCancelled, let self, !self.dismissed, self.generation == version else { return }
             self.filtering = false
-            self.apply(matches)
+            self.excerpts = [:]
+            self.contentQuery = content
+            self.searching = content != nil
+            self.apply(titles)
+            guard let content else { return }
+
+            // A little longer, so a word still being typed isn't searched for
+            // a letter at a time.
+            do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
+            let result = await AgentHistory.searchContent(content, sessions: corpus, grep: FFF.historyGrep)
+            guard !Task.isCancelled, !self.dismissed, self.generation == version else { return }
+            self.searching = false
+            self.contentIncomplete = result.incomplete
+            self.excerpts = result.excerpts
+            let named = Set(titles.map(\.id))
+            self.apply(titles + result.sessions.filter { !named.contains($0.id) })
         }
         updateStatus()
-    }
-
-    /// ⌃F, and the footer hint that says so. One key rather than two buttons:
-    /// it turns transcript search on, and turns it back off.
-    private func toggleContentSearch() {
-        if contentQuery != nil { filterMetadata(); return }
-        let query = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { NSSound.beep(); return }
-        runContentSearch(query)
-    }
-
-    private func runContentSearch(_ query: String) {
-        generation += 1
-        let version = generation
-        searchTask?.cancel()
-        contentQuery = query
-        contentIncomplete = false
-        searching = true
-        filtering = false
-        excerpts = [:]
-        modeChip.isHidden = false
-        contentHint.setLabel("Metadata only")
-        apply([])
-        let corpus = sessions
-        searchTask = Task { [weak self] in
-            let result = await AgentHistory.searchContent(
-                query, sessions: corpus, grep: FFF.historyGrep)
-            guard !Task.isCancelled, let self, !self.dismissed, self.generation == version else { return }
-            self.searching = false
-            self.excerpts = result.excerpts
-            self.contentIncomplete = result.incomplete
-            self.apply(result.sessions)
-        }
     }
 
     /// Show one agent's sessions, or everyone's.
@@ -415,12 +386,11 @@ final class SessionPalette: NSView, OverlayPanel {
     }
 
     private func updateStatus() {
-        if filtering { status.stringValue = "Filtering session metadata…" }
-        else if searching { status.stringValue = "Searching conversation text…" }
-        else if let contentQuery {
-            status.stringValue = "\(visible.count) transcript "
-                + (visible.count == 1 ? "match" : "matches")
-                + " for “\(AgentHistory.display(contentQuery, limit: 40))”"
+        if filtering { status.stringValue = "Filtering…" }
+        else if contentQuery != nil {
+            status.stringValue = "\(visible.count) "
+                + (visible.count == 1 ? "session" : "sessions")
+                + (searching ? " · searching transcripts…" : "")
                 + (contentIncomplete ? " · partial scan" : "")
         } else {
             let total = agentTab.map { agent in sessions.filter { $0.agent == agent }.count } ?? sessions.count
@@ -469,7 +439,7 @@ final class SessionPalette: NSView, OverlayPanel {
         previewTask = Task { [weak self] in
             let body = await AgentHistory.preview(session)
             guard !Task.isCancelled, let self, !self.dismissed, self.previewGeneration == version else { return }
-            self.previewText.string = (excerpt.map { "CONTENT MATCH\n\($0)\n\n" } ?? "") + body
+            self.previewText.string = (excerpt.map { "MATCH IN TRANSCRIPT\n\($0)\n\n" } ?? "") + body
             self.previewText.scrollToBeginningOfDocument(nil)
         }
     }
@@ -483,7 +453,7 @@ final class SessionPalette: NSView, OverlayPanel {
     /// highlighted row is a real row either way; only a content search, which
     /// empties the list while it runs, has nothing to commit.
     @objc private func commit() {
-        guard !dismissed, !searching, visible.indices.contains(table.selectedRow) else { return }
+        guard !dismissed, visible.indices.contains(table.selectedRow) else { return }
         let session = visible[table.selectedRow]
         guard session.isLive || session.resume != nil else { NSSound.beep(); return }
         stop()
@@ -511,7 +481,7 @@ final class SessionPalette: NSView, OverlayPanel {
 }
 
 extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    func controlTextDidChange(_ obj: Notification) { filterMetadata() }
+    func controlTextDidChange(_ obj: Notification) { search() }
 
     /// The panel is dark whatever the terminal's theme is, and the shared field
     /// editor inherits the *window's* appearance — so on a light colourscheme
@@ -537,7 +507,6 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         // the one emacs binding worth spending here: this field is a query, not
         // a document, and transcript search needs a key that isn't already ⌘F
         // in the terminal underneath.
-        case #selector(NSResponder.moveForward(_:)): toggleContentSearch()
         // ← and → switch agent, but only where they'd do nothing in the text:
         // → at the end of the query, ← at its start — both, when it's empty.
         // Anywhere else they move the caret, the way they always have.

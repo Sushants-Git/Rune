@@ -439,17 +439,19 @@ enum AgentHistory {
             }
         case .openCode(let url, let id):
             var bytes = 0
-            var partial = false
             complete = database(url, deadline: deadline) { db in
                 rows(db, "SELECT data FROM part WHERE session_id=? ORDER BY time_created", parameter: id) { row in
                     let size = Int(sqlite3_column_bytes(row, 0))
                     bytes += size
                     guard bytes <= 64 * 1024 * 1024 else { return false }
-                    guard size <= 2 * 1024 * 1024 else { partial = true; return true }
+                    // A part this big is a tool's output — a file read, a
+                    // build log — not something said. Skipped as a matter of
+                    // course, so not reported as a gap: it made every search
+                    // on a machine with one say "partial scan".
+                    guard size <= 2 * 1024 * 1024 else { return true }
                     return match(openCodeText(text(row, 0)) ?? "")
                 }
             }
-            if partial { result.incomplete = true }
         case .openCodeLegacy(let storage, let id):
             complete = legacyParts(storage, id: id, deadline: deadline) { object in
                 match(object["type"] as? String == "text" ? object["text"] as? String ?? "" : "")

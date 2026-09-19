@@ -91,9 +91,10 @@ Existing custom window shortcuts are retained. If a custom binding already
 uses `⌘L`, assign Agent Sessions a free shortcut in Settings.
 
 `⌘L` lists every agent session it can find, live ones first. `Enter` jumps to a
-live one, or resumes a saved one in a new workspace. Typing filters on title,
-agent and directory; `⌃F` searches the saved transcripts themselves, and `⌃F`
-again comes back.
+live one, or resumes a saved one in a new workspace. Typing searches titles,
+folders and accounts straight away, then — as soon as you pause — everything
+said in the transcripts too: sessions found only by their contents are listed
+below the rest, and the preview opens on the matching lines.
 
 Tabs across the top narrow it to one agent — `←`/`→` (at either end of the
 query) and `⇥`/`⇧⇥` move between all, Claude, Codex and OpenCode. Second accounts are found too: a `~/.claude-<name>`
