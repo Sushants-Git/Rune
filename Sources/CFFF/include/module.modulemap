@@ -1,0 +1,4 @@
+module CFFF {
+    header "fff.h"
+    export *
+}

@@ -264,8 +264,18 @@ final class AgentMonitor: @unchecked Sendable {
     }
 
     private func indexCodexSessions() -> [String: URL] {
-        let root = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".codex/sessions")
+        // Every account's sessions, newest first across all of them, so an
+        // agent started with `CODEX_HOME=~/.codex-alt` is found as well.
+        AgentHistory.Account.codex()
+            .map { indexCodexSessions(root: $0.home.appendingPathComponent("sessions")) }
+            .reduce(into: [:]) { merged, index in
+                merged.merge(index) { first, second in
+                    Self.modified(first) >= Self.modified(second) ? first : second
+                }
+            }
+    }
+
+    private func indexCodexSessions(root: URL) -> [String: URL] {
 
         // year/month/day, newest first. The window is days rather than hours
         // because a rollout is filed under the date the session *started* and
@@ -365,10 +375,18 @@ enum ClaudeSessionFile {
         AgentIcon.detect(arguments: ProcessArguments.of(pid: pid)) == .claude
     }
 
+    /// Every account's home, not just `~/.claude`: an agent started with
+    /// `CLAUDE_CONFIG_DIR=~/.claude-alt` writes its status file there, and
+    /// looking only in the default home left those agents with no status at
+    /// all. Re-listed at most once a minute — accounts come and go rarely.
+    private static let homes = AccountHomes { AgentHistory.Account.claude() }
+
     private static func read(pid: pid_t) -> State? {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".claude/sessions/\(pid).json")
-        guard let data = try? Data(contentsOf: url),
+        let data = homes.current.lazy
+            .map { $0.home.appendingPathComponent("sessions/\(pid).json") }
+            .compactMap { try? Data(contentsOf: $0) }
+            .first
+        guard let data,
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let status = object["status"] as? String
         else { return nil }
@@ -815,5 +833,25 @@ enum CodexRollout {
         // Seeking to a byte offset almost certainly landed mid-line.
         if start > 0, !lines.isEmpty { lines.removeFirst() }
         return (lines, start == 0)
+    }
+}
+
+/// A list of an agent's account homes, re-read at most once a minute.
+final class AccountHomes: @unchecked Sendable {
+    private let lock = NSLock()
+    private let load: () -> [AgentHistory.Account]
+    private var cached: [AgentHistory.Account] = []
+    private var loadedAt = Date.distantPast
+
+    init(_ load: @escaping () -> [AgentHistory.Account]) { self.load = load }
+
+    var current: [AgentHistory.Account] {
+        lock.lock()
+        defer { lock.unlock() }
+        if Date().timeIntervalSince(loadedAt) > 60 {
+            cached = load()
+            loadedAt = Date()
+        }
+        return cached
     }
 }

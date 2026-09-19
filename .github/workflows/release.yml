@@ -181,11 +181,14 @@ jobs:
       # Intel user, after release.
       - name: Verify the binary is universal
         run: |
-          archs="$(lipo -archs build/Rune.app/Contents/MacOS/Rune)"
-          echo "architectures: $archs"
-          for want in arm64 x86_64; do
-            case "$archs" in *"$want"*) ;; *) echo "error: missing $want" >&2; exit 1;; esac
+          for binary in MacOS/Rune Frameworks/libfff_c.dylib; do
+            archs="$(lipo -archs "build/Rune.app/Contents/$binary")"
+            echo "$binary: $archs"
+            for want in arm64 x86_64; do
+              case "$archs" in *"$want"*) ;; *) echo "error: $binary missing $want" >&2; exit 1;; esac
+            done
           done
+          codesign --verify --strict build/Rune.app
 
       # Both, and they are not redundant. The zip is what the in-app updater
       # downloads and unpacks unattended; the dmg is what a person opens, and

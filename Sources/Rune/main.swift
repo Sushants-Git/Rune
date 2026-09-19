@@ -34,6 +34,8 @@ CLI.runIfInvokedAsTool()
 // off to a waiter that opens the new copy once it is in place.
 Updater.deferLaunchIfInstalling()
 
+FFFCheck.runIfRequested()
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

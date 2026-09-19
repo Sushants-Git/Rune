@@ -9,9 +9,12 @@ let package = Package(
             name: "GhosttyKit",
             path: "vendor/ghostty/macos/GhosttyKit.xcframework"
         ),
+        // fff's C header, for ⌘L's transcript search. Declarations only: the
+        // library is loaded at run time — see Sources/Rune/FFF.swift.
+        .target(name: "CFFF", path: "Sources/CFFF"),
         .executableTarget(
             name: "Rune",
-            dependencies: ["GhosttyKit"],
+            dependencies: ["GhosttyKit", "CFFF"],
             path: "Sources/Rune",
             linkerSettings: [
                 // libghostty statically bundles C++ dependencies (glslang,

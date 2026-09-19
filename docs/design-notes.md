@@ -368,6 +368,50 @@ POSIX so it means the same thing in sh, bash, zsh and fish.
 that check — otherwise it resolves `claude` to whatever the developer running it
 has installed instead of to its own mock.
 
+### More than one account
+
+A second login for Claude Code or Codex is a second home —
+`CLAUDE_CONFIG_DIR=~/.claude-alt claude`, `CODEX_HOME=~/.codex-alt codex` —
+and ⌘L used to read only the default one, so a whole account's sessions were
+missing. Now every `~/.claude-<name>` holding a `projects` folder and every
+`~/.codex-<name>` holding `sessions` is an account called `<name>`, plus
+whatever home Rune itself was started with. Its rows say "Claude (alt)", the
+account is searchable by name, and resuming goes through
+`/usr/bin/env CLAUDE_CONFIG_DIR=<home> claude --resume …`: through `env` so the
+variable reaches the agent alone and the line means the same thing in every
+shell. When Rune was started *inside* another account, the default account gets
+its own home spelled out on resume too, or it would inherit the other one.
+⌘K's live status reads every account's `sessions/<pid>.json` and every Codex
+account's rollouts, so an agent started with the alias gets a status like any
+other.
+
+### Tabs, and transcript search on fff
+
+⌘L has a tab per agent — all, claude, codex, opencode — each counting the
+current matches, switched with `⇥`/`⇧⇥` or a click. A second account's sessions
+sit under their agent's tab rather than a tab of their own: the agent decides
+how a session resumes, and the account is a detail of that.
+
+`⌃F` searches transcripts with [fff](https://github.com/dmtrKovalenko/fff)'s C
+library: an in-memory index per transcript folder, a SIMD grep, and a fuzzy
+retry when the plain search finds nothing. On this machine's 400 sessions it
+answers in under a second where reading every JSONL file took five, and finds
+everything the old scan did. Two settings matter: grep's own size limit, and
+the index's `cache_budget_max_file_size`, which otherwise leaves files over
+10 MB — every long session — out of a grep entirely. OpenCode keeps its
+transcripts in SQLite, which is not a folder fff can index, so those are still
+read the old way.
+
+The library is pinned by version and checksum in `FFF_VERSION`, fetched and
+made universal by `scripts/fetch-fff.sh`, and shipped in
+`Rune.app/Contents/Frameworks`. It is loaded with `dlopen` rather than linked,
+so a Rune without it (`swift run`, a failed fetch) falls back to the old search
+instead of failing to launch; `RUNE_FFF_LIB` points a development build at it,
+and `RUNE_TEST_FFF=<query>` runs one search both ways and compares them.
+Changing the library's install name voids its signature, and macOS kills a
+process that loads a library with a bad one — hence the re-sign in the fetch
+script, and signing it before the app in `bundle.sh`.
+
 ## Keybindings
 
 | Key | Action |

@@ -21,3 +21,6 @@ ids.json
 
 # macOS
 .DS_Store
+
+# Pinned fff C library (scripts/fetch-fff.sh)
+vendor/fff/

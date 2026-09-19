@@ -202,7 +202,42 @@ struct CheckAgentHistory {
         try write(claudeURL, oversized)
         let partial = await AgentHistory.searchContent("absent", sessions: [saved])
         precondition(partial.incomplete && partial.sessions.isEmpty)
-        print("Agent history fixtures passed: three agents, legacy/WAL, fuzzy/content search, bounded preview, merge, Ghostty exec wrapper, hostile cwd quoting, fail-closed launch, cancellation.")
+        // Second accounts: a sibling home holding the agent's session folder is
+        // an account named after its suffix; one without it is not. Its
+        // sessions carry the account and resume with the agent pointed at it.
+        let altHome = home.appendingPathComponent(".claude-alt")
+        let altID = "22222222-2222-4222-8222-222222222222"
+        try write(altHome.appendingPathComponent("projects/project/\(altID).jsonl"), try record(
+            ["type": "user", "sessionId": altID, "cwd": cwd,
+             "message": ["role": "user", "content": "Second account session"]]))
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".claude-empty"), withIntermediateDirectories: true)
+        let accounts = AgentHistory.Account.claude(home: home, environment: [:])
+        precondition(accounts.map(\.name) == [nil, "alt"], "accounts: \(accounts.map(\.name))")
+        precondition(accounts[0].override == nil && accounts[1].override == altHome.path)
+        let withAlt = await AgentHistory.discover(roots: AgentHistory.Roots(home: home, environment: [:]))
+        guard let alt = withAlt.sessions.first(where: { $0.resume?.sessionID == altID }) else {
+            fatalError("second account's session not discovered")
+        }
+        precondition(alt.account == "alt" && alt.resume?.accountHome == altHome.path)
+        let altCommand = alt.resume!.shellCommand
+        for piece in ["/usr/bin/env", "CLAUDE_CONFIG_DIR=\(altHome.path)", "claude", "--resume", altID] {
+            precondition(altCommand.contains(piece), "missing \(piece) in \(altCommand)")
+        }
+        precondition(!withAlt.sessions.first { $0.resume?.sessionID == claudeID }!
+            .resume!.shellCommand.contains("CLAUDE_CONFIG_DIR"))
+        precondition(withAlt.sessions.first { $0.resume?.sessionID == claudeID }?.account == nil)
+        // Started from inside the other account: the default gets its home
+        // spelled out, so a resume doesn't inherit the other one.
+        let inherited = AgentHistory.Account.claude(
+            home: home, environment: ["CLAUDE_CONFIG_DIR": altHome.path])
+        precondition(inherited.map(\.name) == [nil, "alt"])
+        precondition(inherited[0].override == home.appendingPathComponent(".claude").path)
+        precondition(AgentHistory.Resume(agent: .claude, sessionID: "valid", directory: cwd,
+                                          accountHome: "relative/home") == nil)
+        precondition(AgentHistory.filter(withAlt.sessions, query: "alt").contains { $0.id == alt.id })
+
+        print("Agent history fixtures passed: three agents, legacy/WAL, fuzzy/content search, bounded preview, merge, Ghostty exec wrapper, hostile cwd quoting, fail-closed launch, cancellation, second accounts.")
         if CommandLine.arguments.contains("--local") {
             let start = Date()
             let local = await AgentHistory.discover()

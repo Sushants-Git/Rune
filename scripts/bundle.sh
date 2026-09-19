@@ -82,6 +82,19 @@ else
 fi
 cp "$REPO_ROOT/vendor/ghostty/zig-out/rune-build-info" "$APP/Contents/Resources/ghostty-build-info.txt"
 
+# fff, for ⌘L's transcript search. Loaded at run time from here — see
+# Sources/Rune/FFF.swift — and signed before the app, because signing a bundle
+# does not sign the libraries inside it.
+[ -f "$REPO_ROOT/vendor/fff/libfff_c.dylib" ] || "$REPO_ROOT/scripts/fetch-fff.sh"
+mkdir -p "$APP/Contents/Frameworks"
+cp "$REPO_ROOT/vendor/fff/libfff_c.dylib" "$APP/Contents/Frameworks/libfff_c.dylib"
+if [ -n "${RUNE_SIGN_IDENTITY:-}" ]; then
+  codesign --force --timestamp=none --sign "$RUNE_SIGN_IDENTITY" \
+    ${RUNE_SIGN_KEYCHAIN:+--keychain "$RUNE_SIGN_KEYCHAIN"} "$APP/Contents/Frameworks/libfff_c.dylib"
+else
+  codesign --force --sign - --timestamp=none "$APP/Contents/Frameworks/libfff_c.dylib"
+fi
+
 cp "$REPO_ROOT/NOTICE" "$APP/Contents/Resources/NOTICE"
 cp -R "$REPO_ROOT/licenses" "$APP/Contents/Resources/licenses"
 

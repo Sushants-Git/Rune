@@ -16,14 +16,88 @@ enum AgentHistory {
         }
     }
 
+    /// One place an agent keeps its sessions — its config home.
+    ///
+    /// More than one per agent, because people run more than one account:
+    /// `CLAUDE_CONFIG_DIR=~/.claude-alt claude` and `CODEX_HOME=~/.codex-alt
+    /// codex` are the documented way to keep a second login, and ⌘L used to
+    /// see only the default home, so every session in the other one was
+    /// invisible — and one resumed from it would have started in the wrong
+    /// account. A sibling directory named `.claude-<name>` or `.codex-<name>`
+    /// that holds the agent's session folder is an account called `<name>`.
+    struct Account: Hashable, Sendable {
+        let home: URL
+        /// `alt` for `~/.claude-alt`; nil for the default home.
+        let name: String?
+        /// What to set the agent's home variable to when resuming, or nil to
+        /// leave it alone — the default home needs nothing set.
+        let override: String?
+
+        static func all(
+            prefix: String, variable: String, marker: String,
+            home: URL, environment: [String: String]
+        ) -> [Account] {
+            // The default home is always the default account. When Rune itself
+            // was started with the variable set — from a terminal running the
+            // other account, say — that home is one more account, and the
+            // default gets the variable spelled out on resume, so it doesn't
+            // inherit the other one from Rune's environment.
+            let manager = FileManager.default
+            let standard = home.appendingPathComponent(prefix)
+            let inherited = environment[variable].flatMap { $0.hasPrefix("/") ? $0 : nil }
+            var accounts = [Account(home: standard, name: nil,
+                                    override: inherited == nil ? nil : standard.path)]
+            var seen: Set<String> = [standard.standardizedFileURL.path]
+
+            func add(_ url: URL, name: String) {
+                var isDirectory: ObjCBool = false
+                guard seen.insert(url.standardizedFileURL.path).inserted,
+                      manager.fileExists(atPath: url.appendingPathComponent(marker).path,
+                                         isDirectory: &isDirectory), isDirectory.boolValue
+                else { return }
+                accounts.append(Account(home: url, name: name, override: url.path))
+            }
+            let siblings = ((try? manager.contentsOfDirectory(atPath: home.path)) ?? [])
+                .filter { $0.hasPrefix(prefix + "-") && $0.count > prefix.count + 1 }
+                .sorted()
+            for entry in siblings {
+                add(home.appendingPathComponent(entry), name: String(entry.dropFirst(prefix.count + 1)))
+            }
+            if let inherited {
+                let url = URL(fileURLWithPath: inherited)
+                let last = url.lastPathComponent
+                add(url, name: last.hasPrefix(prefix + "-") ? String(last.dropFirst(prefix.count + 1)) : last)
+            }
+            return accounts
+        }
+
+        static func claude(
+            home: URL = FileManager.default.homeDirectoryForCurrentUser,
+            environment: [String: String] = ProcessInfo.processInfo.environment
+        ) -> [Account] {
+            all(prefix: ".claude", variable: "CLAUDE_CONFIG_DIR", marker: "projects",
+                home: home, environment: environment)
+        }
+
+        static func codex(
+            home: URL = FileManager.default.homeDirectoryForCurrentUser,
+            environment: [String: String] = ProcessInfo.processInfo.environment
+        ) -> [Account] {
+            all(prefix: ".codex", variable: "CODEX_HOME", marker: "sessions",
+                home: home, environment: environment)
+        }
+    }
+
     struct Resume: Hashable, Sendable {
         let agent: Agent
         let sessionID: String
         let directory: String
+        /// The account's home to point the agent at, when it isn't the default.
+        let accountHome: String?
 
         /// Reject options, control characters and arbitrary commands at ingestion.
         /// Keep the original directory, not a display-sanitized version of it.
-        init?(agent: Agent, sessionID: String, directory: String) {
+        init?(agent: Agent, sessionID: String, directory: String, accountHome: String? = nil) {
             let validID = !sessionID.isEmpty && sessionID.utf8.count <= 160
                 && sessionID.utf8.allSatisfy {
                     (48...57).contains($0) || (65...90).contains($0)
@@ -32,9 +106,25 @@ enum AgentHistory {
             guard validID, directory.hasPrefix("/"), directory.utf8.count < 16_384,
                   !directory.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
             else { return nil }
+            if let accountHome {
+                guard accountHome.hasPrefix("/"), accountHome.utf8.count < 4096,
+                      !accountHome.unicodeScalars.contains(where: {
+                          CharacterSet.controlCharacters.contains($0) })
+                else { return nil }
+            }
             self.agent = agent
             self.sessionID = sessionID
             self.directory = directory
+            self.accountHome = agent == .openCode ? nil : accountHome
+        }
+
+        /// The variable that points this agent at another home.
+        private var homeVariable: String? {
+            switch agent {
+            case .claude: "CLAUDE_CONFIG_DIR"
+            case .codex: "CODEX_HOME"
+            case .openCode: nil
+            }
         }
 
         var arguments: [String] {
@@ -68,8 +158,15 @@ enum AgentHistory {
         /// words of POSIX — `cd … && exec …` — so it means the same thing in
         /// sh, bash, zsh and fish alike.
         var shellCommand: String {
+            // A second account resumes through `env`, so the variable is set
+            // for the agent alone and the same words work in every shell —
+            // `VAR=value exec …` is not something fish, for one, accepts.
+            var command = arguments
+            if let accountHome, let variable = homeVariable {
+                command = ["/usr/bin/env", "\(variable)=\(accountHome)"] + command
+            }
             let script = "cd -- \(Self.quote(directory)) && exec "
-                + arguments.map(Self.quote).joined(separator: " ")
+                + command.map(Self.quote).joined(separator: " ")
             // The outer exec needs an executable, not the shell builtin `cd`.
             // Quote the entire script again for that outer shell's parse.
             return Self.quote(Self.loginShell) + " -l -i -c " + Self.quote(script)
@@ -114,6 +211,9 @@ enum AgentHistory {
         var agent: Agent?
         var title: String
         var directory: String
+        /// Which of the agent's accounts it belongs to — `alt` for
+        /// `~/.claude-alt` — or nil for the default one.
+        var account: String?
         var updatedAt: Date
         /// Controller contract: this is the exact terminal surface UUID, not a
         /// workspace index. Focus it across windows; NEVER resume a live row.
@@ -131,7 +231,7 @@ enum AgentHistory {
             updatedAt: Date = Date(), resume: Resume? = nil
         ) -> Session {
             Session(id: "live:\(target.uuidString)", agent: agent ?? resume?.agent,
-                    title: title, directory: directory, updatedAt: updatedAt,
+                    title: title, directory: directory, account: nil, updatedAt: updatedAt,
                     liveTarget: target, resume: resume)
         }
 
@@ -142,8 +242,12 @@ enum AgentHistory {
 
     /// Injectable roots for tests; respects the agents' home overrides.
     struct Roots: Sendable {
-        var claude: URL
-        var codex: URL
+        /// Every account's home, the default first.
+        var claudeAccounts: [Account]
+        var codexAccounts: [Account]
+        /// The default homes.
+        var claude: URL { claudeAccounts[0].home }
+        var codex: URL { codexAccounts[0].home }
         var openCode: URL
         var openCodeDatabase: URL
 
@@ -153,8 +257,8 @@ enum AgentHistory {
                 guard let path = environment[key], path.hasPrefix("/") else { return fallback }
                 return URL(fileURLWithPath: path)
             }
-            claude = root("CLAUDE_CONFIG_DIR", home.appendingPathComponent(".claude"))
-            codex = root("CODEX_HOME", home.appendingPathComponent(".codex"))
+            claudeAccounts = Account.claude(home: home, environment: environment)
+            codexAccounts = Account.codex(home: home, environment: environment)
             openCode = root("XDG_DATA_HOME", home.appendingPathComponent(".local/share"))
                 .appendingPathComponent("opencode")
             openCodeDatabase = root("RUNE_OPENCODE_DB", openCode.appendingPathComponent("opencode.db"))
@@ -228,55 +332,130 @@ enum AgentHistory {
     /// keystroke. Streaming is bounded to 2 MiB per record and 64 MiB per log;
     /// a 15-second overall budget prevents a large store monopolizing I/O.
     /// `incomplete` must be displayed: no match in a partial scan is not proof.
-    static func searchContent(_ query: String, sessions: [Session]) async -> ContentResults {
+    /// A faster way to search JSONL transcripts: given the query and the
+    /// folders they live in, the first matching line of each file that has
+    /// one, keyed by the file's standardized path. See `FFF`.
+    typealias Grep = @Sendable (_ query: String, _ folders: [URL])
+        -> (lines: [String: String], complete: Bool)
+
+    /// The folders every Claude and Codex account keeps its transcripts in.
+    static func transcriptFolders(_ roots: Roots) -> [URL] {
+        roots.claudeAccounts.map { $0.home.appendingPathComponent("projects") }
+            + roots.codexAccounts.flatMap {
+                [$0.home.appendingPathComponent("sessions"),
+                 $0.home.appendingPathComponent("archived_sessions")]
+            }
+    }
+
+    static func searchContent(
+        _ query: String, sessions: [Session], grep: Grep? = nil, roots: Roots = Roots()
+    ) async -> ContentResults {
         await background {
             let needle = String(query.trimmingCharacters(in: .whitespacesAndNewlines).prefix(512))
             guard !needle.isEmpty else { return ContentResults(sessions: [], excerpts: [:], incomplete: false) }
             let deadline = Date().addingTimeInterval(15)
             var result = ContentResults(sessions: [], excerpts: [:], incomplete: false)
+
+            // One grep over every JSONL transcript when there is a grep to
+            // use; the per-file scan below is left with only what it can't
+            // cover — OpenCode's database — or everything, when there isn't.
+            var grepped: [String: String]?
+            if let grep {
+                let found = grep(needle, transcriptFolders(roots).filter {
+                    FileManager.default.fileExists(atPath: $0.path)
+                })
+                grepped = found.lines
+                if !found.complete { result.incomplete = true }
+            }
+
             for session in sessions {
                 guard !Task.isCancelled, Date() < deadline else { result.incomplete = true; break }
                 guard let source = session.transcript else { continue }
-                var excerpt: String?
-                func match(_ body: String) -> Bool {
-                    if let range = body.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) {
-                        let start = body.index(range.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
-                        let end = body.index(range.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
-                        excerpt = display(String(body[start..<end]), limit: 1_000)
-                        return false
+                if let grepped, case .jsonl(let url) = source {
+                    if let line = grepped[url.standardizedFileURL.path] {
+                        result.sessions.append(session)
+                        result.excerpts[session.id] = excerpt(fromRecord: line, needle: needle)
                     }
-                    return !Task.isCancelled && Date() < deadline
+                    continue
                 }
-                var complete = true
-                switch source {
-                case .jsonl(let url):
-                    complete = lines(url, limit: 64 * 1024 * 1024) { object in
-                        guard let body = messageText(object) else { return !Task.isCancelled && Date() < deadline }
-                        return match(body)
-                    }
-                case .openCode(let url, let id):
-                    var bytes = 0
-                    complete = database(url, deadline: deadline) { db in
-                        rows(db, "SELECT data FROM part WHERE session_id=? ORDER BY time_created", parameter: id) { row in
-                            let size = Int(sqlite3_column_bytes(row, 0))
-                            bytes += size
-                            guard bytes <= 64 * 1024 * 1024 else { return false }
-                            guard size <= 2 * 1024 * 1024 else { result.incomplete = true; return true }
-                            return match(openCodeText(text(row, 0)) ?? "")
-                        }
-                    }
-                case .openCodeLegacy(let storage, let id):
-                    complete = legacyParts(storage, id: id, deadline: deadline) { object in
-                        match(object["type"] as? String == "text" ? object["text"] as? String ?? "" : "")
-                    }
-                }
-                if let excerpt {
+                let scanned = scan(source, for: needle, deadline: deadline, result: &result)
+                if let excerpt = scanned.excerpt {
                     result.sessions.append(session)
                     result.excerpts[session.id] = excerpt
-                } else if !complete { result.incomplete = true }
+                } else if !scanned.complete { result.incomplete = true }
             }
             return result
         }
+    }
+
+    /// The text around `needle` in a matching transcript record: the message
+    /// itself when the match is in it, the record's raw text otherwise — a
+    /// match can be in a tool's output, and a fuzzy one needn't contain the
+    /// query verbatim at all.
+    private static func excerpt(fromRecord line: String, needle: String) -> String {
+        // The message when it holds the match; otherwise the record itself,
+        // with JSON's escapes undone so it reads as text.
+        var body = line
+        if let message = json(Data(line.utf8)).flatMap(messageText),
+           message.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
+            body = message
+        } else {
+            body = line.replacingOccurrences(of: "\\n", with: "\n")
+                .replacingOccurrences(of: "\\\"", with: "\"")
+                .replacingOccurrences(of: "\\t", with: " ")
+        }
+        // The whole query where it appears as written; otherwise its longest
+        // word, since fff matches words separately and forgives typos.
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+            .sorted { $0.count > $1.count }
+        guard let range = ([needle] + words).lazy.compactMap({ body.range(of: $0, options: options) }).first
+        else { return display(String(body.prefix(480)), limit: 1_000) }
+        let start = body.index(range.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
+        let end = body.index(range.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
+        return display(String(body[start..<end]), limit: 1_000)
+    }
+
+    /// Read one transcript looking for `needle`, the slow way.
+    private static func scan(
+        _ source: Transcript, for needle: String, deadline: Date, result: inout ContentResults
+    ) -> (excerpt: String?, complete: Bool) {
+        var excerpt: String?
+        func match(_ body: String) -> Bool {
+            if let range = body.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) {
+                let start = body.index(range.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
+                let end = body.index(range.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
+                excerpt = display(String(body[start..<end]), limit: 1_000)
+                return false
+            }
+            return !Task.isCancelled && Date() < deadline
+        }
+        var complete = true
+        switch source {
+        case .jsonl(let url):
+            complete = lines(url, limit: 64 * 1024 * 1024) { object in
+                guard let body = messageText(object) else { return !Task.isCancelled && Date() < deadline }
+                return match(body)
+            }
+        case .openCode(let url, let id):
+            var bytes = 0
+            var partial = false
+            complete = database(url, deadline: deadline) { db in
+                rows(db, "SELECT data FROM part WHERE session_id=? ORDER BY time_created", parameter: id) { row in
+                    let size = Int(sqlite3_column_bytes(row, 0))
+                    bytes += size
+                    guard bytes <= 64 * 1024 * 1024 else { return false }
+                    guard size <= 2 * 1024 * 1024 else { partial = true; return true }
+                    return match(openCodeText(text(row, 0)) ?? "")
+                }
+            }
+            if partial { result.incomplete = true }
+        case .openCodeLegacy(let storage, let id):
+            complete = legacyParts(storage, id: id, deadline: deadline) { object in
+                match(object["type"] as? String == "text" ? object["text"] as? String ?? "" : "")
+            }
+        }
+        return (excerpt, complete)
     }
 
     /// Metadata-only matching; all whitespace-separated terms must match.
@@ -315,6 +494,7 @@ enum AgentHistory {
                 else if directory.contains(term) { score = 80 }
                 else if identifier.contains(term) { score = 90 }
                 else if agent.contains(term) { score = 60 }
+                else if let account = session.account?.lowercased(), account.contains(term) { score = 60 }
                 else if state == term { score = 40 }
                 else if let gaps = tight(term, in: title) { score = max(1, 55 - gaps) }
                 else if let gaps = tight(term, in: project) { score = max(1, 45 - gaps) }
@@ -369,6 +549,7 @@ enum AgentHistory {
                 let key = Session.savedID(agent: resume.agent, sessionID: resume.sessionID)
                 represented.insert(key)
                 session.transcript = session.transcript ?? savedByID[key]?.transcript
+                session.account = session.account ?? savedByID[key]?.account
             }
             result.append(session)
         }
@@ -400,13 +581,19 @@ enum AgentHistory {
         var sessions: [Session] = []
         var notes: [String] = []
         var titles: [String: String] = [:]
-        _ = lines(roots.codex.appendingPathComponent("session_index.jsonl"), limit: 8 * 1024 * 1024) { object in
-            if let id = object["id"] as? String, let title = object["thread_name"] as? String { titles[id] = title }
-            return !Task.isCancelled
+        for account in roots.codexAccounts {
+            _ = lines(account.home.appendingPathComponent("session_index.jsonl"), limit: 8 * 1024 * 1024) { object in
+                if let id = object["id"] as? String, let title = object["thread_name"] as? String { titles[id] = title }
+                return !Task.isCancelled
+            }
         }
-        for (agent, root) in [(Agent.claude, roots.claude.appendingPathComponent("projects")),
-                              (.codex, roots.codex.appendingPathComponent("sessions")),
-                              (.codex, roots.codex.appendingPathComponent("archived_sessions"))] {
+        let stores: [(Agent, URL, Account)] =
+            roots.claudeAccounts.map { (.claude, $0.home.appendingPathComponent("projects"), $0) }
+            + roots.codexAccounts.flatMap { account in
+                [(Agent.codex, account.home.appendingPathComponent("sessions"), account),
+                 (.codex, account.home.appendingPathComponent("archived_sessions"), account)]
+            }
+        for (agent, root, account) in stores {
             let files = enumerate(root, extension: "jsonl", limit: 20_000)
             if files.limited { notes.append("\(agent.name) discovery reached its file limit.") }
             for url in files.urls {
@@ -437,11 +624,15 @@ enum AgentHistory {
                         else if let summary = object["summary"] as? String { title = summary }
                     }
                 }
-                guard let id, let directory, let resume = Resume(agent: agent, sessionID: id, directory: directory) else { continue }
+                guard let id, let directory,
+                      let resume = Resume(agent: agent, sessionID: id, directory: directory,
+                                          accountHome: account.override)
+                else { continue }
                 let updated = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
                 sessions.append(Session(id: Session.savedID(agent: agent, sessionID: id), agent: agent,
                     title: display((agent == .codex ? titles[id] : nil) ?? title ?? "\(agent.name) \(id.prefix(8))"),
-                    directory: directory, updatedAt: updated, resume: resume, transcript: .jsonl(url)))
+                    directory: directory, account: account.name, updatedAt: updated,
+                    resume: resume, transcript: .jsonl(url)))
             }
         }
         if FileManager.default.fileExists(atPath: roots.openCodeDatabase.path) {
@@ -454,7 +645,7 @@ enum AgentHistory {
                     guard let id = textValue(row, 0), let directory = textValue(row, 2),
                           let resume = Resume(agent: .openCode, sessionID: id, directory: directory) else { return true }
                     sessions.append(Session(id: Session.savedID(agent: .openCode, sessionID: id), agent: .openCode,
-                        title: display(textValue(row, 1) ?? id), directory: directory,
+                        title: display(textValue(row, 1) ?? id), directory: directory, account: nil,
                         updatedAt: Date(timeIntervalSince1970: sqlite3_column_double(row, 3) / 1000),
                         resume: resume, transcript: .openCode(database: roots.openCodeDatabase, sessionID: id)))
                     return true
@@ -472,7 +663,7 @@ enum AgentHistory {
                   let resume = Resume(agent: .openCode, sessionID: id, directory: directory) else { continue }
             let time = object["time"] as? [String: Any]
             sessions.append(Session(id: Session.savedID(agent: .openCode, sessionID: id), agent: .openCode,
-                title: display(object["title"] as? String ?? id), directory: directory,
+                title: display(object["title"] as? String ?? id), directory: directory, account: nil,
                 updatedAt: Date(timeIntervalSince1970: (time?["updated"] as? Double ?? 0) / 1000),
                 resume: resume, transcript: .openCodeLegacy(storage: storage, sessionID: id)))
         }

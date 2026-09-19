@@ -19,6 +19,12 @@ final class SessionPalette: NSView, OverlayPanel {
     private let onCancel: () -> Void
     private var sessions: [AgentHistory.Session]
     private var visible: [AgentHistory.Session] = []
+    /// What the search matched, before the agent tab narrows it — kept so
+    /// switching tabs doesn't have to search again, and so each tab can say
+    /// how many of the matches are its own.
+    private var matched: [AgentHistory.Session] = []
+    private var agentTab: AgentHistory.Agent?
+    private let tabs = AgentTabs()
     private var excerpts: [String: String] = [:]
     private var discoveryNotes = ""
     private var discovering = true
@@ -231,19 +237,22 @@ final class SessionPalette: NSView, OverlayPanel {
             self?.toggleContentSearch()
         }
         let hints = NSStackView(views: [
-            commitHint, contentHint, HintPair(keys: ["esc"], label: "Dismiss"),
+            commitHint, HintPair(keys: ["⇥"], label: "Agent"), contentHint,
+            HintPair(keys: ["esc"], label: "Dismiss"),
         ])
         hints.orientation = .horizontal
         hints.spacing = 14
         hints.setContentHuggingPriority(.required, for: .horizontal)
 
         let headerDivider = Divider()
+        let tabsDivider = Divider()
         let bodyDivider = Divider(vertical: true)
+        tabs.onSelect = { [weak self] agent in self?.selectTab(agent) }
         let footerDivider = Divider()
 
         let prompt = PalettePrompt.make()
         addSubview(prompt)
-        for view in [field, modeChip, headerDivider, listScroll, listEmpty, bodyDivider,
+        for view in [field, modeChip, headerDivider, tabs, tabsDivider, listScroll, listEmpty, bodyDivider,
                      previewIcon, previewHeading, previewScroll, footerDivider, status, hints] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
@@ -270,7 +279,14 @@ final class SessionPalette: NSView, OverlayPanel {
             listScroll.leadingAnchor.constraint(
                 equalTo: leadingAnchor, constant: SwitcherPalette.rowInset),
             listScroll.widthAnchor.constraint(equalToConstant: Self.listWidth),
-            listScroll.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
+            tabs.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
+            tabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset - 8),
+            tabs.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
+            tabsDivider.topAnchor.constraint(equalTo: tabs.bottomAnchor),
+            tabsDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tabsDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+
+            listScroll.topAnchor.constraint(equalTo: tabsDivider.bottomAnchor),
             listScroll.heightAnchor.constraint(equalToConstant: Self.bodyHeight),
             listEmpty.centerXAnchor.constraint(equalTo: listScroll.centerXAnchor),
             listEmpty.centerYAnchor.constraint(equalTo: listScroll.centerYAnchor),
@@ -357,7 +373,8 @@ final class SessionPalette: NSView, OverlayPanel {
         apply([])
         let corpus = sessions
         searchTask = Task { [weak self] in
-            let result = await AgentHistory.searchContent(query, sessions: corpus)
+            let result = await AgentHistory.searchContent(
+                query, sessions: corpus, grep: FFF.historyGrep)
             guard !Task.isCancelled, let self, !self.dismissed, self.generation == version else { return }
             self.searching = false
             self.excerpts = result.excerpts
@@ -366,9 +383,27 @@ final class SessionPalette: NSView, OverlayPanel {
         }
     }
 
+    /// Show one agent's sessions, or everyone's.
+    private func selectTab(_ agent: AgentHistory.Agent?) {
+        guard agent != agentTab else { return }
+        agentTab = agent
+        apply(matched)
+    }
+
+    /// ⇥ and ⇧⇥ walk the tabs, wrapping.
+    private func cycleTab(by step: Int) {
+        let order: [AgentHistory.Agent?] = [nil] + AgentHistory.Agent.allCases
+        let index = order.firstIndex { $0 == agentTab } ?? 0
+        selectTab(order[(index + step + order.count) % order.count])
+    }
+
     private func apply(_ matches: [AgentHistory.Session]) {
         let oldID = visible.indices.contains(table.selectedRow) ? visible[table.selectedRow].id : nil
-        visible = matches
+        matched = matches
+        var counts: [AgentHistory.Agent?: Int] = [nil: matches.count]
+        for session in matches { if let agent = session.agent { counts[agent, default: 0] += 1 } }
+        tabs.update(selected: agentTab, counts: counts)
+        visible = agentTab.map { agent in matches.filter { $0.agent == agent } } ?? matches
         table.reloadData()
         if !visible.isEmpty {
             let row = visible.firstIndex { $0.id == oldID } ?? 0
@@ -388,7 +423,8 @@ final class SessionPalette: NSView, OverlayPanel {
                 + " for “\(AgentHistory.display(contentQuery, limit: 40))”"
                 + (contentIncomplete ? " · partial scan" : "")
         } else {
-            status.stringValue = "\(visible.count) of \(sessions.count) sessions"
+            let total = agentTab.map { agent in sessions.filter { $0.agent == agent }.count } ?? sessions.count
+            status.stringValue = "\(visible.count) of \(total) sessions"
                 + (discovering ? " · reading saved history…" : "")
                 + (discoveryNotes.isEmpty ? "" : " · some history unavailable")
         }
@@ -502,6 +538,8 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         // a document, and transcript search needs a key that isn't already ⌘F
         // in the terminal underneath.
         case #selector(NSResponder.moveForward(_:)): toggleContentSearch()
+        case #selector(NSResponder.insertTab(_:)): cycleTab(by: 1)
+        case #selector(NSResponder.insertBacktab(_:)): cycleTab(by: -1)
         default: return false
         }
         return true
@@ -531,7 +569,11 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         let directory = AgentHistory
             .display(session.directory, limit: 300)
             .replacingOccurrences(of: "\n", with: " ")
-        let detail = [session.agent?.name ?? "Terminal", Self.abbreviate(directory), Self.when(session.updatedAt)]
+        // The account goes with the agent — "Claude (alt)" — because that is
+        // what decides which login a resume lands in.
+        let agent = (session.agent?.name ?? "Terminal")
+            + (session.account.map { " (\(AgentHistory.display($0, limit: 24)))" } ?? "")
+        let detail = [agent, Self.abbreviate(directory), Self.when(session.updatedAt)]
             .filter { !$0.isEmpty }
             .joined(separator: "  ·  ")
         let subtitle = NSTextField(labelWithString: detail)
@@ -593,4 +635,105 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         }
         return date.formatted(date: .abbreviated, time: .omitted)
     }
+}
+
+/// The row of agent tabs across ⌘L: all, then one per agent, each with how
+/// many of the current matches it holds. A second account's sessions live
+/// under their agent's tab, marked on the row, rather than getting a tab of
+/// their own — which agent it is decides how it resumes; the account is a
+/// detail of that.
+@MainActor
+final class AgentTabs: NSView {
+    var onSelect: ((AgentHistory.Agent?) -> Void)?
+
+    private let stack = NSStackView()
+    private var buttons: [(agent: AgentHistory.Agent?, view: AgentTab)] = []
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        stack.orientation = .horizontal
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        for agent in [nil] + AgentHistory.Agent.allCases {
+            let tab = AgentTab(title: agent?.name.lowercased() ?? "all")
+            tab.onClick = { [weak self] in self?.onSelect?(agent) }
+            buttons.append((agent, tab))
+            stack.addArrangedSubview(tab)
+        }
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: 32),
+        ])
+        setAccessibilityRole(.tabGroup)
+        setAccessibilityLabel("Agents")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func update(selected: AgentHistory.Agent?, counts: [AgentHistory.Agent?: Int]) {
+        for (agent, view) in buttons {
+            view.set(selected: agent == selected, count: counts[agent] ?? 0)
+        }
+    }
+}
+
+/// One of those tabs: its name, a count, and an accent underline when it is
+/// the one showing.
+@MainActor
+final class AgentTab: NSView {
+    var onClick: (() -> Void)?
+
+    private let label = NSTextField(labelWithString: "")
+    private let count = NSTextField(labelWithString: "")
+    private let underline = NSView()
+    private let title: String
+
+    init(title: String) {
+        self.title = title
+        super.init(frame: .zero)
+        label.stringValue = title
+        for field in [label, count] {
+            field.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(field)
+        }
+        underline.wantsLayer = true
+        underline.layer?.backgroundColor = PaletteStyle.accent.cgColor
+        underline.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(underline)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            count.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
+            count.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),
+            count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            underline.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            underline.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            underline.bottomAnchor.constraint(equalTo: bottomAnchor),
+            underline.heightAnchor.constraint(equalToConstant: 2),
+        ])
+        setAccessibilityElement(true)
+        setAccessibilityRole(.radioButton)
+        set(selected: false, count: 0)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    func set(selected: Bool, count value: Int) {
+        label.font = PaletteStyle.font(ofSize: 13, weight: selected ? .semibold : .regular)
+        label.textColor = selected ? PaletteStyle.primaryText : PaletteStyle.secondaryText
+        count.font = PaletteStyle.font(ofSize: 12)
+        count.textColor = PaletteStyle.tertiaryText
+        count.stringValue = "\(value)"
+        underline.isHidden = !selected
+        setAccessibilityLabel("\(title), \(value) sessions")
+        setAccessibilityValue(selected)
+    }
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }

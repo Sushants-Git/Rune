@@ -95,6 +95,13 @@ live one, or resumes a saved one in a new workspace. Typing filters on title,
 agent and directory; `⌃F` searches the saved transcripts themselves, and `⌃F`
 again comes back.
 
+Tabs across the top narrow it to one agent — `⇥` and `⇧⇥` move between all,
+Claude, Codex and OpenCode. Second accounts are found too: a `~/.claude-<name>`
+or `~/.codex-<name>` home (the one you point `CLAUDE_CONFIG_DIR` or
+`CODEX_HOME` at) shows its sessions as "Claude (name)", and resuming one starts
+the agent in that account. Transcript search runs on
+[fff](https://github.com/dmtrKovalenko/fff), which is fast and forgives a typo.
+
 ## The `rune` command
 
 ```sh
