@@ -237,7 +237,21 @@ struct CheckAgentHistory {
                                           accountHome: "relative/home") == nil)
         precondition(AgentHistory.filter(withAlt.sessions, query: "alt").contains { $0.id == alt.id })
 
-        print("Agent history fixtures passed: three agents, legacy/WAL, fuzzy/content search, bounded preview, merge, Ghostty exec wrapper, hostile cwd quoting, fail-closed launch, cancellation, second accounts.")
+        // Telescope-style matching: letters in order inside one word count,
+        // the same letters scattered across words don't, and every word of a
+        // query has to match.
+        func marked(_ query: String, _ text: String) -> String? {
+            AgentHistory.matchRanges(query, in: text).map { $0.map { String(text[$0]) }.joined() }
+        }
+        precondition(marked("intersection", "the interhihellosection here") == "intersection")
+        precondition(marked("intersection", "an Intersection") == "Intersection")
+        precondition(marked("intersection", "in the terminal a section of words") == nil)
+        precondition(marked("pane header", "the header of a pane") == "headerpane"
+            || marked("pane header", "the header of a pane") == "paneheader")
+        precondition(marked("pane header", "only a pane") == nil)
+        precondition(marked("inter", "i2345678901n") == nil, "gap limit")
+
+        print("Agent history fixtures passed: three agents, legacy/WAL, fuzzy/content search, bounded preview, merge, Ghostty exec wrapper, hostile cwd quoting, fail-closed launch, cancellation, second accounts, telescope matching.")
         if CommandLine.arguments.contains("--local") {
             let start = Date()
             let local = await AgentHistory.discover()

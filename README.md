@@ -100,8 +100,9 @@ Tabs across the top narrow it to one agent — `←`/`→` (at either end of the
 query) and `⇥`/`⇧⇥` move between all, Claude, Codex and OpenCode. Second accounts are found too: a `~/.claude-<name>`
 or `~/.codex-<name>` home (the one you point `CLAUDE_CONFIG_DIR` or
 `CODEX_HOME` at) marks its sessions with the account's name, and resuming one starts
-the agent in that account. Transcript search runs on
-[fff](https://github.com/dmtrKovalenko/fff), which is fast and forgives a typo.
+the agent in that account. Matching is telescope-style — `intersection` also
+finds `interhihellosection` — and the preview highlights what matched.
+Transcript search runs on [fff](https://github.com/dmtrKovalenko/fff).
 
 ## The `rune` command
 

@@ -398,20 +398,42 @@ sit under their agent's tab rather than a tab of their own: the agent decides
 how a session resumes, and the account is a detail of that.
 
 Typing searches transcripts as well as titles — no separate mode. Titles,
-folders and accounts filter at once; after a short pause the same query goes
-to [fff](https://github.com/dmtrKovalenko/fff)'s C library, and sessions found
-only by their contents are appended below the name matches, with the preview
-opening on the match. (It was a ⌃F mode that searched transcripts *instead* of
-titles until fff made the second search cheap enough to always run. Queries
-of one character skip it: they match nearly every transcript.) The indexes are
-built when ⌘L opens, so the first search doesn't wait for a scan. fff is an in-memory index per transcript folder, a SIMD grep, and a fuzzy
-retry when the plain search finds nothing. On this machine's 400 sessions it
-answers in under a second where reading every JSONL file took five, and finds
-everything the old scan did. Two settings matter: grep's own size limit, and
-the index's `cache_budget_max_file_size`, which otherwise leaves files over
-10 MB — every long session — out of a grep entirely. OpenCode keeps its
-transcripts in SQLite, which is not a folder fff can index, so those are still
-read the old way.
+folders and accounts filter at once; after a short pause the transcripts are
+searched too, and sessions found only by what was said in them are appended
+below the name matches, the preview opening on the match with what matched
+picked out. Queries of one character skip the transcripts: they match nearly
+all of them.
+
+**Matching is telescope-style**, one rule everywhere (`AgentHistory.matchRanges`):
+the query as written, or else every word of it, each as written or — three
+letters or more — as its letters in order *inside one word*, with at most 8
+letters between two of them. So `intersection` finds `interhihellosection`,
+but not the same letters strewn across a sentence, and not a hash or encoded
+image that happens to hold them; a subsequence allowed to cross words matches
+nearly any long text. Only what was *said* counts — a message's own text, not
+tool output or files the agent read — or "libghostty" found 160 sessions that
+merely had the README open.
+
+**fff finds where to look; Rune decides what matches.** For the query's
+longest word, [fff](https://github.com/dmtrKovalenko/fff)'s C library finds
+every line containing it, as written (plain SIMD search) or letters-in-order
+(a regex, `i\w?…n\w?…`); for the other words, only which files contain them.
+A matching message has to contain the longest word, so Rune reads just those
+lines, in the files holding every word, by the byte offsets fff reports. On
+this machine that is the old scan's answer exactly, in 1.5–3 s instead of
+5–7. Things that did not work, and why the split: fff returns only a line's
+first 512 bytes, and its fuzzy mode looks no further than that — a transcript
+record is often megabytes; a regex spanning several words is slow over such
+lines; fff reads `{…}` in a query as a glob (so `\w{0,8}` matched nothing) and
+an inline `(?i)` broke alternation, which is why the regex is written out long
+and the query lower-cased for fff's smart case. Two limits also matter: grep's
+own size limit, and the index's `cache_budget_max_file_size`, which otherwise
+leaves files over 10 MB — every long session — out entirely. OpenCode keeps its
+transcripts in SQLite, which fff can't index, so those are read the old way,
+with the same rule. The indexes are built when ⌘L opens.
+
+Rows show only the folder's own name — `site`, not `~/Workspace/@devfolio/site`;
+the full path is in the tooltip.
 
 The library is pinned by version and checksum in `FFF_VERSION`, fetched and
 made universal by `scripts/fetch-fff.sh`, and shipped in

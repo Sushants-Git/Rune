@@ -332,11 +332,11 @@ enum AgentHistory {
     /// keystroke. Streaming is bounded to 2 MiB per record and 64 MiB per log;
     /// a 15-second overall budget prevents a large store monopolizing I/O.
     /// `incomplete` must be displayed: no match in a partial scan is not proof.
-    /// A faster way to search JSONL transcripts: given the query and the
-    /// folders they live in, the first matching line of each file that has
-    /// one, keyed by the file's standardized path. See `FFF`.
+    /// Candidates in JSONL transcripts: given the query and the folders they
+    /// live in, the offsets of the lines that could match, keyed by each
+    /// file's standardized path. Only those lines are read. See `FFF`.
     typealias Grep = @Sendable (_ query: String, _ folders: [URL])
-        -> (lines: [String: String], complete: Bool)
+        -> (lines: [String: [UInt64]], complete: Bool)
 
     /// The folders every Claude and Codex account keeps its transcripts in.
     static func transcriptFolders(_ roots: Roots) -> [URL] {
@@ -356,25 +356,31 @@ enum AgentHistory {
             let deadline = Date().addingTimeInterval(15)
             var result = ContentResults(sessions: [], excerpts: [:], incomplete: false)
 
-            // One grep over every JSONL transcript when there is a grep to
-            // use; the per-file scan below is left with only what it can't
-            // cover — OpenCode's database — or everything, when there isn't.
-            var grepped: [String: String]?
+            // A shortlist of JSONL transcripts when there is a grep to make
+            // one; only those are read. OpenCode's database, which it can't
+            // see into, is read as before — and everything is, without one.
+            var candidates: [String: [UInt64]]?
             if let grep {
                 let found = grep(needle, transcriptFolders(roots).filter {
                     FileManager.default.fileExists(atPath: $0.path)
                 })
-                grepped = found.lines
+                candidates = found.lines
                 if !found.complete { result.incomplete = true }
             }
 
             for session in sessions {
                 guard !Task.isCancelled, Date() < deadline else { result.incomplete = true; break }
                 guard let source = session.transcript else { continue }
-                if let grepped, case .jsonl(let url) = source {
-                    if let line = grepped[url.standardizedFileURL.path] {
+                if let candidates, case .jsonl(let url) = source {
+                    for offset in candidates[url.standardizedFileURL.path] ?? [] {
+                        guard !Task.isCancelled, Date() < deadline else { result.incomplete = true; break }
+                        guard let line = record(at: offset, in: url),
+                              let body = json(line).flatMap(messageText),
+                              let excerpt = excerpt(of: needle, in: body)
+                        else { continue }
                         result.sessions.append(session)
-                        result.excerpts[session.id] = excerpt(fromRecord: line, needle: needle)
+                        result.excerpts[session.id] = excerpt
+                        break
                     }
                     continue
                 }
@@ -392,40 +398,42 @@ enum AgentHistory {
     /// itself when the match is in it, the record's raw text otherwise — a
     /// match can be in a tool's output, and a fuzzy one needn't contain the
     /// query verbatim at all.
-    private static func excerpt(fromRecord line: String, needle: String) -> String {
-        // The message when it holds the match; otherwise the record itself,
-        // with JSON's escapes undone so it reads as text.
-        var body = line
-        if let message = json(Data(line.utf8)).flatMap(messageText),
-           message.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) != nil {
-            body = message
-        } else {
-            body = line.replacingOccurrences(of: "\\n", with: "\n")
-                .replacingOccurrences(of: "\\\"", with: "\"")
-                .replacingOccurrences(of: "\\t", with: " ")
-        }
-        // The whole query where it appears as written; otherwise its longest
-        // word, since fff matches words separately and forgives typos.
-        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
-            .sorted { $0.count > $1.count }
-        guard let range = ([needle] + words).lazy.compactMap({ body.range(of: $0, options: options) }).first
-        else { return display(String(body.prefix(480)), limit: 1_000) }
-        let start = body.index(range.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
-        let end = body.index(range.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
+    /// The text around the first match for `needle` in `body`, or nil.
+    private static func excerpt(of needle: String, in body: String) -> String? {
+        guard let first = matchRanges(needle, in: body)?.min(by: { $0.lowerBound < $1.lowerBound })
+        else { return nil }
+        let start = body.index(first.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
+        let end = body.index(first.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
         return display(String(body[start..<end]), limit: 1_000)
     }
 
-    /// Read one transcript looking for `needle`, the slow way.
+    /// The record — one line — starting at `offset` in a JSONL transcript. A
+    /// record over 2 MiB is a tool's output rather than something said, and
+    /// is skipped, as reading the whole file skips it.
+    private static func record(at offset: UInt64, in url: URL, cap: Int = 2 * 1024 * 1024) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard (try? handle.seek(toOffset: offset)) != nil else { return nil }
+        var data = Data()
+        while data.count <= cap {
+            guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else { break }
+            if let newline = chunk.firstIndex(of: 10) {
+                data.append(chunk[chunk.startIndex..<newline])
+                return data.count <= cap ? data : nil
+            }
+            data.append(chunk)
+        }
+        return data.count <= cap ? data : nil
+    }
+
+    /// Read one transcript looking for `needle`.
     private static func scan(
         _ source: Transcript, for needle: String, deadline: Date, result: inout ContentResults
     ) -> (excerpt: String?, complete: Bool) {
         var excerpt: String?
         func match(_ body: String) -> Bool {
-            if let range = body.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) {
-                let start = body.index(range.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
-                let end = body.index(range.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
-                excerpt = display(String(body[start..<end]), limit: 1_000)
+            if let found = Self.excerpt(of: needle, in: body) {
+                excerpt = found
                 return false
             }
             return !Task.isCancelled && Date() < deadline
@@ -500,6 +508,7 @@ enum AgentHistory {
                 else if state == term { score = 40 }
                 else if let gaps = tight(term, in: title) { score = max(1, 55 - gaps) }
                 else if let gaps = tight(term, in: project) { score = max(1, 45 - gaps) }
+                else if term.count >= 3, inWord(term, title) != nil { score = 30 }
                 else { score = nil }
                 guard let score else { return nil }
                 total += score
@@ -557,6 +566,87 @@ enum AgentHistory {
         }
         result += saved.filter { !represented.contains($0.id) && seen.insert($0.id).inserted }
         return result.sorted(by: ordered)
+    }
+
+    /// Where `query` matches `text`, telescope-style, or nil when it doesn't.
+    ///
+    /// The whole query as written, anywhere; failing that, every word of it on
+    /// its own, each either as written or — three letters or more — as its
+    /// letters in order *inside one word* of the text. So `intersection`
+    /// finds `interhihellosection`, while the same letters scattered across a
+    /// sentence don't count: a subsequence allowed to cross words matches
+    /// nearly any long text, which is the "search shows me everything" bug
+    /// this list has had before. The ranges are what to highlight.
+    static func matchRanges(_ query: String, in text: String) -> [Range<String.Index>]? {
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let range = text.range(of: trimmed, options: options) { return [range] }
+        var ranges: [Range<String.Index>] = []
+        for word in trimmed.split(whereSeparator: \.isWhitespace).map(String.init) {
+            if let range = text.range(of: word, options: options) {
+                ranges.append(range)
+            } else if word.count >= 3, let letters = inWord(word, text) {
+                ranges += letters
+            } else {
+                return nil
+            }
+        }
+        return ranges.isEmpty ? nil : ranges
+    }
+
+    /// At most this many letters between two matched ones. Inside a real
+    /// word that's plenty; without a limit, any long run of letters and
+    /// digits — a hash, an encoded image — holds almost any query.
+    static let maxGap = 8
+
+    /// `needle`'s letters in order within one word of `text` — the first word
+    /// that holds them, matched as tightly as that word allows.
+    private static func inWord(_ needle: String, _ text: String) -> [Range<String.Index>]? {
+        func fold(_ scalar: Unicode.Scalar) -> UInt32 {
+            let value = scalar.value
+            return (65...90).contains(value) ? value + 32 : value
+        }
+        let wanted = needle.unicodeScalars.map(fold)
+        let scalars = Array(text.unicodeScalars)
+        let isWordScalar: (Unicode.Scalar) -> Bool = {
+            CharacterSet.alphanumerics.contains($0) || $0 == "_"
+        }
+        var index = 0
+        while index < scalars.count {
+            guard isWordScalar(scalars[index]) else { index += 1; continue }
+            var end = index
+            while end < scalars.count, isWordScalar(scalars[end]) { end += 1 }
+            if end - index >= wanted.count {
+                // The tightest match in this word: try each place its first
+                // letter appears, and keep the shortest span.
+                var best: [Int]?
+                for start in index..<end where fold(scalars[start]) == wanted[0] {
+                    var positions = [start]
+                    var cursor = start + 1
+                    for letter in wanted.dropFirst() {
+                        let limit = min(end, cursor + maxGap + 1)
+                        while cursor < limit, fold(scalars[cursor]) != letter { cursor += 1 }
+                        guard cursor < limit else { positions = []; break }
+                        positions.append(cursor)
+                        cursor += 1
+                    }
+                    if positions.count == wanted.count,
+                       best == nil || positions.last! - positions[0] < best!.last! - best![0] {
+                        best = positions
+                    }
+                }
+                if let best {
+                    let view = text.unicodeScalars
+                    return best.map { offset in
+                        let lower = view.index(view.startIndex, offsetBy: offset)
+                        return lower..<view.index(after: lower)
+                    }
+                }
+            }
+            index = end
+        }
+        return nil
     }
 
     /// AppKit gets plain text only. Strip C0/C1 controls and bidi overrides;

@@ -439,7 +439,9 @@ final class SessionPalette: NSView, OverlayPanel {
         previewTask = Task { [weak self] in
             let body = await AgentHistory.preview(session)
             guard !Task.isCancelled, let self, !self.dismissed, self.previewGeneration == version else { return }
-            self.previewText.string = (excerpt.map { "MATCH IN TRANSCRIPT\n\($0)\n\n" } ?? "") + body
+            let text = (excerpt.map { "MATCH IN TRANSCRIPT\n\($0)\n\n" } ?? "") + body
+            self.previewText.textStorage?.setAttributedString(
+                Self.highlighted(text, query: self.contentQuery))
             self.previewText.scrollToBeginningOfDocument(nil)
         }
     }
@@ -604,11 +606,53 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         return view
     }
 
-    /// `~` for home, and no more of the path than a row can show.
+    /// Just the folder's own name — `site`, not `~/Workspace/@devfolio/site`.
+    /// The rest of the path is in the tooltip; the name is what you'd look
+    /// for in a list.
     private static func abbreviate(_ path: String) -> String {
         guard path.hasPrefix("/") else { return path }
-        let home = NSHomeDirectory()
-        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+        if path == NSHomeDirectory() { return "~" }
+        let name = (path as NSString).lastPathComponent
+        return name.isEmpty ? path : name
+    }
+
+    /// The preview with what the query matched picked out — every place it
+    /// matches, by the same rule the list was searched with.
+    private static func highlighted(_ text: String, query: String?) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: text, attributes: [
+            .font: PaletteStyle.font(ofSize: 12),
+            .foregroundColor: PaletteStyle.secondaryText,
+        ])
+        guard let query, !query.isEmpty else { return result }
+        let mark: [NSAttributedString.Key: Any] = [
+            .backgroundColor: PaletteStyle.accent.withAlphaComponent(0.32),
+            .foregroundColor: PaletteStyle.primaryText,
+            .font: PaletteStyle.font(ofSize: 12, weight: .bold),
+        ]
+        // Match after match, a line at a time, so a long preview isn't one
+        // search over the whole of it that stops at the first hit.
+        var lineStart = text.startIndex
+        var marked = 0
+        while lineStart < text.endIndex, marked < 200 {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let line = String(text[lineStart..<lineEnd])
+            var cursor = line.startIndex
+            while cursor < line.endIndex,
+                  let ranges = AgentHistory.matchRanges(query, in: String(line[cursor...])) {
+                let piece = String(line[cursor...])
+                for range in ranges {
+                    let lower = text.index(lineStart, offsetBy: line.distance(from: line.startIndex, to: cursor)
+                        + piece.distance(from: piece.startIndex, to: range.lowerBound))
+                    let upper = text.index(lower, offsetBy: piece.distance(from: range.lowerBound, to: range.upperBound))
+                    result.addAttributes(mark, range: NSRange(lower..<upper, in: text))
+                    marked += 1
+                }
+                guard let last = ranges.map(\.upperBound).max() else { break }
+                cursor = line.index(cursor, offsetBy: piece.distance(from: piece.startIndex, to: last))
+            }
+            lineStart = lineEnd < text.endIndex ? text.index(after: lineEnd) : text.endIndex
+        }
+        return result
     }
 
     /// Today and yesterday by name, this week by weekday, older by date. A
