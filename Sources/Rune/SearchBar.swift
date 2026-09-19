@@ -91,13 +91,27 @@ final class SearchBar: NSView {
     // MARK: - Placement
 
     /// Pin to the top-right of `pane`, clear of its edges.
-    func attach(to pane: NSView) {
+    /// Where the bar hangs from the top of its pane.
+    ///
+    /// Held onto because a pane can grow a header underneath the bar while it
+    /// is open — split the pane you are searching in and every pane gains one —
+    /// and a bar pinned to a bare `topAnchor` would then be sitting on top of
+    /// that pane's title.
+    private var top: NSLayoutConstraint?
+
+    func attach(to pane: NSView, below inset: CGFloat = 0) {
         translatesAutoresizingMaskIntoConstraints = false
         pane.addSubview(self, positioned: .above, relativeTo: nil)
+        let top = topAnchor.constraint(equalTo: pane.topAnchor, constant: Self.margin + inset)
+        self.top = top
         NSLayoutConstraint.activate([
-            topAnchor.constraint(equalTo: pane.topAnchor, constant: Self.margin),
+            top,
             trailingAnchor.constraint(equalTo: pane.trailingAnchor, constant: -Self.margin),
         ])
+    }
+
+    func keepClear(of inset: CGFloat) {
+        top?.constant = Self.margin + inset
     }
 
     /// Painted from the terminal's own background rather than from system

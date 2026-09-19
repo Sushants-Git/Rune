@@ -47,7 +47,9 @@ updates itself after that.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
-down.
+down. Split panes get a header naming what each one is running, with the
+controls that act on that pane — split, zoom, close — on it. A single pane
+doesn't: there is nothing to tell apart, so it keeps the row.
 
 Every row says what its agent is doing: `working` with a clock, `your turn` when
 it stops, nothing when there's nothing worth saying. If you'd rather not watch

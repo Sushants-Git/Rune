@@ -20,8 +20,30 @@ final class SplitPane: NSView {
 
     /// Only meaningful when the tab actually has more than one pane — a lone
     /// terminal doesn't need to be told anything about focus.
-    var showsFocus = false { didSet { syncDim() } }
-    var isFocused = false { didSet { syncDim() } }
+    var showsFocus = false {
+        didSet {
+            guard showsFocus != oldValue else { return }
+            syncDim()
+            header.isHidden = !showsFocus
+            refreshHeader()
+            searchBar?.keepClear(of: headerInset)
+            needsLayout = true
+        }
+    }
+
+    var isFocused = false {
+        didSet {
+            guard isFocused != oldValue else { return }
+            syncDim()
+            header.isFocused = isFocused
+        }
+    }
+
+    /// The strip naming this pane, and the controls for it. Only on screen once
+    /// a tab has been split — a lone terminal has nothing to be told apart from
+    /// and no reason to give up a row for a title it already has in the strip
+    /// above it.
+    private let header = PaneHeader()
 
     /// Laid over the panes you *aren't* typing in. Nothing is ever drawn over
     /// the live one.
@@ -55,6 +77,9 @@ final class SplitPane: NSView {
         wash.isHidden = true
         addSubview(wash, positioned: .above, relativeTo: surface)
 
+        header.isHidden = true
+        header.surface = surface
+        addSubview(header, positioned: .above, relativeTo: wash)
     }
 
     required init?(coder: NSCoder) {
@@ -63,8 +88,25 @@ final class SplitPane: NSView {
 
     override func layout() {
         super.layout()
-        surface.frame = bounds
-        wash.frame = bounds
+        // The header takes its row off the top of the pane; the terminal gets
+        // the rest. Nothing overlaps — a title floating over live text is
+        // unreadable the moment the text scrolls under it.
+        let top = headerInset
+        let content = NSRect(
+            x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - top))
+        surface.frame = content
+        wash.frame = content
+        header.frame = NSRect(
+            x: 0, y: content.maxY, width: bounds.width, height: top)
+    }
+
+    /// How much of the top of the pane the header is holding.
+    private var headerInset: CGFloat { header.isHidden ? 0 : PaneHeader.height }
+
+    /// Re-read the pane's title and mark.
+    func refreshHeader() {
+        guard !header.isHidden else { return }
+        header.refresh()
     }
 
     // MARK: - Search
@@ -94,7 +136,7 @@ final class SplitPane: NSView {
 
     private func makeSearchBar() -> SearchBar {
         let bar = SearchBar()
-        bar.attach(to: self)
+        bar.attach(to: self, below: headerInset)
         searchBar = bar
 
         bar.onSearch = { [weak self] needle in
@@ -130,6 +172,7 @@ final class SplitPane: NSView {
     func applySearchTint(_ background: NSColor) {
         terminalBackground = background
         searchBar?.tint(background: background)
+        header.tint(background: background)
     }
 
     private func syncDim() {
@@ -159,6 +202,205 @@ final class SplitPane: NSView {
 /// pane doesn't eat the click that focuses it.
 private final class PassthroughView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// The strip along the top of a pane, once a tab has more than one.
+///
+/// It answers the question a split layout creates and nothing else answers:
+/// *which of these is which*. The tab strip names the tab, not the panes inside
+/// it, so two shells side by side used to be told apart only by their prompts.
+/// Here each one carries its own mark and title, and the controls that act on
+/// it are on it rather than in a menu — split this one, zoom this one, close
+/// this one.
+///
+/// Quiet unless you are near it: the buttons are only drawn for the focused
+/// pane or the one under the pointer, so a four-way split isn't sixteen
+/// glyphs.
+@MainActor
+final class PaneHeader: NSView {
+    static let height: CGFloat = 24
+
+    weak var surface: GhosttySurfaceView?
+
+    var isFocused = false { didSet { paint() } }
+
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private let controls = NSStackView()
+    private let underline = NSView()
+    private var hovering = false { didSet { paint() } }
+    private var background: NSColor = .black
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        wantsLayer = true
+        autoresizingMask = [.width, .minYMargin]
+
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+
+        label.font = .systemFont(ofSize: 11, weight: .medium)
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+
+        controls.orientation = .horizontal
+        controls.alignment = .centerY
+        controls.spacing = 1
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        controls.setViews([
+            button("square.split.2x1", "Split Right (⌘D)", #selector(splitRight)),
+            button("square.split.1x2", "Split Down (⌘⇧D)", #selector(splitDown)),
+            button("arrow.up.left.and.arrow.down.right", "Zoom (⌘⇧↵)", #selector(zoom)),
+            button("xmark", "Close (⌘W)", #selector(closePane)),
+        ], in: .leading)
+        controls.isHidden = true
+        addSubview(controls)
+
+        // A hairline at the bottom of the *focused* pane's header, in the
+        // accent. The wash says which pane is idle by taking contrast away;
+        // this says which one is live by adding a single line of it, which is
+        // the part you can find without comparing two panes to each other.
+        underline.wantsLayer = true
+        underline.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(underline)
+
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 12),
+            icon.heightAnchor.constraint(equalToConstant: 12),
+
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(
+                lessThanOrEqualTo: controls.leadingAnchor, constant: -6),
+
+            controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            controls.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            underline.leadingAnchor.constraint(equalTo: leadingAnchor),
+            underline.trailingAnchor.constraint(equalTo: trailingAnchor),
+            underline.bottomAnchor.constraint(equalTo: bottomAnchor),
+            underline.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    private func button(_ symbol: String, _ tip: String, _ action: Selector) -> NSButton {
+        let control = ChromeButton()
+        control.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        control.imagePosition = .imageOnly
+        control.isBordered = false
+        control.bezelStyle = .inline
+        control.toolTip = tip
+        control.target = self
+        control.action = action
+        control.wantsLayer = true
+        control.layer?.cornerRadius = 4
+        control.layer?.cornerCurve = .continuous
+        control.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            control.widthAnchor.constraint(equalToConstant: 18),
+            control.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        return control
+    }
+
+    func tint(background: NSColor) {
+        self.background = background
+        paint()
+    }
+
+    /// What this header was last given. Not the same as what is in the image
+    /// view: a pane with no mark of its own shows the fallback glyph, so asking
+    /// `icon.image` whether anything changed answers "no" on the very first
+    /// call and the header comes up with an empty space where a mark goes.
+    private var mark: NSImage?
+
+    /// Re-read what the pane is running.
+    func refresh() {
+        guard let surface else { return }
+        let title = surface.shortTitle
+        if label.stringValue != title { label.stringValue = title }
+
+        let mark = TerminalController.mark(for: surface)
+        if self.mark !== mark || icon.image == nil {
+            self.mark = mark
+            icon.image = mark ?? NSImage(
+                systemSymbolName: "terminal", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 9, weight: .medium))
+            icon.contentTintColor = mark == nil ? Chrome.ink(over: background)(0.5) : nil
+        }
+    }
+
+    private func paint() {
+        let ink = Chrome.ink(over: background)
+        // An opaque plate mixed from the terminal's own colour rather than a
+        // translucent film. The pane behind the header is empty — the surface
+        // only covers the content below it — so a film here would be tinting
+        // the *window ground*, and the header's colour would depend on how far
+        // the terminal happened to be from it.
+        let lift = background.isDark ? NSColor.white : NSColor.black
+        layer?.backgroundColor = (background
+            .blended(withFraction: isFocused ? 0.13 : 0.07, of: lift) ?? background).cgColor
+        label.textColor = ink(isFocused ? 0.85 : 0.5)
+        underline.layer?.backgroundColor = isFocused
+            ? Settings.shared.effectiveAccent.withAlphaComponent(0.65).cgColor
+            : ink(0.08).cgColor
+        controls.isHidden = !(isFocused || hovering)
+        for case let control as ChromeButton in controls.arrangedSubviews {
+            control.contentTintColor = ink(0.65)
+            control.restingBackground = .clear
+        }
+        if icon.contentTintColor != nil { icon.contentTintColor = ink(0.5) }
+    }
+
+    // MARK: - Actions
+
+    private var controller: TerminalController? {
+        (window as? TerminalWindow)?.controller
+    }
+
+    /// Anything done from this header is done to *this* pane, so it takes the
+    /// keyboard first. Otherwise ⌘D-by-mouse would split whichever pane you
+    /// last typed in, which is not the one you just clicked on.
+    private func take() -> TerminalController? {
+        guard let controller, let surface else { return nil }
+        controller.focus(surface)
+        return controller
+    }
+
+    @objc private func splitRight() { take()?.splitActiveSurface(.right) }
+    @objc private func splitDown() { take()?.splitActiveSurface(.down) }
+    @objc private func zoom() { take()?.toggleSplitZoom() }
+    @objc private func closePane() {
+        guard let surface else { return }
+        controller?.closeSurface(surface)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let surface else { return }
+        controller?.focus(surface)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .inVisibleRect, .activeInActiveApp],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
 }
 
 /// A split view with a hairline divider tinted to the terminal's own colours,
@@ -568,6 +810,13 @@ final class Tab {
         layer.cornerCurve = .continuous
         layer.masksToBounds = true
         for pane in panes { pane.layer?.backgroundColor = fill.cgColor }
+    }
+
+    /// Re-read each pane's header. Titles and agent marks change constantly;
+    /// the headers are only on screen when a tab is split, so this is cheap
+    /// exactly when it runs often.
+    func refreshPaneHeaders() {
+        for pane in panes { pane.refreshHeader() }
     }
 
     /// Recolour dividers when the terminal theme changes.

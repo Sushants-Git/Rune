@@ -161,12 +161,15 @@ showed two frames of the window's ground in the shape of the terminal. Fills
 and deselection now switch with animations off, and the terminal's own colour
 is painted behind the surface, so an undrawn frame looks like a drawn one.
 
-**Split panes have no header.** A strip naming each pane, with split, zoom and
-close buttons on it, was added in 0.26 and taken out in 0.28: once the tabs
-looked like Chrome's, a header appearing on ⌘D looked exactly like a new tab,
-and a split that seems to have made a tab is worse than a split with no title.
-The pane you are in is told apart the way it was before — the others recede
-slightly.
+**Split panes get a header** — mark, title, and the controls that act on that
+pane: split right, split down, zoom, close. Only once a tab has more than one
+pane: a lone terminal has nothing to be told apart from, and no reason to give
+up a row for a title the strip above it is already showing. The header answers
+the question splitting creates and nothing else answered — *which of these is
+which* — since the strip names the tab, not the panes inside it. (0.28.0 took it
+out, on the grounds that a header appearing on ⌘D looked like a new tab; 0.28.2
+put it back, because losing it lost the one place a split says what each pane
+is.)
 
 ## Knowing which agent wants you
 

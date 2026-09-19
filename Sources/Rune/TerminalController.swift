@@ -566,7 +566,10 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
         tab.split(surface, with: view, direction: direction)
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
-tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
+        // Splitting is the moment pane headers appear, so they need the
+        // terminal's colour now — `syncChrome` won't send it, because as far as
+        // it is concerned nothing about the colour has changed.
+        tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
         focus(view)
         syncTabBar()
         overlay?.palette?.reload()
@@ -755,6 +758,7 @@ tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
         tab.applyDividerTint(dividerColor)
         tab.applyInactiveWash(inactivePaneWash)
         tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
+        tab.refreshPaneHeaders()
         tab.view.frame = terminalFrame
         tab.view.layoutSubtreeIfNeeded()
 
@@ -856,6 +860,9 @@ tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
             active: activeTab,
             workspaceName: activeWorkspace?.customName,
             isZoomed: activeTab?.isZoomed ?? false)
+        // Pane headers say what each split is running, so they go stale for the
+        // same reasons the strip does and are refreshed alongside it.
+        activeTab?.refreshPaneHeaders()
     }
 
     /// What an idle split pane is washed with: the terminal's own background,
@@ -1340,7 +1347,7 @@ tab.applySearchTint(activeSurface?.backgroundColor ?? ghostty.backgroundColor)
         return mark(for: surface)
     }
 
-    /// And of one terminal.
+    /// And of one terminal, for a split pane's own header.
     static func mark(for surface: GhosttySurfaceView) -> NSImage? {
         if let agent = surface.agent { return agent.image }
         let program = surface.program
