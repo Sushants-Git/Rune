@@ -375,7 +375,7 @@ A second login for Claude Code or Codex is a second home —
 and ⌘L used to read only the default one, so a whole account's sessions were
 missing. Now every `~/.claude-<name>` holding a `projects` folder and every
 `~/.codex-<name>` holding `sessions` is an account called `<name>`, plus
-whatever home Rune itself was started with. Its rows say "Claude (alt)", the
+whatever home Rune itself was started with. Its rows say `alt`, the
 account is searchable by name, and resuming goes through
 `/usr/bin/env CLAUDE_CONFIG_DIR=<home> claude --resume …`: through `env` so the
 variable reaches the agent alone and the line means the same thing in every
@@ -388,7 +388,12 @@ other.
 ### Tabs, and transcript search on fff
 
 ⌘L has a tab per agent — all, claude, codex, opencode — each counting the
-current matches, switched with `⇥`/`⇧⇥` or a click. A second account's sessions
+current matches, switched with `←`/`→`, `⇥`/`⇧⇥` or a click. The arrows only
+switch where they would do nothing in the text — `→` at the end of the query,
+`←` at its start — so they still move the caret through a query you are
+editing. Rows no longer repeat the agent's name (the icon and the tab say it):
+the second line is the account, when it isn't the default, and the folder, and
+the time sits on the right. A second account's sessions
 sit under their agent's tab rather than a tab of their own: the agent decides
 how a session resumes, and the account is a detail of that.
 

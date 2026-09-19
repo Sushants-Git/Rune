@@ -237,7 +237,7 @@ final class SessionPalette: NSView, OverlayPanel {
             self?.toggleContentSearch()
         }
         let hints = NSStackView(views: [
-            commitHint, HintPair(keys: ["⇥"], label: "Agent"), contentHint,
+            commitHint, HintPair(keys: ["←", "→"], label: "Agent"), contentHint,
             HintPair(keys: ["esc"], label: "Dismiss"),
         ])
         hints.orientation = .horizontal
@@ -538,6 +538,18 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         // a document, and transcript search needs a key that isn't already ⌘F
         // in the terminal underneath.
         case #selector(NSResponder.moveForward(_:)): toggleContentSearch()
+        // ← and → switch agent, but only where they'd do nothing in the text:
+        // → at the end of the query, ← at its start — both, when it's empty.
+        // Anywhere else they move the caret, the way they always have.
+        case #selector(NSResponder.moveRight(_:)):
+            let caret = textView.selectedRange()
+            guard caret.length == 0, caret.location >= (textView.string as NSString).length
+            else { return false }
+            cycleTab(by: 1)
+        case #selector(NSResponder.moveLeft(_:)):
+            let caret = textView.selectedRange()
+            guard caret.length == 0, caret.location == 0 else { return false }
+            cycleTab(by: -1)
         case #selector(NSResponder.insertTab(_:)): cycleTab(by: 1)
         case #selector(NSResponder.insertBacktab(_:)): cycleTab(by: -1)
         default: return false
@@ -569,11 +581,11 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         let directory = AgentHistory
             .display(session.directory, limit: 300)
             .replacingOccurrences(of: "\n", with: " ")
-        // The account goes with the agent — "Claude (alt)" — because that is
-        // what decides which login a resume lands in.
-        let agent = (session.agent?.name ?? "Terminal")
-            + (session.account.map { " (\(AgentHistory.display($0, limit: 24)))" } ?? "")
-        let detail = [agent, Self.abbreviate(directory), Self.when(session.updatedAt)]
+        // Where it was, and on which account when it isn't the default one —
+        // that decides which login a resume lands in. The agent is already
+        // the row's icon (and the tab), and the time sits on the right.
+        let detail = [session.account.map { AgentHistory.display($0, limit: 24) } ?? "",
+                      Self.abbreviate(directory)]
             .filter { !$0.isEmpty }
             .joined(separator: "  ·  ")
         let subtitle = NSTextField(labelWithString: detail)
@@ -596,9 +608,16 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         cluster.spacing = 6
         if session.isLive {
             cluster.addArrangedSubview(Chip(text: "live", emphasised: true))
-        } else if session.resume == nil {
-            cluster.addArrangedSubview(
-                Chip(symbol: "slash.circle", hint: "No transcript to resume from"))
+        } else {
+            if session.resume == nil {
+                cluster.addArrangedSubview(
+                    Chip(symbol: "slash.circle", hint: "No transcript to resume from"))
+            }
+            let time = NSTextField(labelWithString: Self.when(session.updatedAt))
+            time.font = PaletteStyle.font(ofSize: 12)
+            time.textColor = PaletteStyle.tertiaryText
+            time.setContentCompressionResistancePriority(.required, for: .horizontal)
+            cluster.addArrangedSubview(time)
         }
 
         let image: NSImage?
@@ -609,7 +628,10 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         case nil: image = nil
         }
         let view = PaletteRow(icon: IconTile(image: image, symbol: "terminal"), text: text, cluster: cluster)
-        view.toolTip = "\(name.stringValue)\n\(directory)\n\(session.resume?.sessionID ?? session.id)"
+        view.toolTip = "\(name.stringValue)\n"
+            + [session.agent?.name ?? "Terminal", session.account.map { "account \($0)" }]
+                .compactMap { $0 }.joined(separator: " · ")
+            + "\n\(directory)\n\(session.resume?.sessionID ?? session.id)"
         return view
     }
 
