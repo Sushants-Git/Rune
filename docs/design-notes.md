@@ -176,7 +176,7 @@ pane: a lone terminal has nothing to be told apart from, and no reason to give
 up a row for a title the strip above it is already showing. The header answers
 the question splitting creates and nothing else answered — *which of these is
 which* — since the strip names the tab, not the panes inside it. (0.28.0 took it
-out, on the grounds that a header appearing on ⌘D looked like a new tab; 0.28.2
+out, on the grounds that a header appearing on ⌘D looked like a new tab; 0.29.0
 put it back, because losing it lost the one place a split says what each pane
 is.)
 
