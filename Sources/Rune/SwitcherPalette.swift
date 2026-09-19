@@ -66,17 +66,43 @@ enum PaletteStyle {
     /// next ⌘K picks up a change without anything having to be told about it —
     /// the panel is built fresh on every open.
     @MainActor static var background: NSColor {
-        isLight ? NSColor(white: 0.97, alpha: 1) : Settings.Defaults.panelBackground
+        // The terminal's own colour, so the pickers read as part of the
+        // terminal rather than a sheet of system glass laid over it. Only when
+        // it agrees with `isLight` — a forced light panel over a dark theme
+        // still needs a light ground.
+        if let terminal = (NSApp.delegate as? AppDelegate)?.ghostty?.backgroundColor,
+           terminal.isLight == isLight {
+            return terminal.withAlphaComponent(1)
+        }
+        return isLight ? NSColor(white: 0.98, alpha: 1) : Settings.Defaults.panelBackground
+    }
+
+    /// The pickers' one colour: the prompt, the selected row's bar, the keys
+    /// in the footer.
+    @MainActor static var accent: NSColor {
+        NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1)
+    }
+
+    /// The star on a pinned row.
+    @MainActor static var star: NSColor {
+        isLight
+            ? NSColor(srgbRed: 0.604, green: 0.404, blue: 0, alpha: 1)
+            : NSColor(srgbRed: 0.898, green: 0.753, blue: 0.482, alpha: 1)
+    }
+
+    /// Every picker is set in the system monospace, a point smaller than the
+    /// proportional size it replaces: the pickers sit inside a terminal, and a
+    /// monospaced face at the same size reads a size larger.
+    static func font(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        .monospacedSystemFont(ofSize: max(10, size - 1), weight: weight)
     }
 
     /// Laid over the glass so the rows' contrast is a constant, not a function
     /// of whatever the terminal happens to be showing.
-    @MainActor static var scrim: NSColor {
-        isLight ? NSColor(white: 1, alpha: 0.45) : NSColor(white: 0.04, alpha: 0.42)
-    }
+    @MainActor static var scrim: NSColor { .clear }
     @MainActor static var border: NSColor { ink(0.14, over: 0.10) }
     @MainActor static var divider: NSColor { ink(0.09, over: 0.07) }
-    @MainActor static var selection: NSColor { ink(0.08, over: 0.09) }
+    @MainActor static var selection: NSColor { accent.withAlphaComponent(isLight ? 0.14 : 0.16) }
 
     @MainActor static var primaryText: NSColor {
         isLight ? NSColor(white: 0.12, alpha: 1) : NSColor(white: 0.96, alpha: 1)
@@ -181,9 +207,9 @@ final class SwitcherPalette: NSView, OverlayPanel {
     private var scrollHeight: NSLayoutConstraint!
 
     static let width: CGFloat = 560
-    private static let rowHeight: CGFloat = 40
+    private static let rowHeight: CGFloat = 34
     private static let maxVisibleRows = 8
-    private static let cornerRadius: CGFloat = 12
+    private static let cornerRadius: CGFloat = 8
 
     /// The live material behind the panel, and a fixed darkening on top of it.
     /// Split in two on purpose: the material is what makes it glass, the scrim
@@ -206,28 +232,21 @@ final class SwitcherPalette: NSView, OverlayPanel {
     ///   worth sampling is genuinely behind the *window*; ⌘K and ⌘L are views
     ///   inside the terminal window and sample within it.
     static func makeBackdrop(cornerRadius: CGFloat, behindWindow: Bool = false) -> NSView {
-        if #available(macOS 26, *) {
-            let glass = NSGlassEffectView()
-            glass.cornerRadius = cornerRadius
-            glass.style = .regular
-            return glass
-        }
-        let vibrancy = NSVisualEffectView()
-        // `.withinWindow`, not `.behindWindow`: the thing worth sampling is the
-        // terminal underneath the panel, which is a sibling view in this same
-        // window, not the desktop behind the whole thing.
-        vibrancy.blendingMode = behindWindow ? .behindWindow : .withinWindow
-        vibrancy.material = .hudWindow
-        vibrancy.state = .active
-        vibrancy.wantsLayer = true
-        vibrancy.layer?.cornerRadius = cornerRadius
-        vibrancy.layer?.cornerCurve = .continuous
-        vibrancy.layer?.masksToBounds = true
-        return vibrancy
+        // Solid, in the terminal's own colour. The pickers were glass for a
+        // while; set in monospace on the terminal's ground they read as part
+        // of the terminal, which is what they are, and a solid ground has no
+        // contrast that depends on what happens to be behind it.
+        let ground = NSView()
+        ground.wantsLayer = true
+        ground.layer?.backgroundColor = PaletteStyle.background.cgColor
+        ground.layer?.cornerRadius = cornerRadius
+        ground.layer?.cornerCurve = .continuous
+        ground.layer?.masksToBounds = true
+        return ground
     }
     /// Rows are inset from the panel edge so the selection pill has somewhere
     /// to sit without touching the sides.
-    static let rowInset: CGFloat = 6
+    static let rowInset: CGFloat = 0
     static let contentInset: CGFloat = 14
 
     init(
@@ -308,7 +327,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
 
         // A big, bare field. No leading icon: the panel appearing *is* the
         // affordance, and an icon only steals width from the placeholder.
-        searchField.font = .systemFont(ofSize: 15, weight: .regular)
+        searchField.font = PaletteStyle.font(ofSize: 15, weight: .regular)
         searchField.textColor = PaletteStyle.primaryText
         searchField.isBordered = false
         searchField.drawsBackground = false
@@ -321,9 +340,12 @@ final class SwitcherPalette: NSView, OverlayPanel {
             string: "Search workspaces…",
             attributes: [
                 .foregroundColor: PaletteStyle.tertiaryText,
-                .font: NSFont.systemFont(ofSize: 15),
+                .font: PaletteStyle.font(ofSize: 15),
             ])
         panel.addSubview(searchField)
+
+        let prompt = PalettePrompt.make()
+        panel.addSubview(prompt)
 
         grip.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(grip)
@@ -356,7 +378,7 @@ final class SwitcherPalette: NSView, OverlayPanel {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(scrollView)
 
-        emptyLabel.font = .systemFont(ofSize: 13)
+        emptyLabel.font = PaletteStyle.font(ofSize: 13)
         emptyLabel.textColor = PaletteStyle.tertiaryText
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
@@ -382,8 +404,10 @@ final class SwitcherPalette: NSView, OverlayPanel {
             panel.trailingAnchor.constraint(equalTo: trailingAnchor),
 
             searchField.topAnchor.constraint(equalTo: panel.topAnchor, constant: 16),
-            searchField.leadingAnchor.constraint(
+            prompt.leadingAnchor.constraint(
                 equalTo: panel.leadingAnchor, constant: Self.contentInset),
+            prompt.firstBaselineAnchor.constraint(equalTo: searchField.firstBaselineAnchor),
+            searchField.leadingAnchor.constraint(equalTo: prompt.trailingAnchor, constant: 8),
             searchField.trailingAnchor.constraint(
                 equalTo: panel.trailingAnchor, constant: -Self.contentInset),
 
@@ -685,11 +709,11 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
         // A pinned row is already at the top; the glyph says *why* it's there,
         // which is the difference between an order you chose and one you're
         // trying to account for.
-        if item.isPinned,
-           let pin = NSImage(systemSymbolName: "pin.fill", accessibilityDescription: "Pinned") {
-            let mark = NSImageView(image: pin)
-            mark.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
-            mark.contentTintColor = PaletteStyle.secondaryText
+        if item.isPinned {
+            let mark = NSTextField(labelWithString: "★")
+            mark.font = PaletteStyle.font(ofSize: 12)
+            mark.textColor = PaletteStyle.star
+            mark.setAccessibilityLabel("Pinned")
             mark.setContentHuggingPriority(.required, for: .horizontal)
             mark.setContentCompressionResistancePriority(.required, for: .horizontal)
             stack.addArrangedSubview(mark)
@@ -700,7 +724,7 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
             let field = NSTextField(string: item.editableName)
             field.cell = PaddedFieldCell(textCell: item.editableName)
             field.stringValue = item.editableName
-            field.font = .systemFont(ofSize: 13, weight: .medium)
+            field.font = PaletteStyle.font(ofSize: 13, weight: .medium)
             field.textColor = PaletteStyle.primaryText
             field.isEditable = true
             field.isBordered = false
@@ -710,14 +734,14 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
                 string: item.automaticTitle,
                 attributes: [
                     .foregroundColor: PaletteStyle.tertiaryText,
-                    .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                    .font: PaletteStyle.font(ofSize: 13, weight: .medium),
                 ])
             field.lineBreakMode = .byTruncatingTail
             field.delegate = self
             stack.addArrangedSubview(FieldWell(field: field))
         } else {
             let name = NSTextField(labelWithString: item.title)
-            name.font = .systemFont(ofSize: 13, weight: .medium)
+            name.font = PaletteStyle.font(ofSize: 13)
             name.textColor = PaletteStyle.primaryText
             name.lineBreakMode = .byTruncatingTail
             name.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
@@ -727,7 +751,7 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
             // a short list read like a settings pane instead of a launcher.
             if !item.subtitle.isEmpty {
                 let path = NSTextField(labelWithString: item.subtitle)
-                path.font = .systemFont(ofSize: 11)
+                path.font = PaletteStyle.font(ofSize: 11)
                 path.textColor = PaletteStyle.tertiaryText
                 path.lineBreakMode = .byTruncatingHead
                 path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -948,16 +972,19 @@ final class PaletteRowView: NSTableRowView {
 
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
-        let pill = NSBezierPath(
-            roundedRect: bounds.insetBy(dx: 0, dy: 1), xRadius: 7, yRadius: 7)
+        // Flat and full width, with a bar down the leading edge — the cursor
+        // line of a terminal list rather than a pill. The list that isn't
+        // listening keeps only the bar, in grey.
+        let bar = NSRect(x: 0, y: 0, width: 3, height: bounds.height)
         guard isDimmed else {
             PaletteStyle.selection.setFill()
-            pill.fill()
+            bounds.fill()
+            PaletteStyle.accent.setFill()
+            bar.fill()
             return
         }
-        PaletteStyle.border.setStroke()
-        pill.lineWidth = 1
-        pill.stroke()
+        PaletteStyle.tertiaryText.setFill()
+        bar.fill()
     }
 }
 
@@ -1041,13 +1068,13 @@ final class HintPair: NSView {
         layer?.cornerRadius = 5
         layer?.cornerCurve = .continuous
 
-        label.stringValue = text
-        label.font = .systemFont(ofSize: 10.5)
+        label.stringValue = text.lowercased()
+        label.font = PaletteStyle.font(ofSize: 12)
         label.textColor = PaletteStyle.tertiaryText
 
         let caps = NSStackView(views: keys.map { Keycap($0) })
         caps.orientation = .horizontal
-        caps.spacing = 2
+        caps.spacing = 4
 
         let pair = NSStackView(views: [caps, label])
         pair.orientation = .horizontal
@@ -1072,8 +1099,8 @@ final class HintPair: NSView {
 
     /// Say what the hint does now, for the ones whose meaning toggles.
     func setLabel(_ text: String) {
-        guard label.stringValue != text else { return }
-        label.stringValue = text
+        guard label.stringValue != text.lowercased() else { return }
+        label.stringValue = text.lowercased()
     }
 
     private func refresh() {
@@ -1110,50 +1137,37 @@ enum PaletteHints {
     static func bar(_ items: [(keys: [String], label: String)]) -> NSStackView {
         let stack = NSStackView(views: items.map { HintPair(keys: $0.keys, label: $0.label) })
         stack.orientation = .horizontal
-        stack.spacing = 14
+        stack.spacing = 16
         return stack
     }
 }
 
 /// The rounded square a row's mark sits in.
 final class IconTile: NSView {
-    private static let side: CGFloat = 24
+    private static let side: CGFloat = 18
 
     init(image artwork: NSImage?, symbol: String) {
         super.init(frame: .zero)
 
         wantsLayer = true
-        layer?.cornerRadius = 6
-        layer?.cornerCurve = .continuous
-        // Clipped, so a mark that fills its tile takes the tile's corners
-        // instead of showing its own square ones inside a rounded box.
-        layer?.masksToBounds = true
-
+        // The mark alone, the way the tab strip shows it: no tile behind it.
+        // A launcher-style icon that paints its own square keeps its corners
+        // rounded so it doesn't read as a hole cut in the panel.
         let image = NSImageView()
-        let markSide: CGFloat
+        let markSide: CGFloat = 16
 
         if let artwork {
             if Self.paintsItsOwnBackground(artwork) {
-                // Edge to edge, the way an app icon sits in a launcher — no
-                // plate, because there is nothing for a plate to show through.
-                // The hairline is what a near-black mark needs so it doesn't
-                // read as a hole punched in a near-black panel, and it costs a
-                // pixel where a plate would cost the whole tile.
-                layer?.borderWidth = 1
-                layer?.borderColor = PaletteStyle.border.cgColor
-                markSide = Self.side
-            } else {
-                layer?.backgroundColor = PaletteStyle.markPlate.cgColor
-                markSide = 16
+                layer?.cornerRadius = 4
+                layer?.cornerCurve = .continuous
+                layer?.masksToBounds = true
             }
             image.image = artwork
             image.imageScaling = .scaleProportionallyUpOrDown
         } else {
-            layer?.backgroundColor = PaletteStyle.tile.cgColor
             image.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            image.symbolConfiguration = .init(pointSize: 11, weight: .medium)
+            image.symbolConfiguration = .init(pointSize: 12, weight: .regular)
             image.contentTintColor = PaletteStyle.secondaryText
-            markSide = Self.side
         }
         image.translatesAutoresizingMaskIntoConstraints = false
         addSubview(image)
@@ -1254,14 +1268,10 @@ final class Chip: NSView {
     init(text: String, emphasised: Bool = false) {
         super.init(frame: .zero)
 
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.cornerCurve = .continuous
-        layer?.backgroundColor = (emphasised ? PaletteStyle.chipEmphasised : PaletteStyle.chip)
-            .cgColor
-
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 10.5, weight: .medium)
+        // Bracketed rather than boxed: `[current]`, `[live]`. A box is a
+        // button's shape, and these only annotate the row.
+        let label = NSTextField(labelWithString: text.isEmpty ? "" : "[\(text)]")
+        label.font = PaletteStyle.font(ofSize: 12)
         label.textColor = emphasised ? PaletteStyle.secondaryText : PaletteStyle.tertiaryText
         label.translatesAutoresizingMaskIntoConstraints = false
         // On the label, not just the chip: the chip's width is driven by this,
@@ -1271,10 +1281,10 @@ final class Chip: NSView {
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
-            label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
-            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
         setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -1285,32 +1295,45 @@ final class Chip: NSView {
     }
 }
 
-/// A key drawn as a key, for the footer hints.
+/// The `›` before a picker's search field, in the accent — a shell prompt,
+/// which is what the field is standing in for.
+@MainActor
+enum PalettePrompt {
+    static func make() -> NSTextField {
+        // A label, not a subclassed field: a field built from `init(frame:)`
+        // reports no intrinsic width, and Auto Layout handed the prompt the
+        // whole header and the search field four points of it.
+        let prompt = NSTextField(labelWithString: "›")
+        prompt.font = PaletteStyle.font(ofSize: 17, weight: .bold)
+        prompt.textColor = PaletteStyle.accent
+        prompt.translatesAutoresizingMaskIntoConstraints = false
+        prompt.setContentHuggingPriority(.required, for: .horizontal)
+        prompt.setContentCompressionResistancePriority(.required, for: .horizontal)
+        prompt.setAccessibilityElement(false)
+        return prompt
+    }
+}
+
+/// A key, for the footer hints.
 final class Keycap: NSView {
     init(_ text: String) {
         super.init(frame: .zero)
 
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.cornerCurve = .continuous
-        layer?.backgroundColor = NSColor(white: 1, alpha: 0.08).cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor(white: 1, alpha: 0.09).cgColor
-
+        // No keycap box: the key is set in the accent and the word beside it
+        // in grey, the way a terminal program lists its keys.
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 10, weight: .medium)
-        label.textColor = PaletteStyle.secondaryText
+        label.font = PaletteStyle.font(ofSize: 12, weight: .medium)
+        label.textColor = PaletteStyle.accent
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         addSubview(label)
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 16),
-            widthAnchor.constraint(greaterThanOrEqualToConstant: 18),
         ])
         setContentHuggingPriority(.required, for: .horizontal)
     }
@@ -1372,7 +1395,7 @@ extension SwitcherPalette: NSTextFieldDelegate {
         guard let editor = (notification.object as? NSTextField)?.currentEditor()
                 as? NSTextView
         else { return }
-        editor.insertionPointColor = PaletteStyle.primaryText
+        editor.insertionPointColor = PaletteStyle.accent
         editor.selectedTextAttributes = [
             .backgroundColor: Settings.shared.effectiveAccent.withAlphaComponent(0.5),
             .foregroundColor: PaletteStyle.primaryText,

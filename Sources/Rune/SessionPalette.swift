@@ -54,7 +54,7 @@ final class SessionPalette: NSView, OverlayPanel {
     /// leaves a row sliced through the middle at the bottom of the list, which
     /// reads as a rendering fault rather than as "there is more below".
     private static let bodyHeight: CGFloat = CGFloat(visibleRows) * rowHeight + 12
-    private static let cornerRadius: CGFloat = 12
+    private static let cornerRadius: CGFloat = 8
 
     var focusView: NSView { field }
 
@@ -140,7 +140,7 @@ final class SessionPalette: NSView, OverlayPanel {
         }
 
         // The same field ⌘K has: big, bare, and the only thing in the header.
-        field.font = .systemFont(ofSize: 15, weight: .regular)
+        field.font = PaletteStyle.font(ofSize: 15, weight: .regular)
         field.textColor = PaletteStyle.primaryText
         field.isBordered = false
         field.drawsBackground = false
@@ -150,7 +150,7 @@ final class SessionPalette: NSView, OverlayPanel {
             string: "Search sessions by title, agent, or directory…",
             attributes: [
                 .foregroundColor: PaletteStyle.tertiaryText,
-                .font: NSFont.systemFont(ofSize: 15),
+                .font: PaletteStyle.font(ofSize: 15),
             ])
         field.setAccessibilityLabel("Search agent sessions")
 
@@ -185,14 +185,14 @@ final class SessionPalette: NSView, OverlayPanel {
         listScroll.automaticallyAdjustsContentInsets = false
         listScroll.contentInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
 
-        listEmpty.font = .systemFont(ofSize: 12)
+        listEmpty.font = PaletteStyle.font(ofSize: 12)
         listEmpty.textColor = PaletteStyle.tertiaryText
         listEmpty.alignment = .center
         listEmpty.isHidden = true
 
         // What Return will do to the highlighted row, stated as a heading over
         // the thing it will do it to.
-        previewHeading.font = .systemFont(ofSize: 11, weight: .semibold)
+        previewHeading.font = PaletteStyle.font(ofSize: 11, weight: .semibold)
         previewHeading.textColor = PaletteStyle.secondaryText
         previewHeading.lineBreakMode = .byTruncatingTail
         previewIcon.symbolConfiguration = .init(pointSize: 10, weight: .semibold)
@@ -205,7 +205,7 @@ final class SessionPalette: NSView, OverlayPanel {
         previewText.isAutomaticLinkDetectionEnabled = false
         previewText.isAutomaticDataDetectionEnabled = false
         previewText.drawsBackground = false
-        previewText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        previewText.font = PaletteStyle.font(ofSize: 12)
         previewText.textColor = PaletteStyle.secondaryText
         previewText.textContainerInset = NSSize(width: 2, height: 4)
         previewText.isVerticallyResizable = true
@@ -221,7 +221,7 @@ final class SessionPalette: NSView, OverlayPanel {
         previewScroll.scrollerStyle = .overlay
         previewScroll.autohidesScrollers = true
 
-        status.font = .systemFont(ofSize: 10.5)
+        status.font = PaletteStyle.font(ofSize: 10.5)
         status.textColor = PaletteStyle.tertiaryText
         status.lineBreakMode = .byTruncatingTail
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -241,6 +241,8 @@ final class SessionPalette: NSView, OverlayPanel {
         let bodyDivider = Divider(vertical: true)
         let footerDivider = Divider()
 
+        let prompt = PalettePrompt.make()
+        addSubview(prompt)
         for view in [field, modeChip, headerDivider, listScroll, listEmpty, bodyDivider,
                      previewIcon, previewHeading, previewScroll, footerDivider, status, hints] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -252,7 +254,9 @@ final class SessionPalette: NSView, OverlayPanel {
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.width),
 
-            field.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            prompt.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            prompt.firstBaselineAnchor.constraint(equalTo: field.firstBaselineAnchor),
+            field.leadingAnchor.constraint(equalTo: prompt.trailingAnchor, constant: 8),
             field.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             field.trailingAnchor.constraint(
                 lessThanOrEqualTo: modeChip.leadingAnchor, constant: -8),
@@ -516,7 +520,7 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         let name = NSTextField(labelWithString: AgentHistory
             .display(session.title, limit: 180)
             .replacingOccurrences(of: "\n", with: " "))
-        name.font = .systemFont(ofSize: 13, weight: .medium)
+        name.font = PaletteStyle.font(ofSize: 13, weight: .medium)
         name.textColor = PaletteStyle.primaryText
         name.lineBreakMode = .byTruncatingTail
         name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -531,7 +535,7 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
             .filter { !$0.isEmpty }
             .joined(separator: "  ·  ")
         let subtitle = NSTextField(labelWithString: detail)
-        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.font = PaletteStyle.font(ofSize: 11)
         subtitle.textColor = PaletteStyle.tertiaryText
         subtitle.lineBreakMode = .byTruncatingMiddle
         subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

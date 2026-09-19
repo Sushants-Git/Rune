@@ -160,29 +160,33 @@ final class ActivityBadge: NSView {
         if let elapsed = status.elapsedText() { text += " · \(elapsed)" }
 
         let field = NSTextField(labelWithString: text)
-        field.font = .systemFont(ofSize: 10.5, weight: .medium)
+        field.font = PaletteStyle.font(ofSize: 12)
         field.textColor = color
-        field.lineBreakMode = .byTruncatingTail
+        field.lineBreakMode = .byClipping
         field.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // A couple of points over what it asks for: set in monospace, the label
+        // measured itself a hair narrower than it draws, and every status came
+        // out as "answer…" and "Running bash · 1…".
+        field.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: ceil(field.intrinsicContentSize.width) + 3).isActive = true
         field.translatesAutoresizingMaskIntoConstraints = false
         toolTip = status.detail
 
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.cornerCurve = .continuous
-        layer?.backgroundColor = color.withAlphaComponent(0.13).cgColor
+        // Coloured text after a dot, no box: in a monospaced list a filled
+        // badge is the loudest thing on the row, and this should be the most
+        // *legible* thing on it instead.
 
         addSubview(dot)
         addSubview(field)
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor),
             dot.centerYAnchor.constraint(equalTo: centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: 6),
             dot.heightAnchor.constraint(equalToConstant: 6),
 
-            field.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 5),
-            field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            field.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
+            field.trailingAnchor.constraint(equalTo: trailingAnchor),
             field.centerYAnchor.constraint(equalTo: centerYAnchor),
             heightAnchor.constraint(equalToConstant: 18),
         ])

@@ -64,6 +64,18 @@ empty strip read as a stray, not a design.)
   thing a workspace has more than one of — tabs, or panes when it's a single
   split tab.
 
+**The pickers look like the terminal they sit in.** ⌘K, ⌘J and ⌘L share one
+style: the system monospace a point below the proportional size it replaced,
+on the terminal's own background colour rather than glass, a `›` prompt before
+the search field, flat full-width rows with an orange bar down the selected
+one, statuses as coloured text after a dot, `[current]` and `[live]` in
+brackets, a ★ for pinned, and the footer keys in orange beside lower-case
+words. What each picker shows and does is unchanged — this was chosen (from a
+refined version of the old look, and a roomier Spotlight-style one) as a
+restyle only. The pieces live in `SwitcherPalette.swift` (`PaletteStyle`,
+`PaletteRowView`, `Chip`, `Keycap`, `IconTile`, `PalettePrompt`) and
+`ActivityBadge`, so the three pickers can't drift apart.
+
 ## The window: a strip, and a card
 
 The terminal is a card on the window's ground: inset 8pt from the sides and

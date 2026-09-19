@@ -210,8 +210,8 @@ final class WindowPalette: NSView, OverlayPanel {
     private let panel = NSView()
     private let backdrop: NSView
     private let scrim = NSView()
-    private let windowsHeader = NSTextField(labelWithString: "Windows")
-    private let entriesHeader = NSTextField(labelWithString: "Workspaces & tabs")
+    private let windowsHeader = NSTextField(labelWithString: "WINDOWS")
+    private let entriesHeader = NSTextField(labelWithString: "WORKSPACES & TABS")
     private let tableView = WindowPickerTable()
     private let scrollView = NSScrollView()
     private let detailTable = WindowPickerTable()
@@ -224,7 +224,7 @@ final class WindowPalette: NSView, OverlayPanel {
     private let onPreview: (Int, Int?) -> Void
     private let onCancel: () -> Void
 
-    private static let cornerRadius: CGFloat = 12
+    private static let cornerRadius: CGFloat = 8
     /// The same numbers ⌘K uses. `PaletteRow` works its own padding out from
     /// them, so a panel with a different width or a different scroll inset gets
     /// rows whose contents sit slightly wrong — which is most of why this
@@ -287,7 +287,7 @@ final class WindowPalette: NSView, OverlayPanel {
         // which named the two lists in the one place that could not show you
         // where either began.
         for header in [windowsHeader, entriesHeader] {
-            header.font = .systemFont(ofSize: 11, weight: .semibold)
+            header.font = PaletteStyle.font(ofSize: 11, weight: .semibold)
             header.textColor = PaletteStyle.tertiaryText
             header.translatesAutoresizingMaskIntoConstraints = false
             panel.addSubview(header)
@@ -502,12 +502,12 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         if tableView === detailTable {
             guard let entry = items[safe: self.tableView.selectedRow]?.entries[safe: row] else { return nil }
             let name = NSTextField(labelWithString: entry.title)
-            name.font = .systemFont(ofSize: 13, weight: .medium)
+            name.font = PaletteStyle.font(ofSize: 13, weight: .medium)
             name.textColor = PaletteStyle.primaryText
             name.lineBreakMode = .byTruncatingTail
             name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let detail = NSTextField(labelWithString: entry.subtitle)
-            detail.font = .systemFont(ofSize: 11)
+            detail.font = PaletteStyle.font(ofSize: 11)
             detail.textColor = PaletteStyle.tertiaryText
             detail.lineBreakMode = .byTruncatingHead
             detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -533,7 +533,7 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         guard let item = items[safe: row] else { return nil }
 
         let heading = NSMutableAttributedString(string: item.title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+            .font: PaletteStyle.font(ofSize: 13, weight: .medium),
             .foregroundColor: PaletteStyle.primaryText,
         ])
         // The count rides with the name rather than taking a chip of its own.
@@ -541,7 +541,7 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         heading.append(NSAttributedString(
             string: item.workspaces.count == 1 ? "  1 workspace" : "  \(item.workspaces.count) workspaces",
             attributes: [
-                .font: NSFont.systemFont(ofSize: 11),
+                .font: PaletteStyle.font(ofSize: 11),
                 .foregroundColor: PaletteStyle.tertiaryText,
             ]))
         let name = NSTextField(labelWithAttributedString: heading)
@@ -552,7 +552,7 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         // how much is in there; the names say whether it is the one you want.
         let subtitle = NSTextField(
             labelWithString: item.workspaces.joined(separator: "  ·  "))
-        subtitle.font = .systemFont(ofSize: 11)
+        subtitle.font = PaletteStyle.font(ofSize: 11)
         subtitle.textColor = PaletteStyle.tertiaryText
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
