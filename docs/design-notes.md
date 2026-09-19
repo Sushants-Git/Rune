@@ -180,13 +180,11 @@ out, on the grounds that a header appearing on ⌘D looked like a new tab; 0.28.
 put it back, because losing it lost the one place a split says what each pane
 is.)
 
-The header is a 28pt band a step off the terminal's colour, holding a small
-tab: the focused pane's name sits in a tab of the terminal's own colour that
-flares into the pane below, the same shape as the strip's active tab at a
-smaller radius, so "the one you are in" is said the same way at both levels.
-Idle panes' names sit flat on the band, dimmed. The small tab is as wide as
-its title, within reason. The accent underline the header had in 0.26 went
-with this: the filled tab already says which pane is live.
+The header is a plain 26pt band a step off the terminal's colour, a step
+brighter for the focused pane, with that pane's name and mark in full ink and
+the others dimmed. A version drew the focused pane's name inside a small
+Chrome-style tab flaring into the pane; it was a tab inside a tab for no gain,
+and went. So did 0.26's accent underline.
 
 ## Knowing which agent wants you
 

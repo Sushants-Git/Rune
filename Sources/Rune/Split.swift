@@ -218,13 +218,7 @@ private final class PassthroughView: NSView {
 /// glyphs.
 @MainActor
 final class PaneHeader: NSView {
-    /// A band 28 deep, with a small tab in it 22 deep: the same shape as the
-    /// tabs in the strip above, at the scale of a pane.
-    static let height: CGFloat = 28
-    private static let tabDepth: CGFloat = 22
-    private static let tabLeading: CGFloat = 16
-    /// The small tab's corner radius, and the radius of its outward flare.
-    private static let radius: CGFloat = 8
+    static let height: CGFloat = 26
 
     weak var surface: GhosttySurfaceView?
 
@@ -233,11 +227,6 @@ final class PaneHeader: NSView {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let controls = NSStackView()
-    /// The focused pane's name sits in a tab of the terminal's own colour that
-    /// flares into the pane below it — how the strip marks the tab you are in,
-    /// said again for the pane you are in. The idle panes' names sit flat on
-    /// the band.
-    private let plate = CAShapeLayer()
     private var hovering = false { didSet { paint() } }
     private var background: NSColor = .black
 
@@ -245,8 +234,6 @@ final class PaneHeader: NSView {
         super.init(frame: frameRect)
 
         wantsLayer = true
-        layer?.masksToBounds = false
-        layer?.addSublayer(plate)
         autoresizingMask = [.width, .minYMargin]
 
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -272,23 +259,19 @@ final class PaneHeader: NSView {
         controls.isHidden = true
         addSubview(controls)
 
-        // Everything hangs off the middle of the small tab's body, which sits
-        // at the bottom of the band. Positive is down.
-        let line = (Self.height - Self.tabDepth) / 2
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(
-                equalTo: leadingAnchor, constant: Self.tabLeading + 10),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor, constant: line),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 13),
             icon.heightAnchor.constraint(equalToConstant: 13),
 
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor, constant: line),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(
                 lessThanOrEqualTo: controls.leadingAnchor, constant: -16),
 
             controls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            controls.centerYAnchor.constraint(equalTo: centerYAnchor, constant: line),
+            controls.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
@@ -332,10 +315,7 @@ final class PaneHeader: NSView {
     func refresh() {
         guard let surface else { return }
         let title = surface.shortTitle
-        if label.stringValue != title {
-            label.stringValue = title
-            needsLayout = true
-        }
+        if label.stringValue != title { label.stringValue = title }
 
         let mark = TerminalController.mark(for: surface)
         if self.mark !== mark || icon.image == nil {
@@ -347,67 +327,26 @@ final class PaneHeader: NSView {
         }
     }
 
-    override func layout() {
-        super.layout()
-        // The small tab is as wide as what it names, within reason: a fixed
-        // width left short titles floating in a wide tab, and long ones cut off.
-        let content = 10 + 13 + 7 + ceil(label.intrinsicContentSize.width) + 12
-        let room = (controls.isHidden ? bounds.width : controls.frame.minX) - Self.tabLeading - 8
-        let width = max(64, min(max(120, content), room))
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        plate.frame = bounds
-        plate.path = Self.tabPath(x: Self.tabLeading, width: width, depth: Self.tabDepth)
-        CATransaction.commit()
-    }
-
-    /// Rounded top, flared bottom — `TabChip`'s shape at a smaller radius. One
-    /// point deeper than the band, so it covers the seam into the pane.
-    private static func tabPath(x: CGFloat, width w: CGFloat, depth: CGFloat) -> CGPath {
-        let r = radius
-        let bottom: CGFloat = -1
-        let top = depth
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: x - r, y: bottom))
-        path.addArc(center: CGPoint(x: x - r, y: bottom + r), radius: r,
-                    startAngle: -.pi / 2, endAngle: 0, clockwise: false)
-        path.addLine(to: CGPoint(x: x, y: top - r))
-        path.addArc(center: CGPoint(x: x + r, y: top - r), radius: r,
-                    startAngle: .pi, endAngle: .pi / 2, clockwise: true)
-        path.addLine(to: CGPoint(x: x + w - r, y: top))
-        path.addArc(center: CGPoint(x: x + w - r, y: top - r), radius: r,
-                    startAngle: .pi / 2, endAngle: 0, clockwise: true)
-        path.addLine(to: CGPoint(x: x + w, y: bottom + r))
-        path.addArc(center: CGPoint(x: x + w + r, y: bottom + r), radius: r,
-                    startAngle: .pi, endAngle: 3 * .pi / 2, clockwise: false)
-        path.closeSubpath()
-        return path
-    }
-
     private func paint() {
         let ink = Chrome.ink(over: background)
         // An opaque band mixed from the terminal's own colour rather than a
         // translucent film. The pane behind the header is empty — the surface
         // only covers the content below it — so a film here would be tinting
         // the *window ground*, and the header's colour would depend on how far
-        // the terminal happened to be from it. Only a step off the terminal:
-        // the small tab has to read as the terminal coming up into it.
+        // the terminal happened to be from it. The focused pane's band is a
+        // step brighter; its name and mark say the rest.
         let lift = background.isDark ? NSColor.white : NSColor.black
+        let step: CGFloat = (background.isDark ? 1 : 0.75) * (isFocused ? 0.07 : 0.04)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        layer?.backgroundColor = (background
-            .blended(withFraction: background.isDark ? 0.045 : 0.035, of: lift)
+        layer?.backgroundColor = (background.blended(withFraction: step, of: lift)
             ?? background).cgColor
-        plate.fillColor = isFocused ? background.cgColor : NSColor.clear.cgColor
         CATransaction.commit()
         label.textColor = ink(isFocused ? 0.9 : 0.5)
         let weight: NSFont.Weight = isFocused ? .medium : .regular
         label.font = .systemFont(ofSize: 11.5, weight: weight)
         let showsControls = isFocused || hovering
-        if controls.isHidden == showsControls {
-            controls.isHidden = !showsControls
-            needsLayout = true
-        }
+        controls.isHidden = !showsControls
         for case let control as ChromeButton in controls.arrangedSubviews {
             control.contentTintColor = ink(0.6)
             control.restingBackground = .clear
