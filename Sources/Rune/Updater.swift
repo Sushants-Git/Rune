@@ -247,6 +247,16 @@ final class Updater {
                     if userInitiated { self.clearTransient(after: 4) }
                     return
                 }
+                // Already downloaded by an earlier run that never got to
+                // install it — force-quit, crashed, or the Mac restarted. It
+                // goes straight to "Restart to update" instead of asking for
+                // the same download again.
+                let version = release.version
+                if let app = await Task.detached(operation: { Self.stagedCopy(of: version) }).value {
+                    self.staged = app
+                    self.state = .readyToInstall(release)
+                    return
+                }
                 self.state = .available(release)
             } catch {
                 guard let self, !Task.isCancelled else { return }
@@ -337,7 +347,7 @@ final class Updater {
                 }
                 defer { try? FileManager.default.removeItem(at: zip) }
 
-                let app = try Self.unpack(zip)
+                let app = try Self.unpack(zip, as: release.version)
                 try Self.verify(stagedApp: app, is: release.version)
 
                 guard let self, !Task.isCancelled else {
@@ -369,9 +379,9 @@ final class Updater {
     /// it preserves the symlinks and resource forks an app bundle relies on, and
     /// getting either of those wrong produces a bundle that unpacks fine and
     /// then won't launch.
-    nonisolated private static func unpack(_ zip: URL) throws -> URL {
-        let staging = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("rune-update-\(UUID().uuidString)")
+    nonisolated private static func unpack(_ zip: URL, as version: Version) throws -> URL {
+        let staging = stagingDirectory(for: version)
+        try? FileManager.default.removeItem(at: staging)
         try FileManager.default.createDirectory(
             at: staging, withIntermediateDirectories: true)
 
@@ -383,6 +393,28 @@ final class Updater {
         guard let app = contents.first(where: { $0.pathExtension == "app" }) else {
             try? FileManager.default.removeItem(at: staging)
             throw UpdateError.unpackFailed
+        }
+        return app
+    }
+
+    /// Where an update is unpacked: named by version rather than at random, so
+    /// that a later launch can find a download an earlier one finished.
+    nonisolated private static func stagingDirectory(for version: Version) -> URL {
+        URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("rune-update-\(version)")
+    }
+
+    /// A download of `version` left behind by an earlier run, if it is still
+    /// there and still checks out.
+    nonisolated private static func stagedCopy(of version: Version) -> URL? {
+        let staging = stagingDirectory(for: version)
+        guard let app = try? FileManager.default
+            .contentsOfDirectory(at: staging, includingPropertiesForKeys: nil)
+            .first(where: { $0.pathExtension == "app" })
+        else { return nil }
+        guard (try? verify(stagedApp: app, is: version)) != nil else {
+            try? FileManager.default.removeItem(at: staging)
+            return nil
         }
         return app
     }
@@ -479,6 +511,7 @@ final class Updater {
     ///
     /// No reopen: they quit, so they wanted to be quit.
     func installIfStagedOnQuit() {
+        guard !quittingForExternalInstall else { return }
         guard case .readyToInstall = state, let staged else { return }
         let destination = Bundle.main.bundleURL
         guard destination.pathExtension == "app",
@@ -488,6 +521,59 @@ final class Updater {
         else { return }
         try? Self.swap(
             staged: staged, into: destination, waitingFor: getpid(), reopen: false)
+    }
+
+    /// Set when `rune update` has asked this app to quit so that it can be
+    /// replaced. The command's own install is already waiting; starting a
+    /// second one on the way out would only race it for the lock, and could
+    /// win it with an install that doesn't reopen the app.
+    private(set) var quittingForExternalInstall = false
+
+    /// `rune update` has an install waiting on this app to quit. See
+    /// `updateFromCommandLine`.
+    func quitForExternalInstall(of path: String?) {
+        guard path == nil
+            || URL(fileURLWithPath: path!).standardizedFileURL
+                == Bundle.main.bundleURL.standardizedFileURL
+        else { return }
+        quittingForExternalInstall = true
+        // A moment's grace, so the command that asked has exited first and its
+        // shell is back at a prompt: otherwise the quit confirmation sees
+        // `rune update` itself as a process still running in a terminal.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    /// An install of this app is still being carried out, by the script that
+    /// swaps the bundle. Launching now would start the *old* app — it stays in
+    /// place and openable until the last moment — which is then renamed away
+    /// underneath the running copy. So a launch in that window hands off to a
+    /// waiter that opens the app once the install has finished, and leaves.
+    ///
+    /// This is the "quit, then reopen straight away" case, which is the most
+    /// natural way to take an update and was the one that landed you back on
+    /// the old version.
+    nonisolated static func deferLaunchIfInstalling() {
+        let app = Bundle.main.bundleURL
+        guard app.pathExtension == "app" else { return }
+        let lock = app.path + ".rune-installing"
+        guard let made = (try? FileManager.default.attributesOfItem(atPath: lock))?[
+            .creationDate] as? Date,
+              Date().timeIntervalSince(made) < 10 * 60
+        else { return }
+        let waiter = Process()
+        waiter.executableURL = URL(fileURLWithPath: "/bin/sh")
+        waiter.arguments = [
+            "-c",
+            "trap '' HUP; i=0; while [ -d \"$0\" ] && [ $i -lt 600 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$1\"",
+            lock, app.path,
+        ]
+        waiter.standardInput = FileHandle.nullDevice
+        waiter.standardOutput = FileHandle.nullDevice
+        waiter.standardError = FileHandle.nullDevice
+        guard (try? waiter.run()) != nil else { return }
+        exit(0)
     }
 
     /// Wait for Rune to quit, swap the bundle, put it back if the swap fails,
@@ -512,6 +598,15 @@ final class Updater {
     #!/bin/sh
     # $1 pid  $2 new app  $3 installed app  $4 staging dir  $5 reopen (1/0)
     # Written by Rune's updater; safe to delete.
+
+    # Started from `rune update` inside one of Rune's own terminals, this is in
+    # that terminal's process group, and the terminal closes when Rune quits —
+    # which is the very thing this is waiting for. Without this the hangup
+    # killed the install before it began.
+    trap '' HUP
+    # Named, because inside a function $1..$5 are the function's own.
+    installed="$3"
+    reopen="$5"
     while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
 
     # One install of an app at a time. A second copy of this script for the
@@ -527,6 +622,14 @@ final class Updater {
     mkdir "$lock" 2>/dev/null || exit 0
     trap 'rmdir "$lock" 2>/dev/null' EXIT
 
+    # The lock goes before the reopen, not after: a Rune that launches and
+    # finds it still there waits for the install to finish, and this one has.
+    finish() {
+      rmdir "$lock" 2>/dev/null
+      [ "$reopen" = 1 ] && /usr/bin/open "$installed"
+      exit "$1"
+    }
+
     backup="$3.rune-previous"
     incoming="$3.rune-incoming"
     rm -rf "$backup" "$incoming"
@@ -538,8 +641,7 @@ final class Updater {
     # The slow part, with the installed app untouched and openable.
     if ! /usr/bin/ditto "$2" "$incoming"; then
       rm -rf "$incoming"
-      [ "$5" = 1 ] && /usr/bin/open "$3"
-      exit 1
+      finish 1
     fi
 
     # Downloads carry a quarantine flag that would make the freshly installed
@@ -549,16 +651,15 @@ final class Updater {
 
     # Two renames. Between them there is no app at "$3", and that is the whole
     # window a launch can fall into.
-    mv "$3" "$backup" || { rm -rf "$incoming"; exit 1; }
+    mv "$3" "$backup" || { rm -rf "$incoming"; finish 1; }
     if [ -e "$3" ] || ! mv "$incoming" "$3"; then
       [ -e "$3" ] || mv "$backup" "$3"
       rm -rf "$incoming"
-      [ "$5" = 1 ] && /usr/bin/open "$3"
-      exit 1
+      finish 1
     fi
 
     rm -rf "$backup" "$4"
-    [ "$5" = 1 ] && /usr/bin/open "$3"
+    finish 0
 
     """
 
@@ -594,7 +695,7 @@ final class Updater {
             note("downloading \(release.version)…")
             let zip = try await Download.run(from: release.asset) { _ in }
             defer { try? FileManager.default.removeItem(at: zip) }
-            let app = try unpack(zip)
+            let app = try unpack(zip, as: release.version)
             try verify(stagedApp: app, is: release.version)
             return (release, app)
         }
@@ -629,31 +730,51 @@ final class Updater {
                     && $0.bundleURL?.standardizedFileURL == installed
             }
 
-        if let app {
-            note("quitting Rune…")
-            app.terminate()
-            // Bounded: terminate() is a request, and something modal or wedged
-            // can refuse it. Waiting forever here is how this hung.
-            let deadline = Date().addingTimeInterval(15)
-            while !app.isTerminated, Date() < deadline { usleep(200_000) }
-            if !app.isTerminated {
-                note("rune: Rune is still running and wouldn't quit. Quit it and try again.")
-                exit(75)  // EX_TEMPFAIL
+        guard let app else {
+            do {
+                // Waiting on this process: it exits in a moment, so the script
+                // gets going immediately.
+                try swap(staged: staged, into: installed, waitingFor: getpid(), reopen: false)
+            } catch {
+                note("rune: \(error.localizedDescription)")
+                exit(70)
             }
+            note("updated \(current) → \(release.version)")
+            exit(0)
         }
 
+        // Rune is running — and quite likely this command is running *in* it.
+        // So the install is started first, waiting on Rune rather than on this
+        // command, and immune to the hangup it gets when Rune's terminals
+        // close. Only then is Rune asked to quit. The old order, quit Rune and
+        // then install, killed this command with its terminal before it got to
+        // the install, and Rune's quit confirmation counted this very command
+        // as a process still running, so it usually never quit at all.
         do {
-            // Waiting on this process: it exits in a moment, so the script gets
-            // going immediately rather than waiting on an app that has already
-            // gone.
-            try swap(staged: staged, into: installed, waitingFor: getpid(),
-                     reopen: app != nil)
+            try swap(staged: staged, into: installed,
+                     waitingFor: app.processIdentifier, reopen: true)
         } catch {
             note("rune: \(error.localizedDescription)")
             exit(70)
         }
+        note("downloaded \(release.version). Rune will restart to finish updating…")
+        DistributedNotificationCenter.default().postNotificationName(
+            CLI.restartForUpdateNotification, object: installed.path,
+            userInfo: nil, deliverImmediately: true)
 
-        note("updated \(current) → \(release.version)")
+        // If Rune quits, this command may well go with it, which is fine: the
+        // install no longer depends on it. If it is still here a few seconds
+        // on, Rune didn't quit — a copy too old to know the request, or a quit
+        // someone cancelled — and the install simply waits for the next quit.
+        // By pid: `isTerminated` is kept current by notifications delivered to
+        // a run loop, and a command-line process doesn't run one, so it read
+        // "still running" long after Rune had gone.
+        let pid = app.processIdentifier
+        let deadline = Date().addingTimeInterval(8)
+        while kill(pid, 0) == 0, Date() < deadline { usleep(200_000) }
+        if kill(pid, 0) == 0 {
+            note("Rune is still open. The update will be installed when you quit it.")
+        }
         exit(0)
     }
 
@@ -675,6 +796,10 @@ final class Updater {
             staged.deletingLastPathComponent().path,
             reopen ? "1" : "0",
         ]
+        // Nothing to say to a terminal that may be gone by the time it would.
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try process.run()
         // Not waited on: the script's first act is to wait for `pid` — this
         // process — to exit, so waiting here would deadlock by construction.

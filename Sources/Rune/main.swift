@@ -30,6 +30,10 @@ pointGhosttyAtBundledResources()
 // command that printed its version by opening a window would be a strange one.
 CLI.runIfInvokedAsTool()
 
+// Launched while an update is still being installed over this very app: hand
+// off to a waiter that opens the new copy once it is in place.
+Updater.deferLaunchIfInstalling()
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

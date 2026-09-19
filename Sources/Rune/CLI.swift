@@ -23,6 +23,11 @@ enum CLI {
     /// same user, and this needs to carry one string.
     static let openNotification = Notification.Name("com.rune.rune.open")
 
+    /// Sent by `rune update` to the Rune it is replacing: an install is waiting
+    /// for it to quit. The object is the path of the app being replaced, so
+    /// only that copy answers.
+    static let restartForUpdateNotification = Notification.Name("com.rune.rune.restartForUpdate")
+
     /// Arguments a person actually typed.
     private static var arguments: [String] {
         CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-psn_") }

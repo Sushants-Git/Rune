@@ -626,6 +626,40 @@ cd /Applications && mv Rune.app Rune.app.broken \
   && mv Rune.app.broken/Rune.app Rune.app && rmdir Rune.app.broken
 ```
 
+### Quitting, reopening, and `rune update`
+
+Three ways of taking an update behaved differently from clicking "Restart to
+update", and all three looked like a broken updater:
+
+- **Quit, then reopen straight away.** Quitting installs a waiting update, but
+  the old app stays in place and openable until the last rename — so a launch
+  during the install started the *old* version, which was then renamed away
+  underneath it. A launch that finds the install lock now hands off to a small
+  waiter that opens the app once the lock is gone, and exits. The script drops
+  the lock *before* reopening, so its own reopen isn't deferred too.
+- **Force-quit or crash with an update downloaded.** Nothing installed it, and
+  the download sat in a randomly named temporary folder no later run would
+  look in, so the next launch downloaded it again. Updates are unpacked into
+  `rune-update-<version>` now, and a check that finds that version already
+  there and still verifying goes straight to "Restart to update".
+- **`rune update` from a Rune terminal**, which is where anyone would type it,
+  never worked. It asked Rune to quit and waited to install — but Rune's quit
+  confirmation counted `rune update` itself as a process still running, and if
+  you did confirm, Rune closing its terminals hung up the command before it got
+  to the install. Now the command downloads and verifies, starts the install
+  script *first* (waiting on Rune's pid, reopening afterwards, ignoring
+  hangups, its output going nowhere), and only then asks Rune to quit, with a
+  distributed notification that Rune answers after a short pause — long
+  enough for the command to exit and its shell to return to a prompt. Rune
+  that doesn't quit (too old to know the request, or a quit you cancelled)
+  gets the update whenever it next does. The command also watches Rune's pid
+  rather than `NSRunningApplication.isTerminated`, which is only kept current
+  on a run loop a command-line process doesn't have.
+
+The install script's `finish` step once read `$5` for "reopen" — inside a shell
+function that is the function's own fifth argument, which was empty, so nothing
+ever reopened. The arguments are named at the top of the script now.
+
 ### Signing, and why it is not ad-hoc
 
 Releases are signed with one self-signed certificate, reused for every build.
@@ -784,7 +818,9 @@ RUNE_UPDATE_FEED=http://127.0.0.1:8731/latest.json \
   RUNE_TEST_UPDATE=1 /path/to/installed/Rune.app/Contents/MacOS/Rune
 ```
 
-`=check` stops before installing, `=pill` writes each state's chrome to
+`=check` stops before downloading, `=stage` downloads and exits without
+installing (as a crash would — run it twice and the second goes straight to
+"ready"), `=pill` writes each state's chrome to
 `/tmp/rune-pill-*.png` for looking at without a screen-recording entitlement.
 
 ## Credit

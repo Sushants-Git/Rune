@@ -24,6 +24,13 @@ enum UpdateTest {
 
     /// `pill` writes each state's rendering to /tmp so the chrome can be looked
     /// at without a screen recording entitlement.
+    /// `stage` downloads and then exits without installing — as a crash or a
+    /// force-quit would — so the next run can show it picks the download up
+    /// rather than fetching it again.
+    private static var stagesOnly: Bool {
+        ProcessInfo.processInfo.environment["RUNE_TEST_UPDATE"] == "stage"
+    }
+
     private static var rendersPill: Bool {
         ProcessInfo.processInfo.environment["RUNE_TEST_UPDATE"] == "pill"
     }
@@ -80,8 +87,8 @@ enum UpdateTest {
             print("state: downloading \(fraction.map { "\(Int($0 * 100))%" } ?? "…")")
         case .readyToInstall(let release):
             print("state: ready \(release.version)")
-            if rendersPill {
-                renderPill("ready")
+            if rendersPill || stagesOnly {
+                if rendersPill { renderPill("ready") }
                 finish(0)
             }
             guard !checkOnly else { finish(0) }

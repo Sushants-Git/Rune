@@ -191,6 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
                 NSApp.activate(ignoringOtherApps: true)
             }
         }
+
+        // `rune update` has an install waiting for this app to quit.
+        DistributedNotificationCenter.default().addObserver(
+            forName: CLI.restartForUpdateNotification, object: nil, queue: .main
+        ) { note in
+            let path = note.object as? String
+            MainActor.assumeIsolated { Updater.shared.quitForExternalInstall(of: path) }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {

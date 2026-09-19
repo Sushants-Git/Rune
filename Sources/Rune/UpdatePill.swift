@@ -142,7 +142,21 @@ final class ChromeButton: NSButton {
 /// interested, and a right-click offers the release notes for when you are.
 @MainActor
 final class UpdatePill: NSView {
-    private let button = ChromeButton()
+    /// A capsule, drawn by this view rather than by a restyled `NSButton`.
+    ///
+    /// It was a button for a long time, and every attempt to give it room
+    /// either side of its words failed the same way: an `.inline` button draws
+    /// its image and title from its own cell's idea of where they go, so extra
+    /// width added to its intrinsic size landed wherever the cell put it — the
+    /// icon stayed against one end and the text against the other, and the
+    /// tint read as a box cropped around them. Here the padding is two
+    /// constraints and means exactly what it says.
+    private static let height: CGFloat = 22
+    private static let padding: CGFloat = 10
+
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private let fill = CALayer()
 
     /// Fills the pill left-to-right as the download runs.
     ///
@@ -154,8 +168,13 @@ final class UpdatePill: NSView {
     private let progressLayer = CALayer()
     private var progress: Double?
 
+    private var resting: NSColor = .clear
+    private var actionable = false
+    private var hovering = false { didSet { paint() } }
+    private var pressing = false { didSet { paint() } }
+
     /// One configuration for every symbol here, so a filled circle and a bare
-    /// checkmark come out the same optical size beside 11pt text. Left to
+    /// checkmark come out the same optical size beside the text. Left to
     /// themselves they don't — SF Symbols are sized by their own bounding box,
     /// and `checkmark` has far less of one than `arrow.down.circle.fill`.
     private static let symbolConfiguration = NSImage.SymbolConfiguration(
@@ -184,37 +203,44 @@ final class UpdatePill: NSView {
 
     private func build() {
         translatesAutoresizingMaskIntoConstraints = false
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.imagePosition = .imageLeading
-        button.target = self
-        button.action = #selector(clicked)
-        button.font = .systemFont(ofSize: 11, weight: .medium)
-        // Enough that the tinted states read as a pill rather than as a
-        // highlight sitting directly on the text. The zoom button beside it
-        // keeps its fixed 24pt square, so it wants none of this.
-        button.horizontalPadding = 7
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.wantsLayer = true
-        button.layer?.cornerRadius = Chrome.cornerRadius
-        button.layer?.cornerCurve = .continuous
-        button.layer?.masksToBounds = true
-        addSubview(button)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerCurve = .continuous
+        layer?.cornerRadius = Self.height / 2
+        layer?.addSublayer(fill)
+        layer?.addSublayer(progressLayer)
 
-        progressLayer.cornerCurve = .continuous
-        button.layer?.insertSublayer(progressLayer, at: 0)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+
+        icon.imageScaling = .scaleNone
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+        addSubview(icon)
+
+        label.font = .systemFont(ofSize: 11.5, weight: .medium)
+        label.lineBreakMode = .byClipping
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
 
         NSLayoutConstraint.activate([
-            button.leadingAnchor.constraint(equalTo: leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: trailingAnchor),
-            button.centerYAnchor.constraint(equalTo: centerYAnchor),
-            button.heightAnchor.constraint(equalToConstant: Chrome.controlHeight),
-            heightAnchor.constraint(equalToConstant: Chrome.controlHeight),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.padding - 1),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.padding),
         ])
     }
 
     override func layout() {
         super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        fill.frame = bounds
+        CATransaction.commit()
         layoutProgress()
     }
 
@@ -231,9 +257,49 @@ final class UpdatePill: NSView {
         CATransaction.setDisableActions(true)
         progressLayer.frame = CGRect(
             x: 0, y: 0,
-            width: button.bounds.width * max(0, min(1, progress)),
-            height: button.bounds.height)
+            width: bounds.width * max(0, min(1, progress)),
+            height: bounds.height)
         CATransaction.commit()
+    }
+
+    /// Resting fill, brightened under the pointer and a little more while
+    /// pressed. Notices ("Checking…", "You're up to date") rest clear but
+    /// still answer the pointer, since they have a right-click menu.
+    private func paint() {
+        var colour = resting
+        if hovering || pressing {
+            let base = resting.alphaComponent == 0
+                ? NSColor.secondaryLabelColor.withAlphaComponent(0) : resting
+            colour = base.withAlphaComponent(
+                max(base.alphaComponent, 0.08) + (pressing ? 0.14 : 0.07))
+        }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(pressing ? 0 : 0.12)
+        fill.backgroundColor = colour.cgColor
+        CATransaction.commit()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds, options: [.mouseEnteredAndExited, .inVisibleRect, .activeInActiveApp],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func mouseDown(with event: NSEvent) { pressing = true }
+
+    override func mouseUp(with event: NSEvent) {
+        pressing = false
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        clicked()
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        clicked()
+        return true
     }
 
     @objc private func stateChanged() {
@@ -290,28 +356,27 @@ final class UpdatePill: NSView {
     ) {
         isHidden = false
         toolTip = nil
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(Self.symbolConfiguration)
-        button.contentTintColor = tint
-        button.attributedTitle = NSAttributedString(
-            string: " \(text)",
-            attributes: [
-                .foregroundColor: tint,
-                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            ])
+        icon.contentTintColor = tint
+        label.stringValue = text
+        label.textColor = tint
+        setAccessibilityLabel(text)
 
-        button.restingBackground = actionable
-            ? tint.withAlphaComponent(0.15)
+        self.actionable = actionable
+        resting = actionable
+            ? tint.withAlphaComponent(0.16)
             : (progress == nil ? .clear
                                : NSColor.secondaryLabelColor.withAlphaComponent(0.10))
         progressLayer.backgroundColor = NSColor.secondaryLabelColor
             .withAlphaComponent(0.16).cgColor
+        paint()
 
         self.progress = progress
         layoutProgress()
     }
 
-    @objc private func clicked() {
+    private func clicked() {
         switch Updater.shared.state {
         case .available: Updater.shared.download()
         case .readyToInstall: Updater.shared.install()
