@@ -439,7 +439,7 @@ final class SessionPalette: NSView, OverlayPanel {
         previewTask = Task { [weak self] in
             let body = await AgentHistory.preview(session)
             guard !Task.isCancelled, let self, !self.dismissed, self.previewGeneration == version else { return }
-            let text = (excerpt.map { "MATCH IN TRANSCRIPT\n\($0)\n\n" } ?? "") + body
+            let text = (excerpt.map { "\($0)\n\n────────\n\n" } ?? "") + body
             self.previewText.textStorage?.setAttributedString(
                 Self.highlighted(text, query: self.contentQuery))
             self.previewText.scrollToBeginningOfDocument(nil)

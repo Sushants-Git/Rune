@@ -432,6 +432,12 @@ leaves files over 10 MB — every long session — out entirely. OpenCode keeps 
 transcripts in SQLite, which fff can't index, so those are read the old way,
 with the same rule. The indexes are built when ⌘L opens.
 
+**The preview lists every match**, up to twelve, each with a little context
+and highlighted, above the usual opening-and-latest view of the conversation —
+which is bounded, so a match in the middle of a long session used to be
+nowhere on screen even though it was the reason the row was there. Past
+twelve it says there are more rather than listing them.
+
 Rows show only the folder's own name — `site`, not `~/Workspace/@devfolio/site`;
 the full path is in the tooltip.
 

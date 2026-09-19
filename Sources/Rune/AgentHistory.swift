@@ -372,22 +372,26 @@ enum AgentHistory {
                 guard !Task.isCancelled, Date() < deadline else { result.incomplete = true; break }
                 guard let source = session.transcript else { continue }
                 if let candidates, case .jsonl(let url) = source {
+                    var found: [String] = []
                     for offset in candidates[url.standardizedFileURL.path] ?? [] {
                         guard !Task.isCancelled, Date() < deadline else { result.incomplete = true; break }
                         guard let line = record(at: offset, in: url),
                               let body = json(line).flatMap(messageText),
                               let excerpt = excerpt(of: needle, in: body)
                         else { continue }
+                        found.append(excerpt)
+                        if found.count > maxExcerpts { break }
+                    }
+                    if !found.isEmpty {
                         result.sessions.append(session)
-                        result.excerpts[session.id] = excerpt
-                        break
+                        result.excerpts[session.id] = matchesSummary(found)
                     }
                     continue
                 }
                 let scanned = scan(source, for: needle, deadline: deadline, result: &result)
-                if let excerpt = scanned.excerpt {
+                if !scanned.excerpts.isEmpty {
                     result.sessions.append(session)
-                    result.excerpts[session.id] = excerpt
+                    result.excerpts[session.id] = matchesSummary(scanned.excerpts)
                 } else if !scanned.complete { result.incomplete = true }
             }
             return result
@@ -398,13 +402,31 @@ enum AgentHistory {
     /// itself when the match is in it, the record's raw text otherwise — a
     /// match can be in a tool's output, and a fuzzy one needn't contain the
     /// query verbatim at all.
+    /// How many matches a session's preview lists. Past this it says there
+    /// are more rather than listing them — the point is to show *where*, and
+    /// a transcript that says the word two hundred times has made its case.
+    static let maxExcerpts = 12
+
+    /// Every match found, for the top of the preview — which otherwise shows
+    /// only a conversation's opening and its latest messages, so a match in
+    /// the middle of a long session was nowhere to be seen.
+    private static func matchesSummary(_ excerpts: [String]) -> String {
+        let shown = excerpts.prefix(maxExcerpts)
+        let heading = excerpts.count > maxExcerpts
+            ? "MORE THAN \(maxExcerpts) MATCHES IN TRANSCRIPT — THE FIRST \(maxExcerpts)"
+            : "\(excerpts.count) \(excerpts.count == 1 ? "MATCH" : "MATCHES") IN TRANSCRIPT"
+        return heading + "\n\n" + shown.joined(separator: "\n\n  ⋯\n\n")
+    }
+
     /// The text around the first match for `needle` in `body`, or nil.
     private static func excerpt(of needle: String, in body: String) -> String? {
         guard let first = matchRanges(needle, in: body)?.min(by: { $0.lowerBound < $1.lowerBound })
         else { return nil }
-        let start = body.index(first.lowerBound, offsetBy: -160, limitedBy: body.startIndex) ?? body.startIndex
-        let end = body.index(first.upperBound, offsetBy: 320, limitedBy: body.endIndex) ?? body.endIndex
-        return display(String(body[start..<end]), limit: 1_000)
+        let start = body.index(first.lowerBound, offsetBy: -120, limitedBy: body.startIndex) ?? body.startIndex
+        let end = body.index(first.upperBound, offsetBy: 240, limitedBy: body.endIndex) ?? body.endIndex
+        return (start > body.startIndex ? "…" : "")
+            + display(String(body[start..<end]), limit: 1_000)
+            + (end < body.endIndex ? "…" : "")
     }
 
     /// The record — one line — starting at `offset` in a JSONL transcript. A
@@ -429,12 +451,12 @@ enum AgentHistory {
     /// Read one transcript looking for `needle`.
     private static func scan(
         _ source: Transcript, for needle: String, deadline: Date, result: inout ContentResults
-    ) -> (excerpt: String?, complete: Bool) {
-        var excerpt: String?
+    ) -> (excerpts: [String], complete: Bool) {
+        var excerpts: [String] = []
         func match(_ body: String) -> Bool {
             if let found = Self.excerpt(of: needle, in: body) {
-                excerpt = found
-                return false
+                excerpts.append(found)
+                if excerpts.count > maxExcerpts { return false }
             }
             return !Task.isCancelled && Date() < deadline
         }
@@ -465,7 +487,8 @@ enum AgentHistory {
                 match(object["type"] as? String == "text" ? object["text"] as? String ?? "" : "")
             }
         }
-        return (excerpt, complete)
+        // Stopping early once enough were found isn't a gap in the search.
+        return (excerpts, complete || excerpts.count > maxExcerpts)
     }
 
     /// Metadata-only matching; all whitespace-separated terms must match.
