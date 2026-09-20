@@ -453,6 +453,15 @@ leaves files over 10 MB — every long session — out entirely. OpenCode keeps 
 transcripts in SQLite, which fff can't index, so those are read the old way,
 with the same rule. The indexes are built when ⌘L opens.
 
+**The highlight is grey, and it is a setting.** The pickers are drawn in the
+terminal's own colours, and the one thing in them that came from nowhere else
+was the accent: the bar down the selected row, the `›` prompt, the footer
+keys, the "where you are" dot and what a search matched. Grey by default — a
+faint wash with a slightly brighter bar — with Clay, Blue, Green, Purple, Cyan
+and Amber in Settings ▸ Appearance ▸ Highlight, each shown as a swatch beside
+its name. Green and blue are the two worth thinking twice about: a green dot
+on a row already means an agent is working and a blue one means it wants you.
+
 **"Where you are" is a dot, not a word.** ⌘K and ⌘J marked the row you came
 from with a `current` chip — the widest thing on the row, repeating what the
 row mostly implied. It is an accent dot now, with the sentence in its tooltip.

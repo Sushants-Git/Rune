@@ -96,6 +96,9 @@ folders and accounts straight away, then — as soon as you pause — everything
 said in the transcripts too: sessions found only by their contents are listed
 below the rest, and the preview opens on the matching lines.
 
+The row you are on is picked out in grey; Settings ▸ Appearance ▸ Highlight
+offers Clay, Blue, Green, Purple, Cyan and Amber instead.
+
 Tabs across the top narrow it to one agent — `←`/`→` (at either end of the
 query) and `⇥`/`⇧⇥` move between all, Claude, Codex, OpenCode and pi. Second accounts are found too: a `~/.claude-<name>`
 or `~/.codex-<name>` home (the one you point `CLAUDE_CONFIG_DIR` or

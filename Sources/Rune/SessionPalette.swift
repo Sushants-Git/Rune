@@ -626,7 +626,8 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         ])
         guard let query, !query.isEmpty else { return result }
         let mark: [NSAttributedString.Key: Any] = [
-            .backgroundColor: PaletteStyle.accent.withAlphaComponent(0.32),
+            .backgroundColor: PaletteStyle.accent.withAlphaComponent(
+                Settings.shared.highlight == .grey ? 0.45 : 0.32),
             .foregroundColor: PaletteStyle.primaryText,
             .font: PaletteStyle.font(ofSize: 12, weight: .bold),
         ]

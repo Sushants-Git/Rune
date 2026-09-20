@@ -370,6 +370,7 @@ final class SettingsWindowController: NSWindowController {
     private let systemAccent = NSButton(
         checkboxWithTitle: "Follow the system accent colour", target: nil, action: nil)
     private let appearance = NSPopUpButton()
+    private let highlight = NSPopUpButton()
     /// Four lines of terminal in whatever the config currently says, so a
     /// colour or a font size can be judged by looking rather than by reading a
     /// hex triplet.
@@ -393,6 +394,19 @@ final class SettingsWindowController: NSWindowController {
         appearance.controlSize = .small
         appearance.translatesAutoresizingMaskIntoConstraints = false
         appearance.widthAnchor.constraint(equalToConstant: 176).isActive = true
+
+        // Each colour is shown as well as named: the word "Cyan" is not what
+        // anyone is choosing between.
+        for choice in Settings.Highlight.allCases {
+            let item = NSMenuItem(title: choice.title, action: nil, keyEquivalent: "")
+            item.image = Self.swatch(choice.tint(light: false))
+            highlight.menu?.addItem(item)
+        }
+        highlight.target = self
+        highlight.action = #selector(highlightChanged)
+        highlight.controlSize = .small
+        highlight.translatesAutoresizingMaskIntoConstraints = false
+        highlight.widthAnchor.constraint(equalToConstant: 176).isActive = true
 
         dimSlider.minValue = 0
         dimSlider.maxValue = 1
@@ -435,6 +449,11 @@ final class SettingsWindowController: NSWindowController {
                     caption: "Light or dark. Matching the terminal keeps the panel readable "
                         + "against whatever it is sitting on.",
                     control: appearance),
+                SettingsRow(
+                    title: "Highlight", symbol: "list.bullet.rectangle",
+                    caption: "What ⌘K, ⌘J and ⌘L pick a row out with: the bar down the "
+                        + "selected row, the prompt, the keys and what a search matched.",
+                    control: highlight),
                 SettingsRow(
                     title: "Accent", symbol: "paintpalette",
                     caption: "The highlighted row, the active tab and the update pill.",
@@ -497,6 +516,8 @@ final class SettingsWindowController: NSWindowController {
         dimLabel.stringValue = "\(Int(settings.backdropDim * 100))%"
         appearance.selectItem(at: Settings.Appearance.allCases
             .firstIndex(of: settings.appearance) ?? 0)
+        highlight.selectItem(at: Settings.Highlight.allCases
+            .firstIndex(of: settings.highlight) ?? 0)
         refreshPreviews()
     }
 
@@ -506,6 +527,23 @@ final class SettingsWindowController: NSWindowController {
     /// the picture is never a version behind the thing it is a picture of.
     private func refreshPreviews() {
         switcherPreview.refresh()
+    }
+
+    /// A round chip of the colour, for the menu.
+    private static func swatch(_ color: NSColor, side: CGFloat = 11) -> NSImage {
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: side, height: side)).fill()
+        image.unlockFocus()
+        return image
+    }
+
+    @objc private func highlightChanged() {
+        let index = highlight.indexOfSelectedItem
+        guard let choice = Settings.Highlight.allCases[safe: index] else { return }
+        Settings.shared.highlight = choice
+        refreshPreviews()
     }
 
     @objc private func appearanceChanged() {

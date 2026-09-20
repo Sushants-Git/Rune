@@ -77,11 +77,9 @@ enum PaletteStyle {
         return isLight ? NSColor(white: 0.98, alpha: 1) : Settings.Defaults.panelBackground
     }
 
-    /// The pickers' one colour: the prompt, the selected row's bar, the keys
-    /// in the footer.
-    @MainActor static var accent: NSColor {
-        NSColor(srgbRed: 0.851, green: 0.467, blue: 0.341, alpha: 1)
-    }
+    /// The pickers' one colour: the prompt, the keys in the footer, the mark
+    /// on the row you came from, and what a search matched.
+    @MainActor static var accent: NSColor { Settings.shared.highlight.tint(light: isLight) }
 
     /// The star on a pinned row.
     @MainActor static var star: NSColor {
@@ -102,7 +100,10 @@ enum PaletteStyle {
     @MainActor static var scrim: NSColor { .clear }
     @MainActor static var border: NSColor { ink(0.14, over: 0.10) }
     @MainActor static var divider: NSColor { ink(0.09, over: 0.07) }
-    @MainActor static var selection: NSColor { accent.withAlphaComponent(isLight ? 0.14 : 0.16) }
+    /// The wash over the selected row, and the bar down its leading edge —
+    /// Settings ▸ Appearance ▸ Highlight.
+    @MainActor static var selection: NSColor { Settings.shared.highlight.fill(light: isLight) }
+    @MainActor static var selectionBar: NSColor { Settings.shared.highlight.bar(light: isLight) }
 
     @MainActor static var primaryText: NSColor {
         isLight ? NSColor(white: 0.12, alpha: 1) : NSColor(white: 0.96, alpha: 1)
@@ -977,7 +978,7 @@ final class PaletteRowView: NSTableRowView {
         guard !isDimmed else { return }
         PaletteStyle.selection.setFill()
         bounds.fill()
-        PaletteStyle.accent.setFill()
+        PaletteStyle.selectionBar.setFill()
         NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
     }
 }

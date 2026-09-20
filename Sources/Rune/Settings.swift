@@ -71,6 +71,73 @@ final class Settings {
         }
     }
 
+    /// What the pickers pick a row out with: the bar down the selected row,
+    /// the `›` prompt, the keys in the footer, the mark on the row you came
+    /// from, and what a search matched.
+    ///
+    /// Grey by default. The pickers are set in the terminal's own colours, and
+    /// a coloured bar was the one thing in them that came from nowhere else;
+    /// green and blue are worse than arbitrary there, since a green dot on a
+    /// row already means an agent is working and a blue one means it wants
+    /// you.
+    enum Highlight: String, CaseIterable {
+        case grey, clay, blue, green, purple, cyan, amber
+
+        var title: String {
+            switch self {
+            case .grey: "Grey"
+            case .clay: "Clay"
+            case .blue: "Blue"
+            case .green: "Green"
+            case .purple: "Purple"
+            case .cyan: "Cyan"
+            case .amber: "Amber"
+            }
+        }
+
+        /// The ink of the prompt, the keys and the mark.
+        func tint(light: Bool) -> NSColor {
+            switch self {
+            case .grey: light ? rgb(0.44, 0.46, 0.49) : rgb(0.60, 0.63, 0.67)
+            case .clay: light ? rgb(0.72, 0.36, 0.24) : rgb(0.85, 0.47, 0.34)
+            case .blue: light ? rgb(0.13, 0.42, 0.78) : rgb(0.30, 0.62, 1.00)
+            case .green: light ? rgb(0.10, 0.50, 0.30) : rgb(0.30, 0.76, 0.54)
+            case .purple: light ? rgb(0.44, 0.31, 0.75) : rgb(0.65, 0.55, 0.98)
+            case .cyan: light ? rgb(0.05, 0.47, 0.53) : rgb(0.25, 0.77, 0.83)
+            case .amber: light ? rgb(0.58, 0.40, 0.05) : rgb(0.90, 0.71, 0.40)
+            }
+        }
+
+        /// The bar down the selected row. Grey keeps it quieter than its own
+        /// text so the row reads as chosen rather than as shouting.
+        func bar(light: Bool) -> NSColor {
+            switch self {
+            case .grey: light ? rgb(0.55, 0.57, 0.60) : rgb(0.42, 0.45, 0.50)
+            default: tint(light: light)
+            }
+        }
+
+        /// The wash over the selected row.
+        func fill(light: Bool) -> NSColor {
+            switch self {
+            case .grey: light ? NSColor(white: 0, alpha: 0.05) : NSColor(white: 1, alpha: 0.06)
+            default: tint(light: light).withAlphaComponent(light ? 0.14 : 0.16)
+            }
+        }
+
+        private func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> NSColor {
+            NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
+        }
+    }
+
+    var highlight: Highlight {
+        get { Highlight(rawValue: defaults.string(forKey: Keys.highlight) ?? "") ?? .grey }
+        set {
+            defaults.set(newValue.rawValue, forKey: Keys.highlight)
+            notify(.appearance)
+        }
+    }
+
     /// How much of the terminal the switcher's backdrop carries away, 0…1.
     var backdropDim: CGFloat {
         get {
@@ -92,7 +159,7 @@ final class Settings {
 
     func resetAppearance() {
         for key in [
-            Keys.accent, Keys.backdropDim, Keys.appearance,
+            Keys.accent, Keys.backdropDim, Keys.appearance, Keys.highlight,
             // Written by older versions, and still cleared so a reset leaves
             // nothing behind that a future build might start reading again.
             Keys.panelBackground, Keys.lightIconTiles,
@@ -170,6 +237,7 @@ final class Settings {
         static let backdropDim = "RuneBackdropDim"
         static let lightIconTiles = "RuneLightIconTiles"
         static let appearance = "RuneAppearance"
+        static let highlight = "RuneHighlight"
         static let shortcuts = "RuneShortcuts"
     }
 
