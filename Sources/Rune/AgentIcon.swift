@@ -47,21 +47,45 @@ enum AgentIcon: CaseIterable {
         }
     }
 
-    var image: NSImage? { Self.cache[self] }
+    /// The mark to draw on a dark surface, or on a light one.
+    ///
+    /// Only opencode has two. Its mark is a solid square drawn for paper — a
+    /// pale block inside a near-black frame — and on a dark terminal the
+    /// frame vanishes and the block reads as a white sticker. The dark
+    /// variant is the same shape the other way round.
+    func image(onDark dark: Bool) -> NSImage? {
+        (dark ? Self.darkCache[self] : Self.cache[self]) ?? Self.cache[self]
+    }
 
     /// Decoded once. NSImage reads SVG natively, so the markup can be kept
     /// verbatim rather than redrawn as bezier paths by hand.
-    private static let cache: [AgentIcon: NSImage] = {
+    private static let cache: [AgentIcon: NSImage] = decode { $0.svg }
+    private static let darkCache: [AgentIcon: NSImage] = decode { $0.darkSVG }
+
+    private static func decode(_ markup: (AgentIcon) -> String?) -> [AgentIcon: NSImage] {
         var result: [AgentIcon: NSImage] = [:]
         for agent in allCases {
-            guard let data = agent.svg.data(using: .utf8),
+            guard let text = markup(agent), let data = text.data(using: .utf8),
                   let image = NSImage(data: data)
             else { continue }
             image.isTemplate = false
             result[agent] = image
         }
         return result
-    }()
+    }
+
+    /// What to draw on a dark surface, where the light mark doesn't work.
+    private var darkSVG: String? {
+        switch self {
+        case .openCode:
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="40" viewBox="0 0 32 40">\
+            <path d="M24 32H8V16H24V32Z" fill="#4B4646"/>\
+            <path d="M24 8H8V32H24V8ZM32 40H0V0H32V40Z" fill="#F1ECEC"/></svg>
+            """
+        case .claude, .codex, .pi: nil
+        }
+    }
 
     private var svg: String {
         switch self {

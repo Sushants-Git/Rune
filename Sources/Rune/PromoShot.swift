@@ -82,22 +82,22 @@ enum PromoShot {
             WindowPalette.Item(
                 number: 1, title: "Window 1",
                 workspaces: ["rune", "rune-website"], isCurrent: true,
-                icon: AgentIcon.claude.image,
+                icon: AgentIcon.claude.image(onDark: true),
                 entries: [
                     WindowPalette.Entry(title: "rune", subtitle: "tab 1 · claude",
-                                        isCurrent: true, icon: AgentIcon.claude.image),
+                                        isCurrent: true, icon: AgentIcon.claude.image(onDark: true)),
                     WindowPalette.Entry(title: "rune", subtitle: "tab 2 · zsh",
                                         isCurrent: false, icon: nil),
                     WindowPalette.Entry(title: "rune-website", subtitle: "~/Workspace",
-                                        isCurrent: false, icon: AgentIcon.openCode.image),
+                                        isCurrent: false, icon: AgentIcon.openCode.image(onDark: true)),
                 ]),
             WindowPalette.Item(
                 number: 2, title: "Window 2",
                 workspaces: ["devfolio-api"], isCurrent: false,
-                icon: AgentIcon.codex.image,
+                icon: AgentIcon.codex.image(onDark: true),
                 entries: [
                     WindowPalette.Entry(title: "devfolio-api", subtitle: "~/Workspace",
-                                        isCurrent: true, icon: AgentIcon.codex.image),
+                                        isCurrent: true, icon: AgentIcon.codex.image(onDark: true)),
                 ]),
         ]
         return WindowPalette(
@@ -163,7 +163,7 @@ enum PromoShot {
         PaletteItem(
             title: title, subtitle: subtitle, badge: nil,
             isCurrent: current, isPinned: pinned, isZoomed: zoomed,
-            icon: agent?.image, status: status,
+            icon: agent?.image(onDark: true), status: status,
             searchText: title, editableName: "", automaticTitle: title,
             bell: notifies ? .once : .off)
     }

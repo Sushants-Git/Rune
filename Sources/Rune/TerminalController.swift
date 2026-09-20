@@ -1356,13 +1356,20 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
 
     /// And of one terminal, for a split pane's own header.
     static func mark(for surface: GhosttySurfaceView) -> NSImage? {
-        if let agent = surface.agent { return agent.image }
+        if let agent = surface.agent { return agent.image(onDark: !terminalIsLight) }
         let program = surface.program
         if let program, !program.isAmbient { return program.image }
         if let project = surface.workingDirectory.flatMap(ProjectIcon.image(forDirectory:)) {
             return project
         }
         return program?.image
+    }
+
+    /// Whether an agent's mark will be drawn on a light surface. The strip
+    /// and the pane headers take the terminal's own colour, so that is what
+    /// decides which of an agent's two marks reads.
+    static var terminalIsLight: Bool {
+        (NSApp.delegate as? AppDelegate)?.ghostty?.backgroundColor.isLight ?? false
     }
 
     /// The row's second line: where the workspace *is*, not what it's called.

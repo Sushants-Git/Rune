@@ -218,6 +218,13 @@ it follows launches, quits, hides and activations — with a one-second tick
 besides, because "it is refusing to quit" is a fact about elapsed time that no
 notification announces.
 
+**An agent may ship two marks.** opencode's is a solid square drawn for
+paper — a pale block inside a near-black frame — and on a dark terminal the
+frame disappears and the block reads as a white sticker. It has a dark variant
+now, the same shape the other way round, and `AgentIcon.image(onDark:)` picks
+between them: the pickers ask their own panel, the tab strip and the pane
+headers ask the terminal's colour, since that is the ground they sit on.
+
 ## Knowing which agent wants you
 
 Every row in `⌘K` says what that workspace is doing, in words:

@@ -581,12 +581,13 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
             cluster.addArrangedSubview(time)
         }
 
+        let dark = !PaletteStyle.isLight
         let image: NSImage?
         switch session.agent {
-        case .claude: image = AgentIcon.claude.image
-        case .codex: image = AgentIcon.codex.image
-        case .openCode: image = AgentIcon.openCode.image
-        case .pi: image = AgentIcon.pi.image
+        case .claude: image = AgentIcon.claude.image(onDark: dark)
+        case .codex: image = AgentIcon.codex.image(onDark: dark)
+        case .openCode: image = AgentIcon.openCode.image(onDark: dark)
+        case .pi: image = AgentIcon.pi.image(onDark: dark)
         case nil: image = nil
         }
         let view = PaletteRow(icon: IconTile(image: image, symbol: "terminal"), text: text, cluster: cluster)
