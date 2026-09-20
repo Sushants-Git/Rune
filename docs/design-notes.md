@@ -400,9 +400,8 @@ hook, so — as with Codex — its own log is the source: the last record being 
 user message, a tool call or a tool result means the turn is still running,
 and an assistant message that ends without a tool call means it is your turn.
 A log that has been silent for fifteen minutes is a session left open rather
-than an agent still thinking, and says nothing. pi ships no mark of its own,
-so its icon is the system's `pi` symbol, drawn as a template so it takes the
-colour of whatever shows it.
+than an agent still thinking, and says nothing. Its mark is pi's own,
+as SVG beside the other agents' in `AgentIcon`.
 
 ### More than one account
 

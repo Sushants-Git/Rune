@@ -53,15 +53,7 @@ enum AgentIcon: CaseIterable {
     /// verbatim rather than redrawn as bezier paths by hand.
     private static let cache: [AgentIcon: NSImage] = {
         var result: [AgentIcon: NSImage] = [:]
-        // pi has no mark of its own to ship, and the system already draws the
-        // letter. As a template it takes the colour of whatever is showing it,
-        // so it reads on a light panel and a dark one alike.
-        if let symbol = NSImage(systemSymbolName: "pi", accessibilityDescription: "Pi")?
-            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium)) {
-            symbol.isTemplate = true
-            result[.pi] = symbol
-        }
-        for agent in allCases where result[agent] == nil {
+        for agent in allCases {
             guard let data = agent.svg.data(using: .utf8),
                   let image = NSImage(data: data)
             else { continue }
@@ -71,11 +63,15 @@ enum AgentIcon: CaseIterable {
         return result
     }()
 
-    /// The marks Rune ships. pi isn't one: it is drawn from the system's own
-    /// `pi` symbol — see `cache`.
     private var svg: String {
         switch self {
-        case .pi: ""
+        case .pi:
+            """
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 800 800">\
+            <path fill="#F09082" d="M165.29 165.29H517.36V400H400V282.65H165.29Z"/>\
+            <path fill="#4D9ABF" d="M165.29 282.65H282.65V400H400V517.36H282.65V634.72H165.29Z"/>\
+            <path fill="#F1BE58" d="M517.36 400H634.72V634.72H517.36Z"/></svg>
+            """
 
         case .claude:
             """
