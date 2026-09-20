@@ -529,9 +529,12 @@ enum AgentHistory {
                 else if agent.contains(term) { score = 60 }
                 else if let account = session.account?.lowercased(), account.contains(term) { score = 60 }
                 else if state == term { score = 40 }
-                else if let gaps = tight(term, in: title) { score = max(1, 55 - gaps) }
-                else if let gaps = tight(term, in: project) { score = max(1, 45 - gaps) }
-                else if term.count >= 3, inWord(term, title) != nil { score = 30 }
+                // Letters in order inside one word, the same rule transcripts
+                // are matched by. It used to be a subsequence that could
+                // cross words, so `bisection` matched "Build scoped Telescope
+                // action" — a row with nothing in it to point at.
+                else if let gaps = span(term, in: title) { score = max(1, 55 - gaps) }
+                else if let gaps = span(term, in: project) { score = max(1, 45 - gaps) }
                 else { score = nil }
                 guard let score else { return nil }
                 total += score
@@ -543,35 +546,15 @@ enum AgentHistory {
     /// `term` as a subsequence of `haystack`, anchored at a word boundary and
     /// held to a span, or nil. Returns how many characters it had to skip, so a
     /// closer match can outrank a looser one.
-    private static func tight(_ term: String, in haystack: String) -> Int? {
-        let needle = Array(term), hay = Array(haystack)
-        guard needle.count > 1, hay.count <= 512 else { return nil }
-        // Three times the term's own length is roughly "inside one or two
-        // words". Beyond that the letters are no longer a spelling of anything
-        // — they are four letters that happen to appear in a sentence.
-        let budget = needle.count * 3 + 2
-        var best: Int?
-        for start in hay.indices where hay[start] == needle[0] && boundary(hay, start) {
-            var cursor = start
-            var index = 0
-            while index < needle.count, cursor < hay.count {
-                if hay[cursor] == needle[index] { index += 1 }
-                cursor += 1
-            }
-            guard index == needle.count else { continue }
-            let span = cursor - start
-            guard span <= budget else { continue }
-            let gaps = span - needle.count
-            if best == nil || gaps < best! { best = gaps }
-        }
-        return best
+    /// How many letters `term` spreads over, matched inside one word of
+    /// `haystack`, or nil when it isn't there. Tighter scores better.
+    private static func span(_ term: String, in haystack: String) -> Int? {
+        guard term.count > 1, let ranges = inWord(term, haystack), let first = ranges.first,
+              let last = ranges.last
+        else { return nil }
+        return haystack.distance(from: first.lowerBound, to: last.upperBound) - term.count
     }
 
-    private static func boundary(_ hay: [Character], _ index: Int) -> Bool {
-        guard index > 0 else { return true }
-        let previous = hay[index - 1]
-        return !previous.isLetter && !previous.isNumber
-    }
 
     static func merge(_ supplied: [Session], with saved: [Session]) -> [Session] {
         let savedByID = Dictionary(saved.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -625,7 +608,7 @@ enum AgentHistory {
 
     /// `needle`'s letters in order within one word of `text` — the first word
     /// that holds them, matched as tightly as that word allows.
-    private static func inWord(_ needle: String, _ text: String) -> [Range<String.Index>]? {
+    static func inWord(_ needle: String, _ text: String) -> [Range<String.Index>]? {
         func fold(_ scalar: Unicode.Scalar) -> UInt32 {
             let value = scalar.value
             return (65...90).contains(value) ? value + 32 : value

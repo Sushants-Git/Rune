@@ -404,13 +404,18 @@ below the name matches, the preview opening on the match with what matched
 picked out. Queries of one character skip the transcripts: they match nearly
 all of them.
 
-**Matching is telescope-style**, one rule everywhere (`AgentHistory.matchRanges`):
+**Matching is telescope-style**, one rule everywhere — titles, folders and
+transcripts alike (`AgentHistory.matchRanges`):
 the query as written, or else every word of it, each as written or — three
 letters or more — as its letters in order *inside one word*, with at most 8
 letters between two of them. So `intersection` finds `interhihellosection`,
 but not the same letters strewn across a sentence, and not a hash or encoded
 image that happens to hold them; a subsequence allowed to cross words matches
-nearly any long text. Only what was *said* counts — a message's own text, not
+nearly any long text. Titles were matched by a looser rule for a while — a
+subsequence that could cross words, within about three times the query's
+length — and `bisection` matched "Build scoped Telescope action": a row with
+nothing in it to point at, no highlight and no transcript match, which is
+exactly how it looked. Only what was *said* counts — a message's own text, not
 tool output or files the agent read — or "libghostty" found 160 sessions that
 merely had the README open.
 

@@ -302,7 +302,15 @@ enum FFFCheck {
             for session in slow.sessions where !fastIDs.contains(session.id) {
                 if case .jsonl(let url)? = session.transcript { print("  missed:", url.path) } else { print("  missed (db):", session.title) }
             }
-            for session in fast.sessions.prefix(5) {
+            for session in fast.sessions.prefix(12) {
+                print("  [\(session.agent?.name ?? "?")] \(session.title.prefix(28)) excerpt: \(fast.excerpts[session.id] == nil ? "NONE" : "\(fast.excerpts[session.id]!.count) chars")")
+            }
+            print("-- scan list")
+            for session in slow.sessions.prefix(12) {
+                print("  [\(session.agent?.name ?? "?")] \(session.title.prefix(28)) excerpt: \(slow.excerpts[session.id] == nil ? "NONE" : "\(slow.excerpts[session.id]!.count) chars")")
+            }
+            print("-- opencode sessions in corpus: \(discovered.sessions.filter { $0.agent == .openCode }.count)")
+            for session in fast.sessions.prefix(0) {
                 let excerpt = (fast.excerpts[session.id] ?? "").replacingOccurrences(of: "\n", with: " ")
                 let marked = AgentHistory.matchRanges(query, in: excerpt)?.map { String(excerpt[$0]) } ?? []
                 print("  \(session.title.prefix(30)) :: \(marked.joined(separator: "·").prefix(60))")
