@@ -1211,6 +1211,12 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
             onCancel: { [weak self] in self?.closeSwitcher() }))
     }
 
+    /// ⌘; — what else is running on the Mac, and a key to quit it.
+    func showApps() {
+        if isSwitcherVisible { dismissSwitcher(); return }
+        present(AppsPalette(onCancel: { [weak self] in self?.closeSwitcher() }))
+    }
+
     /// Snapshot only already-known agent state; opening a picker never polls processes.
     func liveSessionSnapshot() -> [AgentHistory.Session] {
         let all = (NSApp.delegate as? AppDelegate)?.windows ?? [self]

@@ -405,6 +405,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
     @objc private func showSettingsAction(_ sender: Any?) { SettingsWindowController.shared.show() }
 
     @objc private func showSessionsAction(_ sender: Any?) { keyController?.showSessions() }
+    @objc private func showAppsAction(_ sender: Any?) { keyController?.showApps() }
     @objc private func showWindowsAction(_ sender: Any?) { keyController?.showWindows() }
 
     /// ⌘⇧, — re-read everything Rune is configured by, the way Ghostty does.
@@ -529,6 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, GhosttyAppDelegate {
         // itself is what checks the setting.
         bind(.showSessions, to: tabsMenu, #selector(showSessionsAction(_:)))
         bind(.showWindows, to: tabsMenu, #selector(showWindowsAction(_:)))
+        bind(.showApps, to: tabsMenu, #selector(showAppsAction(_:)))
         tabsMenu.addItem(.separator())
         bind(.nextTab, to: tabsMenu, #selector(nextTabAction(_:)))
         bind(.previousTab, to: tabsMenu, #selector(prevTabAction(_:)))

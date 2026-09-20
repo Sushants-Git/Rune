@@ -82,6 +82,7 @@ Only what Rune adds. Copy, paste and font size work as they do anywhere else.
 | `←` | in `⌘K`, twice: detach this workspace into its own window |
 | `⌘J` | windows on the left, workspaces and tabs on the right |
 | `⌘L` | agent sessions |
+| `⌘;` | open apps |
 | `⌘⇧,` | reload the Ghostty config and Rune's settings |
 
 Rebind any of them in **Settings → Shortcuts**. In `⌘J`, `←` / `→` chooses

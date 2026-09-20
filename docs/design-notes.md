@@ -198,6 +198,21 @@ the others dimmed. A version drew the focused pane's name inside a small
 Chrome-style tab flaring into the pane; it was a tab inside a tab for no gain,
 and went. So did 0.26's accent underline.
 
+### `⌘;` — the other apps
+
+The fourth picker, and the only one not about Rune: every app with a Dock
+icon, `↵` to switch to one and `→` to quit it. Rune itself is left out —
+quitting the app you are quitting things from is a trick, not a feature, and
+⌘Q is right there.
+
+`→` is `⌘Q`, not a kill: the app is asked, and a row that has been asked says
+`quitting…`. An app that ignores it (unsaved changes, something wedged) says
+`→ again to force` after a couple of seconds, and only that second press calls
+`forceTerminate`. Nothing here kills without asking twice. The list is live —
+it follows launches, quits, hides and activations — with a one-second tick
+besides, because "it is refusing to quit" is a fact about elapsed time that no
+notification announces.
+
 ## Knowing which agent wants you
 
 Every row in `⌘K` says what that workspace is doing, in words:

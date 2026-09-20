@@ -98,7 +98,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
     case focusSplitLeft, focusSplitRight, focusSplitUp, focusSplitDown
     case zoomSplit, equalizeSplits
     case switchWorkspace, renameWorkspace, nextTab, previousTab
-    case showSessions, showWindows
+    case showSessions, showWindows, showApps
     case find, findNext, findPrevious
     case reloadConfig
 
@@ -124,6 +124,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .switchWorkspace: "Switch to Workspace…"
         case .showSessions: "Agent Sessions…"
         case .showWindows: "All Windows…"
+        case .showApps: "Open Apps…"
         case .renameWorkspace: "Rename Workspace…"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
@@ -143,7 +144,7 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .splitRight, .splitDown, .focusSplitLeft, .focusSplitRight,
              .focusSplitUp, .focusSplitDown, .zoomSplit, .equalizeSplits: "Splits"
         case .switchWorkspace, .renameWorkspace, .nextTab, .previousTab, .showSessions,
-             .showWindows:
+             .showWindows, .showApps:
             "Workspaces"
         case .find, .findNext, .findPrevious: "Find"
         case .reloadConfig: "View"
@@ -172,6 +173,9 @@ enum ShortcutAction: String, CaseIterable, Codable {
         case .switchWorkspace: KeyChord("k")
         case .showSessions: KeyChord("l")
         case .showWindows: KeyChord("j")
+        // Next to ⌘' and ⌘\ on the keyboard and next to ⌘K, ⌘L and ⌘J in
+        // what it does: another list, another key beside them.
+        case .showApps: KeyChord(";")
         case .renameWorkspace: KeyChord("r")
         case .nextTab: KeyChord("]", [.command, .shift])
         case .previousTab: KeyChord("[", [.command, .shift])
