@@ -138,7 +138,7 @@ git clone https://github.com/Sushants-Git/Rune.git && cd Rune
 
 If it stops on `cannot execute tool 'metal'`, run
 `xcodebuild -downloadComponent MetalToolchain` and try again. Releases are cut
-by pushing a tag: `git tag v0.31.1 && git push origin v0.31.1`.
+by pushing a tag: `git tag v0.31.2 && git push origin v0.31.2`.
 
 [**Design notes**](docs/design-notes.md) cover why it's built this way, and the
 parts that cost real debugging time.
