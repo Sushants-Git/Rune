@@ -38,6 +38,9 @@ final class AppsPalette: NSView, OverlayPanel {
     private let status = NSTextField(labelWithString: "")
     private var quitHint: HintPair!
     private var ticker: Timer?
+    /// The list is as tall as it has rows, up to the cap — a panel with six
+    /// apps in it should not be a panel with room for nine.
+    private var listHeight: NSLayoutConstraint!
 
     private static let width: CGFloat = 520
     private static let rowHeight: CGFloat = 40
@@ -184,6 +187,7 @@ final class AppsPalette: NSView, OverlayPanel {
             addSubview(view)
         }
 
+        listHeight = scroll.heightAnchor.constraint(equalToConstant: 0)
         let inset = SwitcherPalette.contentInset
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.width),
@@ -201,8 +205,7 @@ final class AppsPalette: NSView, OverlayPanel {
             scroll.topAnchor.constraint(equalTo: headerDivider.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.heightAnchor.constraint(
-                equalToConstant: CGFloat(Self.visibleRows) * Self.rowHeight + 12),
+            listHeight,
             empty.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
             empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
 
@@ -260,6 +263,14 @@ final class AppsPalette: NSView, OverlayPanel {
         } else {
             table.deselectAll(nil)
         }
+        // Whole rows, plus the scroll view's own padding, so the last row
+        // isn't sliced through — and never less than one row, or an empty
+        // list would have nowhere to say it is empty.
+        let rows = min(max(visible.count, 1), Self.visibleRows)
+        listHeight.constant = CGFloat(rows) * Self.rowHeight + 12
+        let fits = visible.count <= Self.visibleRows
+        scroll.hasVerticalScroller = !fits
+        scroll.verticalScrollElasticity = fits ? .none : .allowed
         empty.isHidden = !visible.isEmpty
         empty.stringValue = entries.isEmpty ? "Nothing else is running" : "No apps match"
         status.stringValue = "\(visible.count) \(visible.count == 1 ? "app" : "apps")"
