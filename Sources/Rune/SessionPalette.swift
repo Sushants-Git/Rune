@@ -596,6 +596,7 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         case .claude: image = AgentIcon.claude.image
         case .codex: image = AgentIcon.codex.image
         case .openCode: image = AgentIcon.openCode.image
+        case .pi: image = AgentIcon.pi.image
         case nil: image = nil
         }
         let view = PaletteRow(icon: IconTile(image: image, symbol: "terminal"), text: text, cluster: cluster)

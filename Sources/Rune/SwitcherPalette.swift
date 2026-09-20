@@ -806,7 +806,7 @@ extension SwitcherPalette: NSTableViewDataSource, NSTableViewDelegate {
             cluster.addArrangedSubview(Chip(text: "← again to detach", emphasised: true))
         }
         if item.isCurrent {
-            cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
+            cluster.addArrangedSubview(CurrentMark("The workspace you came from"))
         }
 
         return PaletteRow(icon: icon, text: stack, cluster: cluster)
@@ -955,9 +955,9 @@ final class PaletteRowView: NSTableRowView {
     /// ⌘J has two of them side by side, and it has to be obvious which one is
     /// listening. Fading the whole inactive table to 65% was the old answer and
     /// it faded the text along with everything else, so the column you weren't
-    /// in became the column you couldn't read. Now both lists stay legible and
-    /// only the highlight says which is live: a filled pill here, a thin
-    /// outline there.
+    /// in became the column you couldn't read. Now the list you are not in
+    /// shows nothing at all: its leftover grey bar followed the arrow keys
+    /// down the other column and read as a second cursor.
     var isDimmed = false {
         didSet {
             guard isDimmed != oldValue else { return }
@@ -973,18 +973,12 @@ final class PaletteRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {
         guard isSelected else { return }
         // Flat and full width, with a bar down the leading edge — the cursor
-        // line of a terminal list rather than a pill. The list that isn't
-        // listening keeps only the bar, in grey.
-        let bar = NSRect(x: 0, y: 0, width: 3, height: bounds.height)
-        guard isDimmed else {
-            PaletteStyle.selection.setFill()
-            bounds.fill()
-            PaletteStyle.accent.setFill()
-            bar.fill()
-            return
-        }
-        PaletteStyle.tertiaryText.setFill()
-        bar.fill()
+        // line of a terminal list rather than a pill.
+        guard !isDimmed else { return }
+        PaletteStyle.selection.setFill()
+        bounds.fill()
+        PaletteStyle.accent.setFill()
+        NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
     }
 }
 
@@ -1157,7 +1151,11 @@ final class IconTile: NSView {
         let markSide: CGFloat = 16
 
         if let artwork {
-            if Self.paintsItsOwnBackground(artwork) {
+            if artwork.isTemplate {
+                // A template mark is a glyph, not a picture: it takes the
+                // panel's ink like the fallback terminal symbol does.
+                image.contentTintColor = PaletteStyle.secondaryText
+            } else if Self.paintsItsOwnBackground(artwork) {
                 layer?.cornerRadius = 4
                 layer?.cornerCurve = .continuous
                 layer?.masksToBounds = true
@@ -1240,7 +1238,35 @@ final class IconTile: NSView {
     }
 }
 
-/// A small rounded label — tab counts, the "current" marker. Grey rather than
+/// Where you are: a filled dot in the accent, rather than the word "current".
+///
+/// The word was the widest thing on its row and repeated whatever the row
+/// already implied. A dot says the same in a glance, and the tooltip spells
+/// it out for anyone who wants it.
+final class CurrentMark: NSView {
+    init(_ hint: String = "Where you are now") {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 3.5
+        layer?.backgroundColor = PaletteStyle.accent.cgColor
+        toolTip = hint
+        setAccessibilityElement(true)
+        setAccessibilityRole(.staticText)
+        setAccessibilityLabel(hint)
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 7),
+            heightAnchor.constraint(equalToConstant: 7),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+}
+
+/// A small rounded label — tab counts, the "live" marker. Grey rather than
 /// tinted: these annotate a row, they don't call for action, and an accent
 /// colour on every row's right edge is noise.
 final class Chip: NSView {

@@ -520,7 +520,7 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
             cluster.alignment = .centerY
             cluster.spacing = 6
             if entry.isCurrent {
-                cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
+                cluster.addArrangedSubview(CurrentMark("Where you are now"))
             }
             // The same mark ⌘K puts on the row. Every tab in here used to be a
             // grey terminal glyph, so the one column that says *what* is in a
@@ -571,7 +571,7 @@ extension WindowPalette: NSTableViewDataSource, NSTableViewDelegate {
         cluster.alignment = .centerY
         cluster.spacing = 6
         if item.isCurrent {
-            cluster.addArrangedSubview(Chip(text: "current", emphasised: true))
+            cluster.addArrangedSubview(CurrentMark("Where you are now"))
         }
 
         return PaletteRow(

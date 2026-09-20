@@ -1221,6 +1221,7 @@ final class TerminalController: NSWindowController, NSWindowDelegate {
                 case .claude: .claude
                 case .codex: .codex
                 case .openCode: .openCode
+                case .pi: .pi
                 }
                 return AgentHistory.Session.live(target: surface.id, title: surface.title,
                                                  directory: surface.pwd ?? "", agent: kind)

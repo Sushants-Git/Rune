@@ -368,6 +368,22 @@ POSIX so it means the same thing in sh, bash, zsh and fish.
 that check — otherwise it resolves `claude` to whatever the developer running it
 has installed instead of to its own mock.
 
+### pi
+
+pi (`~/.pi/agent/sessions`) is the fourth agent Rune knows: a folder per
+working directory, a JSONL per session whose first line carries the session's
+id and its `cwd` — the folder names flatten the path's slashes and are lossy,
+so the header is what a directory is matched by, not the folder's name. ⌘L
+lists and searches those sessions like any other and resumes one with `pi
+--session <id>`; ⌘K shows what it is doing. There is no status file and no
+hook, so — as with Codex — its own log is the source: the last record being a
+user message, a tool call or a tool result means the turn is still running,
+and an assistant message that ends without a tool call means it is your turn.
+A log that has been silent for fifteen minutes is a session left open rather
+than an agent still thinking, and says nothing. pi ships no mark of its own,
+so its icon is the system's `pi` symbol, drawn as a template so it takes the
+colour of whatever shows it.
+
 ### More than one account
 
 A second login for Claude Code or Codex is a second home —
@@ -436,6 +452,13 @@ own size limit, and the index's `cache_budget_max_file_size`, which otherwise
 leaves files over 10 MB — every long session — out entirely. OpenCode keeps its
 transcripts in SQLite, which fff can't index, so those are read the old way,
 with the same rule. The indexes are built when ⌘L opens.
+
+**"Where you are" is a dot, not a word.** ⌘K and ⌘J marked the row you came
+from with a `current` chip — the widest thing on the row, repeating what the
+row mostly implied. It is an accent dot now, with the sentence in its tooltip.
+And the list that does *not* hold the arrow keys draws no selection at all:
+its leftover grey bar followed the arrows down the other column and read as a
+second cursor.
 
 **The preview lists every match**, up to twelve, each with a little context
 and highlighted, above the usual opening-and-latest view of the conversation —

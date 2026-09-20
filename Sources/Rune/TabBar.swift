@@ -73,7 +73,9 @@ final class TabBar: NSView {
             newButton.paint(tint: ink(0.7), resting: .clear, hover: ink(0.12))
             titleLabel.textColor = ink(0.7)
             titleDot.layer?.borderColor = ground.cgColor
-            if titleMark == nil { titleIcon.contentTintColor = ink(0.6) }
+            if titleMark == nil || titleMark?.isTemplate == true {
+                titleIcon.contentTintColor = ink(0.6)
+            }
             zoomButton.paint(tint: ink(0.7), resting: ink(0.08), hover: ink(0.15))
         }
     }
@@ -379,7 +381,7 @@ final class TabBar: NSView {
             titleIcon.image = mark ?? NSImage(
                 systemSymbolName: "terminal", accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
-            titleIcon.contentTintColor = mark == nil
+            titleIcon.contentTintColor = (mark == nil || mark?.isTemplate == true)
                 ? Chrome.ink(over: Chrome.ground(for: backgroundColor))(0.6) : nil
         }
         let activity = tab?.status.activity ?? .idle
@@ -1152,7 +1154,8 @@ private final class TabChip: NSView {
             label.font = .systemFont(ofSize: 12.5, weight: weight)
         }
         closeButton.paint(tint: ink(isActive ? 0.7 : 0.5), resting: .clear, hover: ink(0.14))
-        icon.contentTintColor = mark == nil ? ink(isActive ? 0.7 : 0.5) : nil
+        icon.contentTintColor = (mark == nil || mark?.isTemplate == true)
+            ? ink(isActive ? 0.7 : 0.5) : nil
         // Ringed in the colour behind it, so the badge reads as sitting on the
         // icon rather than as a blot touching it.
         dot.layer?.borderColor = surface.cgColor

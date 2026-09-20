@@ -323,7 +323,8 @@ final class PaneHeader: NSView {
             icon.image = mark ?? NSImage(
                 systemSymbolName: "terminal", accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
-            icon.contentTintColor = mark == nil ? Chrome.ink(over: background)(0.5) : nil
+            icon.contentTintColor = (mark == nil || mark?.isTemplate == true)
+                ? Chrome.ink(over: background)(0.5) : nil
         }
     }
 
@@ -351,7 +352,7 @@ final class PaneHeader: NSView {
             control.contentTintColor = ink(0.6)
             control.restingBackground = .clear
         }
-        if icon.contentTintColor != nil { icon.contentTintColor = ink(0.5) }
+        if icon.contentTintColor != nil { icon.contentTintColor = ink(isFocused ? 0.8 : 0.5) }
         icon.alphaValue = isFocused ? 1 : 0.6
     }
 

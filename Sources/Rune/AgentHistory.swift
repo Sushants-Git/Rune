@@ -5,13 +5,14 @@ import SQLite3
 /// actor and propagate cancellation to the worker. No transcript text is code.
 enum AgentHistory {
     enum Agent: String, CaseIterable, Sendable {
-        case claude, codex, openCode
+        case claude, codex, openCode, pi
 
         var name: String {
             switch self {
             case .claude: "Claude"
             case .codex: "Codex"
             case .openCode: "OpenCode"
+            case .pi: "Pi"
             }
         }
     }
@@ -115,15 +116,17 @@ enum AgentHistory {
             self.agent = agent
             self.sessionID = sessionID
             self.directory = directory
-            self.accountHome = agent == .openCode ? nil : accountHome
+            self.accountHome = Self.homeVariable(of: agent) == nil ? nil : accountHome
         }
 
         /// The variable that points this agent at another home.
-        private var homeVariable: String? {
+        private var homeVariable: String? { Self.homeVariable(of: agent) }
+
+        private static func homeVariable(of agent: Agent) -> String? {
             switch agent {
             case .claude: "CLAUDE_CONFIG_DIR"
             case .codex: "CODEX_HOME"
-            case .openCode: nil
+            case .openCode, .pi: nil
             }
         }
 
@@ -132,6 +135,7 @@ enum AgentHistory {
             case .claude: ["claude", "--resume", sessionID]
             case .codex: ["codex", "resume", sessionID]
             case .openCode: ["opencode", "--session", sessionID]
+            case .pi: ["pi", "--session", sessionID]
             }
         }
 
@@ -245,6 +249,8 @@ enum AgentHistory {
         /// Every account's home, the default first.
         var claudeAccounts: [Account]
         var codexAccounts: [Account]
+        /// pi keeps one session folder per working directory.
+        var pi: URL
         /// The default homes.
         var claude: URL { claudeAccounts[0].home }
         var codex: URL { codexAccounts[0].home }
@@ -259,6 +265,7 @@ enum AgentHistory {
             }
             claudeAccounts = Account.claude(home: home, environment: environment)
             codexAccounts = Account.codex(home: home, environment: environment)
+            pi = root("RUNE_PI_SESSIONS", home.appendingPathComponent(".pi/agent/sessions"))
             openCode = root("XDG_DATA_HOME", home.appendingPathComponent(".local/share"))
                 .appendingPathComponent("opencode")
             openCodeDatabase = root("RUNE_OPENCODE_DB", openCode.appendingPathComponent("opencode.db"))
@@ -338,8 +345,9 @@ enum AgentHistory {
     typealias Grep = @Sendable (_ query: String, _ folders: [URL])
         -> (lines: [String: [UInt64]], complete: Bool)
 
-    /// The folders every Claude and Codex account keeps its transcripts in.
+    /// The folders every Claude, Codex and pi session lives in.
     static func transcriptFolders(_ roots: Roots) -> [URL] {
+        [roots.pi] +
         roots.claudeAccounts.map { $0.home.appendingPathComponent("projects") }
             + roots.codexAccounts.flatMap {
                 [$0.home.appendingPathComponent("sessions"),
@@ -733,6 +741,26 @@ enum AgentHistory {
                     resume: resume, transcript: .jsonl(url)))
             }
         }
+        // pi: one folder per working directory, a JSONL per session whose
+        // first line names the session and where it ran.
+        let piFiles = enumerate(roots.pi, extension: "jsonl", limit: 20_000)
+        if piFiles.limited { notes.append("Pi discovery reached its file limit.") }
+        for url in piFiles.urls {
+            guard !Task.isCancelled else { break }
+            let head = window(url, bytes: 256 * 1024, tail: false).objects
+            guard let header = head.first(where: { $0["type"] as? String == "session" }),
+                  let id = header["id"] as? String, let directory = header["cwd"] as? String,
+                  let resume = Resume(agent: .pi, sessionID: id, directory: directory)
+            else { continue }
+            let title = head.compactMap(messageText).first { $0.hasPrefix("user:\n") }
+                .map { String($0.dropFirst(6).prefix(160)) }
+            let updated = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            sessions.append(Session(
+                id: Session.savedID(agent: .pi, sessionID: id), agent: .pi,
+                title: display(title ?? "Pi \(id.prefix(8))"), directory: directory,
+                account: nil, updatedAt: updated, resume: resume, transcript: .jsonl(url)))
+        }
+
         if FileManager.default.fileExists(atPath: roots.openCodeDatabase.path) {
             var count = 0
             let ok = database(roots.openCodeDatabase) { db in
@@ -856,6 +884,9 @@ enum AgentHistory {
             message = object["message"] as? [String: Any] ?? [:]
         } else if type == "response_item", let payload = object["payload"] as? [String: Any], payload["type"] as? String == "message" {
             message = payload
+        } else if type == "message", let body = object["message"] as? [String: Any] {
+            // pi: {"type":"message","message":{"role":…,"content":[{"type":"text",…}]}}
+            message = body
         } else if type == "event_msg", let payload = object["payload"] as? [String: Any],
                   payload["type"] as? String == "user_message", let text = payload["message"] as? String {
             return "user:\n" + text

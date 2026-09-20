@@ -6,6 +6,7 @@ enum AgentIcon: CaseIterable {
     case claude
     case codex
     case openCode
+    case pi
 
     /// Match a process's command line. Agents are usually launched through a
     /// JavaScript runtime, so `node /…/claude` has to resolve to Claude and not
@@ -29,6 +30,7 @@ enum AgentIcon: CaseIterable {
 
     private func matches(_ name: String) -> Bool {
         switch self {
+        case .pi: name == "pi"
         case .claude: name == "claude" || name.hasPrefix("claude-")
         case .codex: name == "codex" || name.hasPrefix("codex-")
         case .openCode: name == "opencode" || name.hasPrefix("opencode-")
@@ -41,6 +43,7 @@ enum AgentIcon: CaseIterable {
         case .claude: ["/.claude/", "claude-code", "@anthropic-ai/claude"]
         case .codex: ["/.codex/", "openai/codex", "@openai/codex"]
         case .openCode: ["/.opencode/", "opencode-ai", "sst/opencode"]
+        case .pi: ["/.pi/agent/", "pi-coding-agent"]
         }
     }
 
@@ -50,7 +53,15 @@ enum AgentIcon: CaseIterable {
     /// verbatim rather than redrawn as bezier paths by hand.
     private static let cache: [AgentIcon: NSImage] = {
         var result: [AgentIcon: NSImage] = [:]
-        for agent in allCases {
+        // pi has no mark of its own to ship, and the system already draws the
+        // letter. As a template it takes the colour of whatever is showing it,
+        // so it reads on a light panel and a dark one alike.
+        if let symbol = NSImage(systemSymbolName: "pi", accessibilityDescription: "Pi")?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .medium)) {
+            symbol.isTemplate = true
+            result[.pi] = symbol
+        }
+        for agent in allCases where result[agent] == nil {
             guard let data = agent.svg.data(using: .utf8),
                   let image = NSImage(data: data)
             else { continue }
@@ -60,8 +71,12 @@ enum AgentIcon: CaseIterable {
         return result
     }()
 
+    /// The marks Rune ships. pi isn't one: it is drawn from the system's own
+    /// `pi` symbol — see `cache`.
     private var svg: String {
         switch self {
+        case .pi: ""
+
         case .claude:
             """
             <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" \

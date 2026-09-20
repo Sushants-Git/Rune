@@ -78,6 +78,8 @@ final class AgentMonitor: @unchecked Sendable {
     /// headers.
     private var codexByDirectory: [String: URL] = [:]
     private var codexIndexedAt: Date = .distantPast
+    private var piByDirectory: [String: URL] = [:]
+    private var piIndexedAt: Date = .distantPast
     private var codexCwdCache: [URL: String?] = [:]
 
     /// Queue-confined, same shape as the Codex index and refreshed on the same
@@ -218,6 +220,17 @@ final class AgentMonitor: @unchecked Sendable {
                 sessionName: nil)
         }
 
+        // pi: like Codex, its own session log is the only thing that says
+        // what it is doing — it writes no status file and Rune has no hook in
+        // it. The last record in the newest log for this directory says
+        // whether it is mid-turn.
+        if agent == .pi {
+            let state = paneDirectory.flatMap(piSession(directory:)).flatMap(PiSession.read(url:))
+            return AgentVerdict(
+                surface: probe.surface, agent: agent, directory: paneDirectory,
+                activity: state?.activity ?? .idle, detail: state?.detail, sessionName: nil)
+        }
+
         // opencode: prefer its live session.status hook over database history.
         if agent == .openCode, let directory = paneDirectory ?? probe.directory,
            let state = openCodeState(directory: directory, pids: Set(candidates)) {
@@ -251,6 +264,16 @@ final class AgentMonitor: @unchecked Sendable {
         }
         return OpenCodeStore.index(
             databaseFallback: openCodeByDirectory, preferredPIDs: pids)[directory]
+    }
+
+    // MARK: - pi
+
+    private func piSession(directory: String) -> URL? {
+        if Date().timeIntervalSince(piIndexedAt) >= Self.codexIndexInterval {
+            piByDirectory = PiSession.index()
+            piIndexedAt = Date()
+        }
+        return piByDirectory[directory]
     }
 
     // MARK: - Codex
@@ -853,5 +876,112 @@ final class AccountHomes: @unchecked Sendable {
             loadedAt = Date()
         }
         return cached
+    }
+}
+
+// MARK: - pi
+
+/// pi's session logs, at `~/.pi/agent/sessions/<folder>/<time>_<id>.jsonl`.
+///
+/// One folder per working directory, named after that directory with its
+/// slashes flattened — which is lossy, since a directory may have dashes of
+/// its own, so the `cwd` in each log's first line is what a folder is matched
+/// by, not its name.
+enum PiSession {
+    struct State {
+        var activity: Activity
+        var detail: String?
+    }
+
+    /// Anything older than this is not a live turn. pi writes a record at
+    /// every step of one, so a log that has said nothing for this long is a
+    /// session someone left open, not an agent that is still thinking.
+    private static let liveWindow: TimeInterval = 15 * 60
+
+    static var root: URL {
+        if let path = ProcessInfo.processInfo.environment["RUNE_PI_SESSIONS"], path.hasPrefix("/") {
+            return URL(fileURLWithPath: path)
+        }
+        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".pi/agent/sessions")
+    }
+
+    /// The newest log per working directory.
+    static func index() -> [String: URL] {
+        let manager = FileManager.default
+        guard let folders = try? manager.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [:] }
+        var result: [String: URL] = [:]
+        for folder in folders.sorted(by: { modified($0) > modified($1) }).prefix(60) {
+            let logs = ((try? manager.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+                .filter { $0.pathExtension == "jsonl" }
+                .sorted { modified($0) > modified($1) }
+            guard let newest = logs.first, let directory = cwd(of: newest) else { continue }
+            if result[directory] == nil { result[directory] = newest }
+        }
+        return result
+    }
+
+    /// What the log's last records say the session is doing.
+    ///
+    /// A user's message, a tool call or a tool's result means the turn is
+    /// still running; an assistant message that ends without a tool call is
+    /// the answer, so it is your turn.
+    static func read(url: URL) -> State? {
+        guard Date().timeIntervalSince(modified(url)) < liveWindow,
+              let (lines, _) = tail(of: url, bytes: 256 * 1024)
+        else { return nil }
+        for line in lines.reversed() {
+            guard let entry = json(line), entry["type"] as? String == "message",
+                  let message = entry["message"] as? [String: Any],
+                  let role = message["role"] as? String
+            else { continue }
+            let blocks = message["content"] as? [[String: Any]] ?? []
+            switch role {
+            case "user":
+                return State(activity: .working, detail: nil)
+            case "toolResult":
+                return State(activity: .working, detail: (message["toolName"] as? String).map { "Running \($0)" })
+            case "assistant":
+                guard let call = blocks.last(where: { $0["type"] as? String == "toolCall" })
+                else { return State(activity: .waiting, detail: nil) }
+                return State(activity: .working, detail: (call["toolName"] as? String).map { "Running \($0)" })
+            default:
+                continue
+            }
+        }
+        return nil
+    }
+
+    /// The `cwd` from a log's first line.
+    private static func cwd(of url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 64 * 1024), let newline = data.firstIndex(of: 10)
+        else { return nil }
+        let object = try? JSONSerialization.jsonObject(with: data[data.startIndex..<newline])
+        return (object as? [String: Any])?["cwd"] as? String
+    }
+
+    private static func json(_ line: Substring) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any]
+    }
+
+    private static func modified(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate ?? .distantPast
+    }
+
+    private static func tail(of url: URL, bytes: Int) -> (lines: [Substring], fromStart: Bool)? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let end = try? handle.seekToEnd(), end > 0 else { return nil }
+        let start = end > UInt64(bytes) ? end - UInt64(bytes) : 0
+        try? handle.seek(toOffset: start)
+        guard let data = try? handle.readToEnd(), !data.isEmpty else { return nil }
+        var lines = String(decoding: data, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+        if start > 0, !lines.isEmpty { lines.removeFirst() }
+        return (lines, start == 0)
     }
 }
