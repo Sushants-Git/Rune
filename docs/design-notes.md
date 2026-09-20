@@ -205,6 +205,11 @@ icon, `↵` to switch to one and `→` to quit it. Rune itself is left out —
 quitting the app you are quitting things from is a trick, not a feature, and
 ⌘Q is right there.
 
+Quitting leaves the highlight where it is — on whatever moved up into that
+place, or on the new last row when the last one was the one that went, the
+way closing a tab lands on its neighbour. It used to jump back to the top,
+because rows are matched by app and the app you just quit is gone.
+
 `→` is `⌘Q`, not a kill: the app is asked, and a row that has been asked says
 `quitting…`. An app that ignores it (unsaved changes, something wedged) says
 `→ again to force` after a couple of seconds, and only that second press calls

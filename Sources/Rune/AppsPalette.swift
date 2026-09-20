@@ -229,6 +229,7 @@ final class AppsPalette: NSView, OverlayPanel {
     /// The apps with a Dock icon, in name order, minus Rune.
     private func reload(keepSelection: Bool) {
         let selected = keepSelection ? visible[safe: table.selectedRow]?.id : nil
+        let row = keepSelection ? table.selectedRow : 0
         let asked = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let mine = ProcessInfo.processInfo.processIdentifier
 
@@ -247,19 +248,24 @@ final class AppsPalette: NSView, OverlayPanel {
                 return entry
             }
 
-        applyFilter(selecting: selected)
+        applyFilter(selecting: selected, near: row)
     }
 
-    private func applyFilter(selecting id: pid_t?) {
+    /// - Parameter row: where the selection was, for when `id` has gone —
+    ///   quitting an app should leave the highlight where it was, on whatever
+    ///   has moved up into that place, rather than sending it back to the top.
+    ///   Quit the last row and it lands on the new last.
+    private func applyFilter(selecting id: pid_t?, near row: Int? = nil) {
         let query = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         visible = query.isEmpty ? entries : entries.filter {
             AgentHistory.matchRanges(query, in: $0.app.localizedName ?? "") != nil
         }
         table.reloadData()
         if !visible.isEmpty {
-            let row = visible.firstIndex { $0.id == id } ?? 0
-            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            table.scrollRowToVisible(row)
+            let fallback = min(max(row ?? 0, 0), visible.count - 1)
+            let next = visible.firstIndex { $0.id == id } ?? fallback
+            table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+            table.scrollRowToVisible(next)
         } else {
             table.deselectAll(nil)
         }
@@ -306,7 +312,7 @@ final class AppsPalette: NSView, OverlayPanel {
             // Asked a moment ago and still closing: let it close.
             NSSound.beep()
         }
-        applyFilter(selecting: entry.id)
+        applyFilter(selecting: entry.id, near: row)
     }
 
     private func mark(_ id: pid_t, _ change: (inout Entry) -> Void) {
@@ -346,7 +352,8 @@ final class AppsPalette: NSView, OverlayPanel {
 
 extension AppsPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate {
     func controlTextDidChange(_ notification: Notification) {
-        applyFilter(selecting: visible[safe: table.selectedRow]?.id)
+        // A new query is a new list: start at the top, as every search does.
+        applyFilter(selecting: visible[safe: table.selectedRow]?.id, near: 0)
     }
 
     func controlTextDidBeginEditing(_ notification: Notification) {
