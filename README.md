@@ -100,8 +100,8 @@ below the rest, and the preview opens on the matching lines.
 The row you are on is picked out in grey; Settings ▸ Appearance ▸ Highlight
 offers Clay, Blue, Green, Purple, Cyan and Amber instead.
 
-Tabs across the top narrow it to one agent — `←`/`→` (at either end of the
-query) and `⇥`/`⇧⇥` move between all, Claude, Codex, OpenCode and pi. Second accounts are found too: a `~/.claude-<name>`
+Tabs across the top narrow it to one agent — `⇥`/`⇧⇥` move between all,
+Claude, Codex, OpenCode and pi. Second accounts are found too: a `~/.claude-<name>`
 or `~/.codex-<name>` home (the one you point `CLAUDE_CONFIG_DIR` or
 `CODEX_HOME` at) marks its sessions with the account's name, and resuming one starts
 the agent in that account. Matching is telescope-style — `intersection` also

@@ -223,7 +223,7 @@ final class SessionPalette: NSView, OverlayPanel {
 
         commitHint = HintPair(keys: ["⏎"], label: "Resume")
         let hints = NSStackView(views: [
-            commitHint, HintPair(keys: ["←", "→"], label: "Agent"),
+            commitHint, HintPair(keys: ["⇥"], label: "Agent"),
             HintPair(keys: ["esc"], label: "Dismiss"),
         ])
         hints.orientation = .horizontal
@@ -361,7 +361,9 @@ final class SessionPalette: NSView, OverlayPanel {
         apply(matched)
     }
 
-    /// ⇥ and ⇧⇥ walk the tabs, wrapping.
+    /// ⇥ and ⇧⇥ walk the tabs, wrapping. ← and → did too for a while, and
+    /// were taken out: in a field you are typing a query into, the arrows are
+    /// how you get back through what you typed.
     private func cycleTab(by step: Int) {
         let order: [AgentHistory.Agent?] = [nil] + AgentHistory.Agent.allCases
         let index = order.firstIndex { $0 == agentTab } ?? 0
@@ -509,18 +511,6 @@ extension SessionPalette: NSTextFieldDelegate, NSTableViewDataSource, NSTableVie
         // the one emacs binding worth spending here: this field is a query, not
         // a document, and transcript search needs a key that isn't already ⌘F
         // in the terminal underneath.
-        // ← and → switch agent, but only where they'd do nothing in the text:
-        // → at the end of the query, ← at its start — both, when it's empty.
-        // Anywhere else they move the caret, the way they always have.
-        case #selector(NSResponder.moveRight(_:)):
-            let caret = textView.selectedRange()
-            guard caret.length == 0, caret.location >= (textView.string as NSString).length
-            else { return false }
-            cycleTab(by: 1)
-        case #selector(NSResponder.moveLeft(_:)):
-            let caret = textView.selectedRange()
-            guard caret.length == 0, caret.location == 0 else { return false }
-            cycleTab(by: -1)
         case #selector(NSResponder.insertTab(_:)): cycleTab(by: 1)
         case #selector(NSResponder.insertBacktab(_:)): cycleTab(by: -1)
         default: return false

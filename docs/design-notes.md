@@ -424,10 +424,10 @@ other.
 ### Tabs, and transcript search on fff
 
 ⌘L has a tab per agent — all, claude, codex, opencode — each counting the
-current matches, switched with `←`/`→`, `⇥`/`⇧⇥` or a click. The arrows only
-switch where they would do nothing in the text — `→` at the end of the query,
-`←` at its start — so they still move the caret through a query you are
-editing. Rows no longer repeat the agent's name (the icon and the tab say it):
+current matches, switched with `⇥`/`⇧⇥` or a click. The arrows did this too
+for a while, at either end of the query; they went back to moving the caret,
+which is what arrows in a field you are typing into should do. Rows no longer
+repeat the agent's name (the icon and the tab say it):
 the second line is the account, when it isn't the default, and the folder, and
 the time sits on the right. A second account's sessions
 sit under their agent's tab rather than a tab of their own: the agent decides
