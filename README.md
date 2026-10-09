@@ -8,7 +8,7 @@
 
 Built on [libghostty](https://github.com/ghostty-org/ghostty) · [rune.sushant.tech](https://rune.sushant.tech) · [latest release](https://github.com/Sushants-Git/Rune/releases/latest)
 
-<img src="docs/images/switcher.png" width="900" alt="Rune's ⌘K switcher over a terminal, listing five workspaces, one working, one waiting on you, one running a command, each with its agent's mark">
+<img src="docs/images/switcher-0.31.png" width="560" alt="Rune's ⌘K switcher: a pinned Claude workspace waiting on you, a Codex one and an opencode one at work with their clocks, a plain shell you are in, and the rename, pin, notify, detach, close and dismiss keys along the bottom">
 
 </div>
 
@@ -18,7 +18,8 @@ Built on [libghostty](https://github.com/ghostty-org/ghostty) · [rune.sushant.t
 
 macOS 13+, Apple Silicon and Intel. Download the dmg from
 [Releases](https://github.com/Sushants-Git/Rune/releases/latest) and drag Rune
-into `/Applications`. It's ad-hoc signed, so macOS will call it damaged. It
+into `/Applications`. It's signed with Rune's own certificate rather than an
+Apple Developer ID and isn't notarized, so macOS will call it damaged. It
 isn't. Clear the flag once:
 
 ```sh
@@ -29,10 +30,6 @@ Or open it and use **System Settings → Privacy & Security → Open Anyway**. I
 updates itself after that.
 
 ## What it does
-
-<div align="center">
-<img src="docs/images/switcher-panel.png" width="561" alt="The ⌘K switcher: three workspaces, one working with a clock, one idle, one waiting on you, with the ⌘R rename, ⌘P pin and ⌘W close hints along the bottom">
-</div>
 
 - `⌘K` opens the switcher.
 - `⌘N` makes a new workspace.
@@ -51,8 +48,9 @@ down. Split panes get a header naming what each one is running, with the
 controls that act on that pane — split, zoom, close — on it. A single pane
 doesn't: there is nothing to tell apart, so it keeps the row.
 
-Every row says what its agent is doing: `working` with a clock, `your turn` when
-it stops, nothing when there's nothing worth saying. If you'd rather not watch
+Every row says what its agent is doing — Claude Code, Codex, opencode and pi —
+`working` with a clock, `your turn` when it stops, nothing when there's nothing
+worth saying. If you'd rather not watch
 the list, arm a row with `→` and go do something else. Rune tells you when that
 one finishes.
 
@@ -90,6 +88,13 @@ the pane and `↑` / `↓` chooses a row. Windows, workspaces and tabs preview
 behind the picker. `Enter` commits; `Escape` restores where you started.
 Existing custom window shortcuts are retained. If a custom binding already
 uses `⌘L`, assign Agent Sessions a free shortcut in Settings.
+
+<div align="center">
+<img src="docs/images/windows-0.31.png" width="720" alt="The ⌘J picker: two windows on the left, and the workspaces and tabs of the highlighted one on the right">
+</div>
+
+`⌘;` lists every other app with a Dock icon. `Enter` switches to one; `→` asks
+it to quit, and if it ignores that, `→` again forces it.
 
 `⌘L` lists every agent session it can find, live ones first. `Enter` jumps to a
 live one, or resumes a saved one in a new workspace. Typing searches titles,
