@@ -43,8 +43,13 @@ updates itself after that.
   first press arms it and says so; the second moves it. Nothing restarts.
 - `⌘1`–`⌘9` jump straight to one without opening the list.
 
+<div align="center">
+<img src="docs/images/tabs.jpg" width="900" alt="A Rune window with four tabs in a Chrome-style strip: a Claude Code task, a Codex task, a pi session and a plain shell, each with its agent's mark">
+</div>
+
 Inside a workspace, `⌘T` adds a tab and `⌘D` / `⌘⇧D` splits the pane right or
-down. Split panes get a header naming what each one is running, with the
+down. Tabs sit in a strip drawn the way Chrome draws one, each with its
+program's mark and its agent's state on it. Split panes get a header naming what each one is running, with the
 controls that act on that pane — split, zoom, close — on it. A single pane
 doesn't: there is nothing to tell apart, so it keeps the row.
 
@@ -90,11 +95,19 @@ Existing custom window shortcuts are retained. If a custom binding already
 uses `⌘L`, assign Agent Sessions a free shortcut in Settings.
 
 <div align="center">
-<img src="docs/images/windows-0.31.png" width="720" alt="The ⌘J picker: two windows on the left, and the workspaces and tabs of the highlighted one on the right">
+<img src="docs/images/windows.jpg" width="900" alt="The ⌘J picker over a split terminal: two windows on the left, and the five workspaces of the highlighted one on the right">
+</div>
+
+<div align="center">
+<img src="docs/images/apps.jpg" width="900" alt="The ⌘; picker over a split terminal, listing Finder, Google Chrome, OrbStack and Slack, with switch to, quit and dismiss along the bottom">
 </div>
 
 `⌘;` lists every other app with a Dock icon. `Enter` switches to one; `→` asks
 it to quit, and if it ignores that, `→` again forces it.
+
+<div align="center">
+<img src="docs/images/sessions.jpg" width="900" alt="The ⌘L picker on its pi tab: saved pi sessions on the left, and the transcript of the highlighted one previewed on the right">
+</div>
 
 `⌘L` lists every agent session it can find, live ones first. `Enter` jumps to a
 live one, or resumes a saved one in a new workspace. Typing searches titles,
